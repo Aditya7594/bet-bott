@@ -11,11 +11,14 @@ users_collection = db['users']
 # Global game state
 current_limbo_games = {}
 
+
 def get_user_by_id(user_id):
     return users_collection.find_one({"user_id": user_id})
 
+
 def save_user(user_data):
     users_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
+
 
 async def limbo(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
@@ -51,6 +54,7 @@ async def limbo(update: Update, context: CallbackContext) -> None:
 
     await send_limbo_message(update, user_id, context)
 
+
 async def send_limbo_message(update: Update, user_id: str, context: CallbackContext):
     game = current_limbo_games.get(user_id)
     if not game:
@@ -72,7 +76,7 @@ async def send_limbo_message(update: Update, user_id: str, context: CallbackCont
         for i in range(5)
     ])
 
-       game_message = (
+    game_message = (
         "🎰 *Limbo Game*:\n\n"
         "► If you are happy with the current multiplier, you can [Take] it.\n"
         "► If you see the next multiplier, you won't be able to go back.\n"
@@ -82,12 +86,11 @@ async def send_limbo_message(update: Update, user_id: str, context: CallbackCont
         f"*Current Multiplier*: {current_multiplier}x"
     )
 
-
-
     sent_message = await update.message.reply_text(
         game_message, reply_markup=reply_markup, parse_mode='Markdown'
     )
     context.user_data['limbo_message_id'] = sent_message.message_id
+
 
 async def handle_limbo_buttons(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -105,6 +108,7 @@ async def handle_limbo_buttons(update: Update, context: CallbackContext) -> None
     elif action == 'next':
         await handle_next(update, context, user_id)
 
+
 async def handle_take(update: Update, context: CallbackContext, user_id: str):
     game = current_limbo_games.pop(user_id, None)
     if not game:
@@ -119,9 +123,10 @@ async def handle_take(update: Update, context: CallbackContext, user_id: str):
     save_user(user_data)
 
     await update.callback_query.edit_message_text(
-        f"\ud83d\ude80 You took the multiplier *{multiplier}x* and won *{winnings} credits*! \ud83c\udf89",
+        f"🚀 You took the multiplier *{multiplier}x* and won *{winnings} credits*! 🎉",
         parse_mode='Markdown'
     )
+
 
 async def handle_next(update: Update, context: CallbackContext, user_id: str):
     game = current_limbo_games.get(user_id)
