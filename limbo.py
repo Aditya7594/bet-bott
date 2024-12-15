@@ -42,7 +42,7 @@ async def limbo(update: Update, context: CallbackContext) -> None:
     user_data['credits'] -= bet_amount
     save_user(user_data)
 
-    multipliers = [round(random.uniform(0.0, 4.0), 2) for _ in range(5)]
+    multipliers = [round(random.uniform(0.5, 4.0), 2) for _ in range(5)]
     current_limbo_games[user_id] = {
         'bet': bet_amount,
         'multipliers': multipliers,
@@ -61,10 +61,17 @@ async def send_limbo_message(update: Update, user_id: str, context: CallbackCont
     current_multiplier = game['multipliers'][current_index]
 
     # Generate inline buttons
-    keyboard = [
-        [InlineKeyboardButton("Take", callback_data=f"take_{user_id}"),
-         InlineKeyboardButton("Next", callback_data=f"next_{user_id}")]
-    ]
+    keyboard = []
+    if current_index < 4:
+        keyboard.append([
+            InlineKeyboardButton("Take", callback_data=f"take_{user_id}"),
+            InlineKeyboardButton("Next", callback_data=f"next_{user_id}")
+        ])
+    else:
+        keyboard.append([
+            InlineKeyboardButton("Take", callback_data=f"take_{user_id}")
+        ])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     multipliers_display = '\n'.join([
@@ -73,26 +80,23 @@ async def send_limbo_message(update: Update, user_id: str, context: CallbackCont
     ])
 
     game_message = (
-        "🎰 *Limbo Game*:\n\n"
-        "► If you are happy with the current multiplier, you can [Take] it.\n"
-        "► If you see the next multiplier, you won't be able to go back.\n"
-        "► System will auto [Take] when you reach the last multiplier box.\n\n"
+        "\ud83c\udfb0 *Limbo Game*:\n\n"
+        "\u25ba If you are happy with the current multiplier, you can [Take] it.\n"
+        "\u25ba If you see the next multiplier, you won't be able to go back.\n"
+        "\u25ba System will auto [Take] when you reach the last multiplier box.\n\n"
         f"{multipliers_display}\n\n"
-        f"*Bet Amount*: {bet} 👾\n"
+        f"*Bet Amount*: {bet} \ud83d\udc7e\n"
         f"*Current Multiplier*: {current_multiplier}x"
     )
 
     if update.message:
-        sent_message = await update.message.reply_text(
+        await update.message.reply_text(
             game_message, reply_markup=reply_markup, parse_mode='Markdown'
         )
     else:
-        chat_id = update.callback_query.message.chat_id
-        sent_message = await context.bot.send_message(
-            chat_id=chat_id, text=game_message, reply_markup=reply_markup, parse_mode='Markdown'
+        await update.callback_query.edit_message_text(
+            game_message, reply_markup=reply_markup, parse_mode='Markdown'
         )
-
-    context.user_data['limbo_message_id'] = sent_message.message_id
 
 async def handle_limbo_buttons(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
