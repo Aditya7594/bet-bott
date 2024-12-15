@@ -72,15 +72,16 @@ async def send_limbo_message(update: Update, user_id: str, context: CallbackCont
         for i in range(5)
     ])
 
-   game_message = (
-    "🎰 *Limbo Game*:\n\n"
-    "► If you are happy with the current multiplier, you can [Take] it.\n"
-    "► If you see the next multiplier, you won't be able to go back.\n"
-    "► System will auto [Take] when you reach the last multiplier box.\n\n"
-    f"{multipliers_display}\n\n"
-    f"*Bet Amount*: {bet} 👾\n"
-    f"*Current Multiplier*: {current_multiplier}x"
-)
+       game_message = (
+        "🎰 *Limbo Game*:\n\n"
+        "► If you are happy with the current multiplier, you can [Take] it.\n"
+        "► If you see the next multiplier, you won't be able to go back.\n"
+        "► System will auto [Take] when you reach the last multiplier box.\n\n"
+        f"{multipliers_display}\n\n"
+        f"*Bet Amount*: {bet} 👾\n"
+        f"*Current Multiplier*: {current_multiplier}x"
+    )
+
 
 
     sent_message = await update.message.reply_text(
