@@ -1,8 +1,7 @@
-
 import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackQueryHandler, CallbackContext
-from datetime import datetime
+from datetime import datetime, timedelta
 from pymongo import MongoClient
 
 # MongoDB client setup
@@ -57,20 +56,22 @@ async def daily(update: Update, context: CallbackContext) -> None:
     now = datetime.utcnow() + timedelta(hours=5, minutes=30)  # Convert to IST (UTC +5:30)
     today_4am = now.replace(hour=4, minute=0, second=0, microsecond=0)
     
-    last_claimed = db.get('last_claimed', {})
-    if user_id in last_claimed:
-        last_claim_time = last_claimed[user_id]
-        # If last claim was before today's 4 AM IST
-        if last_claim_time >= today_4am:
+    # Fetch last claim time from user's data in the database
+    user_data = users_collection.find_one({"user_id": user_id})
+    
+    if user_data:
+        last_claimed = user_data.get('last_claimed')
+        if last_claimed and last_claimed >= today_4am:
             await update.message.reply_text("You have already claimed your daily reward today!")
             return
-    
+
     # Give the user 1,000 credits
-    if user_id not in db:
-        db[user_id] = {'credits': 0}
-    
-    db[user_id]['credits'] += 1000
-    last_claimed[user_id] = now
+    if user_data is None:
+        # If the user doesn't exist, create the user with 0 credits and set last_claimed
+        users_collection.insert_one({"user_id": user_id, "credits": 0, "last_claimed": None})
 
-    await update.message.reply_text(f"🎉 You've claimed your daily reward of 1,000 credits! You now have {db[user_id]['credits']} credits.")
+    # Add 1000 credits to the user
+    users_collection.update_one({"user_id": user_id}, {"$inc": {"credits": 1000}, "$set": {"last_claimed": now}})
 
+    updated_user_data = users_collection.find_one({"user_id": user_id})
+    await update.message.reply_text(f"🎉 You've claimed your daily reward of 1,000 credits! You now have {updated_user_data['credits']} credits.")
