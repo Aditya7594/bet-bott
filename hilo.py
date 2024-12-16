@@ -1,6 +1,5 @@
 import random
 import re
-import emoji
 from pymongo import MongoClient
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
