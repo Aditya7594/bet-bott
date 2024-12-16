@@ -1,5 +1,6 @@
 import random
 import re
+import emoji
 from pymongo import MongoClient
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -70,12 +71,12 @@ async def HiLo(update, context):
         await update.message.reply_text('/HiLo <bet amount>')
         return
 
-    keyboard = [[InlineKeyboardButton('High', callback_data='Hilo_High'), InlineKeyboardButton('Low', callback_data='Hilo_Low')], 
-                [InlineKeyboardButton('CashOut', callback_data='HiloCashOut')]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
+    # Ensure proper emoji handling by removing unnecessary variation selectors
     hand = random.choice(deck)
     table = random.choice(deck)
+
+    # Replace problematic emoji with safer equivalents if needed
+    hand = hand.replace('♥️', '♥')  # Just an example to remove variation selector
 
     text = f'<b><u>\ud83d\udd3c HiLo Game \ud83d\udd3d</u></b>\n\n'
     text += f'Bet amount : {bet} \ud83d\udc7e\n'
@@ -90,6 +91,7 @@ async def HiLo(update, context):
     message_id = message.message_id
 
     cd[message_id] = {"bet": bet, "keyboard": keyboard, "logs": [f'|{hand}'], "user_id": user_id, "hand": hand, "table": table, "mult": 1}
+
 
 
 # HiLo Click Handler
