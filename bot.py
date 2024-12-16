@@ -195,6 +195,10 @@ def main() -> None:
     application.add_handler(CommandHandler("daily", daily))
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
+    application.add_handler(CommandHandler("hilo", HiLo))
+    application.add_handler(CallbackQueryHandler(HiLo_click, pattern='^Hilo_'))
+    application.add_handler(CallbackQueryHandler(HiLo_CashOut, pattern='^HiLoCashOut$'))
+
 
 
 
