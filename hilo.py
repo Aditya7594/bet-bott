@@ -13,12 +13,8 @@ users_collection = db['users']
 # Global state for HiLo games
 hilo_limit = {}
 
-deck = []
-number = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
-suit = ['♦️', '♥️', '♣️', '♠️']
-for i in number:
-    for j in suit:
-        deck.append(f'{j}{i}')
+# List of card values as numbers (1-13 instead of A, 2-10, J, Q, K)
+deck = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
 
 # Helper functions
 def get_user_by_id(user_id):
@@ -73,18 +69,14 @@ async def HiLo(update, context):
     hand = random.choice(deck)
     table = random.choice(deck)
 
-    # Replace problematic emojis with simpler versions (no variation selectors)
-    hand = hand.replace('♥️', '♥').replace('♣️', '♣').replace('♦️', '♦').replace('♠️', '♠')
-    table = table.replace('♥️', '♥').replace('♣️', '♣').replace('♦️', '♦').replace('♠️', '♠')
-
-    text = f'<b><u>\ud83d\udd3c HiLo Game \ud83d\udd3d</u></b>\n\n'
-    text += f'Bet amount : {bet} \ud83d\udc7e\n'
-    text += f'Current multiplier : None\n\n'
-    text += f'You have : <b>{hand}</b>\n'
-    text += f'On Table : <b>?</b>\n\n'
-    text += f'<i>How to play: Choose High if you predict the card on table is higher value than your card,</i>\n'
-    text += f'<i>Choose Low if you predict the card on table is lower value than your card.</i>\n'
-    text += f'<i>You can cashout anytime, but losing 1 guess and its game over, you lose all balances.</i>'
+    text = f'<b><u>🎰 HiLo Game 🎰</u></b>\n\n'
+    text += f'Bet amount: {bet} 👾\n'
+    text += f'Current multiplier: None\n\n'
+    text += f'You have: <b>{hand}</b>\n'
+    text += f'On Table: <b>?</b>\n\n'
+    text += f'<i>How to play: Choose High if you predict the card on the table is higher value than your card,</i>\n'
+    text += f'<i>Choose Low if you predict the card on the table is lower value than your card.</i>\n'
+    text += f'<i>You can cash out anytime, but losing 1 guess and its game over, you lose all balances.</i>'
 
     # Create reply_markup for inline buttons
     keyboard = [
@@ -119,11 +111,9 @@ def HiLo_click(update, context):
     mult = data['mult']
     bet = data['bet']
 
-    mapping = {k: v for v, k in enumerate(['A','2','3','4','5','6','7','8','9','10','J','Q','K'])}
-    p_mapping = {i: 1.062 + abs(6 - i) * 0.1 for i in range(13)}
-
-    user_number = mapping[re.search(r'[A-Z0-9]+$', hand).group()]
-    table_number = mapping[re.search(r'[A-Z0-9]+$', table).group()]
+    # Use simple integer values for cards
+    user_number = hand
+    table_number = table
 
     choice = query.data.split("_")[-1]
     logs = data['logs']
@@ -133,13 +123,13 @@ def HiLo_click(update, context):
     log_text = ''.join(logs)
 
     if (choice == 'High' and user_number <= table_number) or (choice == 'Low' and user_number >= table_number):
-        multiplier = p_mapping[user_number]
-        text = f'<b><u>\ud83d\udd3c HiLo Game \ud83d\udd3d</u></b>\n\n'
-        text += f'Bet amount : {bet} \ud83d\udc7e\n'
-        text += f'Current multiplier : {round(multiplier * mult, 3)}x\n'
-        text += f'Winning Amount : {int(bet * multiplier * mult)}\ud83d\udc7e\n\n'
+        multiplier = 1.062 + abs(6 - user_number) * 0.1  # Adjust multiplier based on card value
+        text = f'<b><u>🎰 HiLo Game 🎰</u></b>\n\n'
+        text += f'Bet amount: {bet} 👾\n'
+        text += f'Current multiplier: {round(multiplier * mult, 3)}x\n'
+        text += f'Winning Amount: {int(bet * multiplier * mult)} 👾\n\n'
         text += f'Card on Table revealed to be {table}, You bet on {choice} and won!\n<b>Now guess the next one!</b>\n\n'
-        text += f'You have : <b>{table}</b>\nOn Table : <b>?</b>\n\n'
+        text += f'You have: <b>{table}</b>\nOn Table: <b>?</b>\n\n'
         text += f'<b><u>Logs</u></b>\n{log_text}'
 
         cd[message_id].update({"hand": table, "table": random.choice(deck), "mult": multiplier * mult})
@@ -147,7 +137,7 @@ def HiLo_click(update, context):
     else:
         hilo_limit[user_id] += 1
         query.edit_message_text(
-            f'<b><u>\ud83d\udd3c HiLo Game \ud83d\udd3d</u></b>\n\nBet amount: {bet} \ud83d\udc7e\nCurrent multiplier: 0x\n\nCard on Table revealed to be {table}, You bet on {choice} and Lost!\n<b>Game Over</b>\n\n<b><u>Logs</u></b>\n{log_text}',
+            f'<b><u>🎰 HiLo Game 🎰</u></b>\n\nBet amount: {bet} 👾\nCurrent multiplier: 0x\n\nCard on Table revealed to be {table}, You bet on {choice} and Lost!\n<b>Game Over</b>\n\n<b><u>Logs</u></b>\n{log_text}',
             parse_mode=ParseMode.HTML)
 
 # CashOut Handler
@@ -169,8 +159,8 @@ def Hilo_CashOut(update, context):
     save_user(user_data)
 
     game_message = (
-        "<b><u>\ud83d\udd3c HiLo Game \ud83d\udd3d</u></b>\n\n"
-        f"Bet amount: {data['bet']} \ud83d\udc7e\n"
+        "<b><u>🎰 HiLo Game 🎰</u></b>\n\n"
+        f"Bet amount: {data['bet']} 👾\n"
         f"Current multiplier: {round(data['mult'], 3)}x\n\n"
         "🎰 *Game Over*\n\n"
         "► You decided to [Take] your winnings.\n"
