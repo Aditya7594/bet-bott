@@ -132,6 +132,39 @@ async def profile(update: Update, context: CallbackContext) -> None:
     else:
         await update.message.reply_text("You need to start the bot first by using /start.")
 
+async def add_credits(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = user.id
+    target_user_id = None
+    credits_to_add = None
+
+    # Check if the user is the owner
+    if user_id not in OWNER_IDS:
+        await update.message.reply_text("You don't have permission to use this command.")
+        return
+
+    # Parse command arguments
+    try:
+        target_user_id = int(context.args[0])  # User ID of the target user
+        credits_to_add = int(context.args[1])  # Amount of credits to add
+    except (IndexError, ValueError):
+        await update.message.reply_text("Usage: /addcredits <user_id> <credits_amount>")
+        return
+
+    # Fetch the user's data from the database
+    target_user_data = get_user_by_id(str(target_user_id))
+    if target_user_data is None:
+        await update.message.reply_text("User not found.")
+        return
+
+    # Add the credits to the target user
+    new_credits = target_user_data['credits'] + credits_to_add
+    target_user_data['credits'] = new_credits
+    save_user(target_user_data)
+
+    # Send confirmation message
+    await update.message.reply_text(f"Successfully added {credits_to_add} credits to user {target_user_id}. New balance: {new_credits} credits.")
+
 
 def main() -> None:
     # Create the Application and pass the bot token
@@ -150,6 +183,7 @@ def main() -> None:
     application.add_handler(CommandHandler('add_primos', add_primos))
     application.add_handler(CommandHandler("leaderboard", leaderboard))
     application.add_handler(CommandHandler('drop_primos', drop_primos))
+    application.add_handler(CommandHandler("addcredits", add_credits))
     application.add_handler(CommandHandler("reset_bag_data", reset_bag_data))
     application.add_handler(CommandHandler("credits_leaderboard", credits_leaderboard))
     application.add_handler(CommandHandler("limbo", limbo))
