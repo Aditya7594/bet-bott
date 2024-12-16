@@ -2,7 +2,8 @@ from telegram import Update
 from telegram.ext import CallbackContext
 import random
 from pymongo import MongoClient
-import asyncio  # For introducing delay between animations
+import asyncio
+from datetime import datetime  # To track the date
 
 # Connect to MongoDB
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot') 
@@ -36,9 +37,22 @@ async def bdice(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("You need to use /start first to register.")
         return
 
+    # Reset bdice_daily count if the day has changed
+    today = datetime.now().strftime('%Y-%m-%d')
+    if 'bdice_daily' not in user_data or user_data['bdice_daily']['date'] != today:
+        user_data['bdice_daily'] = {"date": today, "plays": 0}
+
+    # Check if the user has reached their play limit
+    if user_data['bdice_daily']['plays'] >= 20:
+        await update.message.reply_text("You've reached your daily limit of 20 plays for /bdice.")
+        return
+
     if user_data['credits'] < bet_amount:
         await update.message.reply_text("You don't have enough credits for this bet.")
         return
+
+    # Increment daily play count
+    user_data['bdice_daily']['plays'] += 1
 
     # Send dice animation and collect results
     dice_results = []
@@ -69,9 +83,10 @@ async def bdice(update: Update, context: CallbackContext) -> None:
 
     # Send results
     await update.message.reply_text(
-        f"🎲 *Rolling Dice...*\n"
-        f"🎲 Dice Results: {dice_results[0]}, {dice_results[1]}, {dice_results[2]} (Total: {dice_total})\n"
-        f"Your Guess: {user_guess}\n"
-        f"🎉 You won {winnings} credits!\n💰 New Balance: {user_data['credits']} credits.",
+        f"🎲 Dice Results: *{dice_results[0]}*, *{dice_results[1]}*, *{dice_results[2]}* → Total: *{dice_total}*\n"
+        f"🎯 Your Guess: *{user_guess}*\n"
+        f"🏆 You {'won' if winnings > 0 else 'lost'} *{winnings} credits!*\n"
+        f"💰 Balance: *{user_data['credits']} credits*\n"
+        f"🎮 Plays Today: *{user_data['bdice_daily']['plays']}/20*",
         parse_mode="Markdown"
     )
