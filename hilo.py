@@ -16,8 +16,6 @@ for i in number:
 hilo_limit = {}
 
 # HiLo Command (starting the game)
-@check
-@rate_limit_command
 def HiLo(update, context):
     data = get_data()
     user_id = update.effective_user.id
@@ -57,7 +55,7 @@ def HiLo(update, context):
         return
 
     keyboard.append([InlineKeyboardButton('High', callback_data='Hilo_High'), InlineKeyboardButton('Low', callback_data='Hilo_Low')])
-    keyboard.append([])
+    keyboard.append([]) 
     keyboard[-1].append(InlineKeyboardButton('CashOut', callback_data='HiLoCashOut'))
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -87,7 +85,6 @@ def HiLo(update, context):
     cd[message_id]['mult'] = 1
 
 # HiLo Click Handler (user clicks on High/Low)
-@cooldown(3)
 def HiLo_click(update, context):
     user_name = update.effective_user.first_name
     user_id = update.effective_user.id
@@ -159,7 +156,6 @@ def HiLo_click(update, context):
     if choice == 'High':
         if user_number <= table_number:
             multiplier = p_mapping.get(user_number)
-            print(multiplier)
 
             text = f'<b><u>📈 HiLo Game 📉</u></b>\n\n'
             text += f'Bet amount : {bet} 👾\n'
@@ -188,7 +184,6 @@ def HiLo_click(update, context):
     if choice == 'Low':
         if user_number >= table_number:
             multiplier = p_mapping.get(user_number)
-            print(multiplier)
 
             text = f'<b><u>📈 HiLo Game 📉</u></b>\n\n'
             text += f'Bet amount : {bet} 👾\n'
@@ -238,15 +233,14 @@ def Hilo_CashOut(update, context):
         query.answer('Not yours', show_alert=True)
         return None
 
-    hilo_limit[user_id] += 1
+    winning_amount = int(bet * mult)
+
+    data["users"][str(user_id)]["credits"] += winning_amount
+    dump(data["users"][str(user_id)], user_id)
 
     text = f'<b><u>📈 HiLo Game 📉</u></b>\n\n'
     text += f'Bet amount : {bet} 👾\n'
-    text += f'Current multiplier : {round(mult, 3)}x\n'
-    text += f'<b>You Won : {int(bet * mult)}👾</b>\n\n'
+    text += f'Winning Amount : {winning_amount} 👾\n'
+    text += f'You cashed out and won {winning_amount} 👾!\n\n'
     text += f'<b><u>Logs</u></b>\n{log_text}'
-
-    data["users"][str(user_id)]["credits"] += int(bet * mult)
-    dump(data["users"][str(user_id)], user_id)
-
     query.edit_message_text(text, parse_mode=ParseMode.HTML)
