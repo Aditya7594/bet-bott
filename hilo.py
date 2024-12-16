@@ -139,7 +139,7 @@ def HiLo_click(update, context):
         query.edit_message_text(
             f'<b><u>\ud83d\udd3c HiLo Game \ud83d\udd3d</u></b>\n\nBet amount: {bet} \ud83d\udc7e\nCurrent multiplier: 0x\n\nCard on Table revealed to be {table}, You bet on {choice} and Lost!\n<b>Game Over</b>\n\n<b><u>Logs</u></b>\n{log_text}',
             parse_mode=ParseMode.HTML)
-
+# CashOut Handler
 def Hilo_CashOut(update, context):
     query = update.callback_query
     user_id = str(query.from_user.id)
@@ -157,13 +157,18 @@ def Hilo_CashOut(update, context):
     user_data['credits'] += winnings
     save_user(user_data)
 
-    query.edit_message_text(
-        f'<b><u>\ud83d\udd3c HiLo Game \ud83d\udd3d</u></b>\n\n'
-        f'Bet amount : {data["bet"]} \ud83d\udc7e\n'
-        f'Current multiplier : {round(data["mult"], 3)}x\n'
-        f'Winning Amount : {winnings} \ud83d\udc7e\n\n'
-        f'<b>Game Over!</b> You successfully cashed out.\n\n'
-        f'<b>Thanks for playing!</b>',
-        parse_mode=ParseMode.HTML
+    # Format the cash-out message similar to the example provided
+    game_message = (
+        "<b><u>\ud83d\udd3c HiLo Game \ud83d\udd3d</u></b>\n\n"
+        f"Bet amount: {data['bet']} \ud83d\udc7e\n"
+        f"Current multiplier: {round(data['mult'], 3)}x\n\n"
+        "🎰 *Game Over*\n\n"
+        "► You decided to [Take] your winnings.\n"
+        f"► You won: {winnings} 👾\n"
+        f"► Total Credits: {user_data['credits']} 👾\n\n"
+        "<b><u>Logs</u></b>\n"
+        ''.join(data['logs'])
     )
+
+    query.edit_message_text(game_message, parse_mode=ParseMode.HTML)
 
