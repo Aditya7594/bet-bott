@@ -79,7 +79,7 @@ async def send_limbo_message(update: Update, user_id: str, context: CallbackCont
         for i in range(5)
     ])
 
-     game_message = (
+    game_message = (
         "🎰 *Limbo Game*:\n\n"
         "► If you are happy with the current multiplier, you can [Take] it.\n"
         "► If you see the next multiplier, you won't be able to go back.\n"
@@ -128,7 +128,7 @@ async def handle_take(update: Update, context: CallbackContext, user_id: str):
     save_user(user_data)
 
     await update.callback_query.edit_message_text(
-        f"\ud83d\ude80 You took the multiplier *{multiplier}x* and won *{winnings} credits*! \ud83c\udf89",
+        f"🚀 You took the multiplier *{multiplier}x* and won *{winnings} credits*! 🎉",
         parse_mode='Markdown'
     )
 
