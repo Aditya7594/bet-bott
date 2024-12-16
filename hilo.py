@@ -91,7 +91,7 @@ async def HiLo(update, context):
 
     # Save game data for later use
     cd[message_id] = {
-        "bet": bet, "keyboard": keyboard, "logs": [f'|{hand}'], "user_id": user_id, "hand": hand, "table": table, "mult": 1
+        "bet": bet, "keyboard": keyboard, "logs": [f'|{hand}'], "user_id": user_id, "hand": hand, "table": table, "mult": 1, "game_active": True
     }
 
 # HiLo Click Handler
@@ -122,6 +122,13 @@ def HiLo_click(update, context):
         logs.pop(0)
     log_text = ''.join(logs)
 
+    # Check if the game is still active
+    if not data['game_active']:
+        query.edit_message_text(
+            f'<b><u>🎰 HiLo Game 🎰</u></b>\n\nGame Over\n\n<b><u>Logs</u></b>\n{log_text}',
+            parse_mode=ParseMode.HTML)
+        return
+
     if (choice == 'High' and user_number <= table_number) or (choice == 'Low' and user_number >= table_number):
         multiplier = 1.062 + abs(6 - user_number) * 0.1  # Adjust multiplier based on card value
         text = f'<b><u>🎰 HiLo Game 🎰</u></b>\n\n'
@@ -135,7 +142,9 @@ def HiLo_click(update, context):
         cd[message_id].update({"hand": table, "table": random.choice(deck), "mult": multiplier * mult})
         query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(data['keyboard']), parse_mode=ParseMode.HTML)
     else:
+        # End the game if the user guesses incorrectly
         hilo_limit[user_id] += 1
+        data['game_active'] = False
         query.edit_message_text(
             f'<b><u>🎰 HiLo Game 🎰</u></b>\n\nBet amount: {bet} 👾\nCurrent multiplier: 0x\n\nCard on Table revealed to be {table}, You bet on {choice} and Lost!\n<b>Game Over</b>\n\n<b><u>Logs</u></b>\n{log_text}',
             parse_mode=ParseMode.HTML)
@@ -152,6 +161,7 @@ def Hilo_CashOut(update, context):
         query.answer('Not yours', show_alert=True)
         return None
 
+    # End game if cashing out
     hilo_limit[user_id] += 1
     winnings = int(data['bet'] * data['mult'])
     user_data = get_user_by_id(user_id)
