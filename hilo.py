@@ -14,8 +14,8 @@ users_collection = db['users']
 hilo_limit = {}
 
 deck = []
-number = ['A','2','3','4','5','6','7','8','9','10','J','Q','K']
-suit = ['♦️','♥️','♣️','♠️']
+number = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+suit = ['♦️', '♥️', '♣️', '♠️']
 for i in number:
     for j in suit:
         deck.append(f'{j}{i}')
@@ -70,12 +70,11 @@ async def HiLo(update, context):
         await update.message.reply_text('/HiLo <bet amount>')
         return
 
-    # Ensure proper emoji handling by removing unnecessary variation selectors
     hand = random.choice(deck)
     table = random.choice(deck)
 
-    # Replace problematic emoji with safer equivalents if needed
-    hand = hand.replace('♥️', '♥')  # Just an example to remove variation selector
+    # Replace problematic emoji with safer equivalents
+    hand = hand.replace('♥️', '♥')
 
     text = f'<b><u>\ud83d\udd3c HiLo Game \ud83d\udd3d</u></b>\n\n'
     text += f'Bet amount : {bet} \ud83d\udc7e\n'
@@ -86,12 +85,21 @@ async def HiLo(update, context):
     text += f'<i>Choose Low if you predict the card on table is lower value than your card.</i>\n'
     text += f'<i>You can cashout anytime, but losing 1 guess and its game over, you lose all balances.</i>'
 
+    # Create reply_markup for inline buttons
+    keyboard = [
+        [InlineKeyboardButton('High', callback_data='Hilo_High'), InlineKeyboardButton('Low', callback_data='Hilo_Low')],
+        [InlineKeyboardButton('CashOut', callback_data='HiloCashOut')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Send the message
     message = await update.message.reply_text(text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
     message_id = message.message_id
 
-    cd[message_id] = {"bet": bet, "keyboard": keyboard, "logs": [f'|{hand}'], "user_id": user_id, "hand": hand, "table": table, "mult": 1}
-
-
+    # Save game data for later use
+    cd[message_id] = {
+        "bet": bet, "keyboard": keyboard, "logs": [f'|{hand}'], "user_id": user_id, "hand": hand, "table": table, "mult": 1
+    }
 
 # HiLo Click Handler
 def HiLo_click(update, context):
@@ -110,7 +118,6 @@ def HiLo_click(update, context):
     mult = data['mult']
     bet = data['bet']
 
-    # Value Mapping
     mapping = {k: v for v, k in enumerate(['A','2','3','4','5','6','7','8','9','10','J','Q','K'])}
     p_mapping = {i: 1.062 + abs(6 - i) * 0.1 for i in range(13)}
 
@@ -141,6 +148,7 @@ def HiLo_click(update, context):
         query.edit_message_text(
             f'<b><u>\ud83d\udd3c HiLo Game \ud83d\udd3d</u></b>\n\nBet amount: {bet} \ud83d\udc7e\nCurrent multiplier: 0x\n\nCard on Table revealed to be {table}, You bet on {choice} and Lost!\n<b>Game Over</b>\n\n<b><u>Logs</u></b>\n{log_text}',
             parse_mode=ParseMode.HTML)
+
 # CashOut Handler
 def Hilo_CashOut(update, context):
     query = update.callback_query
@@ -159,7 +167,6 @@ def Hilo_CashOut(update, context):
     user_data['credits'] += winnings
     save_user(user_data)
 
-    # Format the cash-out message similar to the example provided
     game_message = (
         "<b><u>\ud83d\udd3c HiLo Game \ud83d\udd3d</u></b>\n\n"
         f"Bet amount: {data['bet']} \ud83d\udc7e\n"
@@ -173,4 +180,3 @@ def Hilo_CashOut(update, context):
     )
 
     query.edit_message_text(game_message, parse_mode=ParseMode.HTML)
-
