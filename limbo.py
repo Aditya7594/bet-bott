@@ -11,11 +11,30 @@ users_collection = db['users']
 # Global game state
 current_limbo_games = {}
 
+# Weighted multiplier generation thresholds
+MULTIPLIER_THRESHOLDS = [
+    (0.5, 0.8),   # 50% chance for multipliers between 0.5 - 0.8
+    (0.81, 1.5),  # 30% chance for multipliers between 0.81 - 1.5
+    (1.51, 2.5),  # 15% chance for multipliers between 1.51 - 2.5
+    (2.51, 4.0),  # 5% chance for multipliers between 2.51 - 4.0
+]
+
 def get_user_by_id(user_id):
     return users_collection.find_one({"user_id": user_id})
 
 def save_user(user_data):
     users_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
+
+def generate_weighted_multiplier():
+    random_number = random.uniform(0, 1)
+    if random_number <= 0.5:
+        return round(random.uniform(0.5, 0.8), 2)
+    elif random_number <= 0.8:
+        return round(random.uniform(0.81, 1.5), 2)
+    elif random_number <= 0.95:
+        return round(random.uniform(1.51, 2.5), 2)
+    else:
+        return round(random.uniform(2.51, 4.0), 2)
 
 async def limbo(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
@@ -42,7 +61,7 @@ async def limbo(update: Update, context: CallbackContext) -> None:
     user_data['credits'] -= bet_amount
     save_user(user_data)
 
-    multipliers = [round(random.uniform(0.5, 4.0), 2) for _ in range(5)]
+    multipliers = [generate_weighted_multiplier() for _ in range(5)]
     current_limbo_games[user_id] = {
         'bet': bet_amount,
         'multipliers': multipliers,
