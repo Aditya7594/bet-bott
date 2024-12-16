@@ -1,10 +1,14 @@
+from pymongo import MongoClient
 import random
 import re
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import CallbackContext
 
-# Initialize the deck of cards
+client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
+db = client['telegram_bot']
+users_collection = db['users']
+
 deck = []
 number = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
 suit = ['♦️', '♥️', '♣️', '♠️']
@@ -12,16 +16,23 @@ for i in number:
     for j in suit:
         deck.append(f'{j}{i}')
 
-# Dictionary to keep track of daily limits
 hilo_limit = {}
 
-# HiLo Command (starting the game)
-def HiLo(update, context):
-    data = get_data()
-    user_id = update.effective_user.id
-    credit = data["users"][str(user_id)]["credits"]
+def get_user_by_id(user_id):
+    return users_collection.find_one({"user_id": user_id})
+
+def save_user(user_data):
+    users_collection.insert_one(user_data)
+
+def dump(user_data, user_id):
+    users_collection.update_one({"user_id": user_id}, {"$set": user_data}, upsert=True)
+
+async def HiLo(update: Update, context: CallbackContext):
+    user = update.effective_user
+    user_id = str(user.id)
+    credit = get_user_by_id(user_id)["credits"]
     cd = context.user_data
-    user_name = update.effective_user.first_name
+    user_name = user.first_name
     query = update.callback_query
     keyboard = [[]]
 
@@ -29,29 +40,30 @@ def HiLo(update, context):
         hilo_limit[user_id] = 0
 
     if hilo_limit[user_id] >= 15:
-        update.message.reply_text('Daily limit of 15 games reached\nAny query, can ask <code>@Unban_shit</code>', parse_mode=ParseMode.HTML)
+        await update.message.reply_text('Daily limit of 15 games reached\nAny query, can ask <code>@Unban_shit</code>', parse_mode=ParseMode.HTML)
         return
 
     bet = 0
     try:
         bet = int(update.message.text.split()[1])
         if bet < 100:
-            update.message.reply_text('Minimum Bet is 100 👾')
+            await update.message.reply_text('Minimum Bet is 100 👾')
             return
 
         if bet > 10000:
-            update.message.reply_text('Maximum bet is 10,000 👾')
+            await update.message.reply_text('Maximum bet is 10,000 👾')
             return
 
         if credit < bet:
-            update.message.reply_text('Not enough credit to make this bet')
+            await update.message.reply_text('Not enough credit to make this bet')
             return
 
-        data["users"][str(user_id)]["credits"] -= bet
-        dump(data["users"][str(user_id)], user_id)
+        user_data = get_user_by_id(user_id)
+        user_data["credits"] -= bet
+        dump(user_data, user_id)
 
     except:
-        update.message.reply_text('/HiLo <bet amount>')
+        await update.message.reply_text('/HiLo <bet amount>')
         return
 
     keyboard.append([InlineKeyboardButton('High', callback_data='Hilo_High'), InlineKeyboardButton('Low', callback_data='Hilo_Low')])
@@ -72,7 +84,7 @@ def HiLo(update, context):
     text += f'<i>Choose Low if you predict the card on the table is lower value than your card.</i>\n'
     text += f'<i>You can cashout anytime, but losing 1 guess and it\'s game over, you lose all balances.</i>'
 
-    message = update.message.reply_text(text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    message = await update.message.reply_text(text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
     message_id = message.message_id
 
     cd[message_id] = {}
@@ -84,10 +96,9 @@ def HiLo(update, context):
     cd[message_id]['table'] = table
     cd[message_id]['mult'] = 1
 
-# HiLo Click Handler (user clicks on High/Low)
-def HiLo_click(update, context):
-    user_name = update.effective_user.first_name
-    user_id = update.effective_user.id
+async def HiLo_click(update: Update, context: CallbackContext):
+    user = update.effective_user
+    user_id = str(user.id)
     cd = context.user_data
     query = update.callback_query
     message_id = query.message.message_id
@@ -170,7 +181,7 @@ def HiLo_click(update, context):
             cd[message_id]['table'] = random.choice(deck)
             cd[message_id]['mult'] = multiplier * mult
             reply_markup = InlineKeyboardMarkup(keyboard)
-            query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
         if user_number > table_number:
             text = f'<b><u>📈 HiLo Game 📉</u></b>\n\n'
@@ -179,7 +190,7 @@ def HiLo_click(update, context):
             text += f'<b><u>Logs</u></b>\n{log_text}\n\n'
             text += f'Card on Table revealed to be {table}, You bet on High and Lost!\n<b>Game Over</b>\n'
             hilo_limit[user_id] += 1
-            query.edit_message_text(text, parse_mode=ParseMode.HTML)
+            await query.edit_message_text(text, parse_mode=ParseMode.HTML)
 
     if choice == 'Low':
         if user_number >= table_number:
@@ -198,7 +209,7 @@ def HiLo_click(update, context):
             cd[message_id]['table'] = random.choice(deck)
             cd[message_id]['mult'] = multiplier * mult
             reply_markup = InlineKeyboardMarkup(keyboard)
-            query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
         if user_number < table_number:
             text = f'<b><u>📈 HiLo Game 📉</u></b>\n\n'
@@ -207,13 +218,11 @@ def HiLo_click(update, context):
             text += f'<b><u>Logs</u></b>\n{log_text}\n\n'
             text += f'Card on Table revealed to be {table}, You bet on Low and Lost!\n<b>Game Over</b>\n'
             hilo_limit[user_id] += 1
-            query.edit_message_text(text, parse_mode=ParseMode.HTML)
+            await query.edit_message_text(text, parse_mode=ParseMode.HTML)
 
-# HiLo CashOut Handler (user decides to cash out)
-def Hilo_CashOut(update, context):
-    data = get_data()
-    user_name = update.effective_user.first_name
-    user_id = update.effective_user.id
+async def Hilo_CashOut(update: Update, context: CallbackContext):
+    user = update.effective_user
+    user_id = str(user.id)
     cd = context.user_data
     query = update.callback_query
     message_id = query.message.message_id
@@ -225,9 +234,7 @@ def Hilo_CashOut(update, context):
     table = cd[message_id]['table']
     mult = cd[message_id]['mult']
 
-    log_text = ''
-    for i in logs:
-        log_text += i
+    log_text = ''.join(logs)
 
     if update.callback_query.from_user.id != player_id:
         query.answer('Not yours', show_alert=True)
@@ -235,12 +242,13 @@ def Hilo_CashOut(update, context):
 
     winning_amount = int(bet * mult)
 
-    data["users"][str(user_id)]["credits"] += winning_amount
-    dump(data["users"][str(user_id)], user_id)
+    user_data = get_user_by_id(user_id)
+    user_data["credits"] += winning_amount
+    dump(user_data, user_id)
 
     text = f'<b><u>📈 HiLo Game 📉</u></b>\n\n'
     text += f'Bet amount : {bet} 👾\n'
     text += f'Winning Amount : {winning_amount} 👾\n'
     text += f'You cashed out and won {winning_amount} 👾!\n\n'
     text += f'<b><u>Logs</u></b>\n{log_text}'
-    query.edit_message_text(text, parse_mode=ParseMode.HTML)
+    await query.edit_message_text(text, parse_mode=ParseMode.HTML)
