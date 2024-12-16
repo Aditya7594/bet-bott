@@ -31,13 +31,13 @@ def dump(user_data, user_id):
     users_collection.update_one({"user_id": user_id}, {"$set": user_data}, upsert=True)
 
 # HiLo Command
-def HiLo(update, context):
+async def HiLo(update, context):
     user_id = str(update.effective_user.id)
     user_name = update.effective_user.first_name
     data = get_user_by_id(user_id)
     
     if not data:
-        update.message.reply_text("You need to start the bot first by using /start.")
+        await update.message.reply_text("You need to start the bot first by using /start.")
         return
     
     credit = data["credits"]
@@ -47,30 +47,30 @@ def HiLo(update, context):
         hilo_limit[user_id] = 0
 
     if hilo_limit[user_id] >= 15:
-        update.message.reply_text('Daily limit of 15 games reached\nAny query, can ask <code>@Unban_shit</code>', parse_mode=ParseMode.HTML)
+        await update.message.reply_text('Daily limit of 15 games reached\nAny query, can ask <code>@Unban_shit</code>', parse_mode=ParseMode.HTML)
         return
 
     try:
         bet = int(update.message.text.split()[1])
         if bet < 100:
-            update.message.reply_text('Minimum Bet is 100 👾')
+            await update.message.reply_text('Minimum Bet is 100 👾')
             return
 
         if bet > 10000:
-            update.message.reply_text('Maximum bet is 10,000 👾')
+            await update.message.reply_text('Maximum bet is 10,000 👾')
             return
 
         if credit < bet:
-            update.message.reply_text('Not enough credit to make this bet')
+            await update.message.reply_text('Not enough credit to make this bet')
             return
 
         data["credits"] -= bet
         dump(data, user_id)
     except:
-        update.message.reply_text('/HiLo <bet amount>')
+        await update.message.reply_text('/HiLo <bet amount>')
         return
 
-    keyboard = [[InlineKeyboardButton('High', callback_data='Hilo_High'), InlineKeyboardButton('Low', callback_data='Hilo_Low')],
+    keyboard = [[InlineKeyboardButton('High', callback_data='Hilo_High'), InlineKeyboardButton('Low', callback_data='Hilo_Low')], 
                 [InlineKeyboardButton('CashOut', callback_data='HiloCashOut')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -86,10 +86,11 @@ def HiLo(update, context):
     text += f'<i>Choose Low if you predict the card on table is lower value than your card.</i>\n'
     text += f'<i>You can cashout anytime, but losing 1 guess and its game over, you lose all balances.</i>'
 
-    message = update.message.reply_text(text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    message = await update.message.reply_text(text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
     message_id = message.message_id
 
     cd[message_id] = {"bet": bet, "keyboard": keyboard, "logs": [f'|{hand}'], "user_id": user_id, "hand": hand, "table": table, "mult": 1}
+
 
 # HiLo Click Handler
 def HiLo_click(update, context):
