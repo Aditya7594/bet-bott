@@ -15,6 +15,7 @@ from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, hand
 from minigame import dart, basketball, flip, dice, credits_leaderboard,football
 from limbo import limbo, handle_limbo_buttons
 from bdice import bdice
+from claim import daily, random_claim, claim_credits, send_random_claim
 
 # Global variables
 OWNER_ID = 5667016949
@@ -190,6 +191,9 @@ def main() -> None:
     application.add_handler(CommandHandler("limbo", limbo))
     application.add_handler(CallbackQueryHandler(handle_limbo_buttons))
     application.add_handler(CommandHandler("bdice", bdice))
+    application.add_handler(CommandHandler("daily", daily))
+    application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
+    application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
 
 
 
@@ -198,6 +202,7 @@ def main() -> None:
 
     # Add callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(button))
+    application.job_queue.run_once(send_random_claim, 3600, context=application)
 
     application.run_polling()
 
