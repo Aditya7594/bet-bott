@@ -31,7 +31,6 @@ def dump(user_data, user_id):
     users_collection.update_one({"user_id": user_id}, {"$set": user_data}, upsert=True)
 
 # HiLo Command
-# HiLo Command
 async def HiLo(update, context):
     user_id = str(update.effective_user.id)
     user_name = update.effective_user.first_name
@@ -74,9 +73,9 @@ async def HiLo(update, context):
     hand = random.choice(deck)
     table = random.choice(deck)
 
-    # Replace problematic emojis with simpler versions
-    hand = hand.replace('♥️', '♥')  # Replace variant selector with simple heart
-    table = table.replace('♥️', '♥')  # Apply the same for table card
+    # Replace problematic emojis with simpler versions (no variation selectors)
+    hand = hand.replace('♥️', '♥').replace('♣️', '♣').replace('♦️', '♦').replace('♠️', '♠')
+    table = table.replace('♥️', '♥').replace('♣️', '♣').replace('♦️', '♦').replace('♠️', '♠')
 
     text = f'<b><u>\ud83d\udd3c HiLo Game \ud83d\udd3d</u></b>\n\n'
     text += f'Bet amount : {bet} \ud83d\udc7e\n'
@@ -102,7 +101,6 @@ async def HiLo(update, context):
     cd[message_id] = {
         "bet": bet, "keyboard": keyboard, "logs": [f'|{hand}'], "user_id": user_id, "hand": hand, "table": table, "mult": 1
     }
-
 
 # HiLo Click Handler
 def HiLo_click(update, context):
