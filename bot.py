@@ -14,6 +14,7 @@ from token_1 import token
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos
 from minigame import dart, basketball, flip, dice, credits_leaderboard,football
 from limbo import limbo, handle_limbo_buttons
+from hilo import HiLo, HiLo_click, Hilo_CashOut
 # Global variables
 OWNER_ID = 5667016949
 muted_users = set()
@@ -153,6 +154,10 @@ def main() -> None:
     application.add_handler(CommandHandler("credits_leaderboard", credits_leaderboard))
     application.add_handler(CommandHandler("limbo", limbo))
     application.add_handler(CallbackQueryHandler(handle_limbo_buttons))
+    application.add_handler(CommandHandler("hilo", HiLo))
+    application.add_handler(CallbackQueryHandler(HiLo_click, pattern="^Hilo_"))
+    application.add_handler(CallbackQueryHandler(Hilo_CashOut, pattern="^HiloCashOut$"))
+
 
     
 
