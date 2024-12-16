@@ -194,6 +194,7 @@ def main() -> None:
     application.add_handler(CommandHandler("daily", daily))
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
+    application.job_queue.run_once(send_random_claim, 3600, context=application)
 
 
 
@@ -202,7 +203,6 @@ def main() -> None:
 
     # Add callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(button))
-    application.job_queue.run_once(send_random_claim, 3600, context=application)
 
     application.run_polling()
 
