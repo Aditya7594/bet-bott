@@ -194,16 +194,15 @@ def main() -> None:
     application.add_handler(CommandHandler("daily", daily))
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
-    application.job_queue.run_once(send_random_claim, 3600, context=application)
-
-
-
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    # Add callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(button))
 
+    # Schedule the random claim task after polling starts
+    # This ensures job_queue is fully initialized
+    application.add_job(send_random_claim, "interval", seconds=3600, context=application)
+
+    # Start polling
     application.run_polling()
 
 if __name__ == '__main__':
