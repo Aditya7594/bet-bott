@@ -18,7 +18,6 @@ from limbo import limbo, handle_limbo_buttons
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from hilo_game import HiLo, HiLo_click, HiLo_CashOut
-from mines_game import Mines, Mines_click, Mines_CashOut
 
 # Global variables
 OWNER_ID = 5667016949
@@ -229,9 +228,6 @@ def main() -> None:
     application.add_handler(CommandHandler("daily", daily))
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
-    application.add_handler(CommandHandler("Mines", Mines))
-    application.add_handler(CallbackQueryHandler(Mines_click, pattern="^\d+$"))  # Tile clicks
-    application.add_handler(CallbackQueryHandler(Mines_CashOut, pattern="^MinesCashOut$"))
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
