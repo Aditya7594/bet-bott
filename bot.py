@@ -19,6 +19,7 @@ from limbo import limbo, handle_limbo_buttons
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from hilo_game import HiLo, HiLo_click, HiLo_CashOut
+from bank import exchange, reverse_exchange, store, withdraw
 
 # Global variables
 OWNER_ID = 5667016949
@@ -123,18 +124,33 @@ async def profile(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
 
+    # Fetch user data from the database
     user_data = get_user_by_id(user_id)
 
     if user_data:
+        # Get the number of gold, silver, and bronze coins in the user's bag
+        gold_coins = user_data['bag'].get('gold', 0)
+        silver_coins = user_data['bag'].get('silver', 0)
+        bronze_coins = user_data['bag'].get('bronze', 0)
+
+        # Construct the profile message with clear boundaries and formatting
         profile_message = (
-            f"👤 *{user.first_name}* 【{user_data['faction']}】\n"
-            f"🆔 *ID*: {user_data['user_id']}\n"
-            f"💰 *Units*: {user_data['credits']} 💎\n\n"
-            f"🏆 *Wins*: {user_data['win']}\n"
-            f"💔 *Losses*: {user_data['loss']}\n\n"
-            f"🎖️ *Title*: {user_data['title']}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 User: {user.first_name}\n"
+            f"🆔 ID: {user_data['user_id']}\n"
+            f"💰 Credits: {user_data['credits']} 💎\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏆 Wins: {user_data['win']}\n"
+            f"💔 Losses: {user_data['loss']}\n"
+            f"🎖️ Title: {user_data['title']}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💎 Gold Coins: {gold_coins}\n"
+            f"🥈 Silver Coins: {silver_coins}\n"
+            f"🥉 Bronze Coins: {bronze_coins}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         )
 
+        # Send profile message with photo if available
         try:
             photos = await context.bot.get_user_profile_photos(user_id)
             if photos.photos:
@@ -148,6 +164,7 @@ async def profile(update: Update, context: CallbackContext) -> None:
             await update.message.reply_text(profile_message)
     else:
         await update.message.reply_text("You need to start the bot first by using /start.")
+
 
 async def add_credits(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
@@ -287,6 +304,10 @@ def main() -> None:
     application.add_handler(CommandHandler("hilo", check_started(HiLo)))
     application.add_handler(CallbackQueryHandler(HiLo_click, pattern='^Hilo_'))
     application.add_handler(CallbackQueryHandler(HiLo_CashOut, pattern='^HiLoCashOut$'))
+    application.add_handler(CommandHandler("exchange", check_started(exchange)))  # For exchanging credits to coins
+    application.add_handler(CommandHandler("reverse_exchange", check_started(reverse_exchange)))  # For exchanging coins back to credits
+    application.add_handler(CommandHandler("store", check_started(store)))  # For storing credits in the bank
+    application.add_handler(CommandHandler("withdraw", check_started(withdraw))) 
 
     # Limbo game handlers
     # Ensure callback data for Limbo starts with "limbo_"
