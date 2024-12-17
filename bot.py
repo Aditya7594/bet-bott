@@ -15,10 +15,8 @@ from token_1 import token
 
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos
 from minigame import dart, basketball, flip, dice, credits_leaderboard,football
-from limbo import limbo, handle_limbo_buttons
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
-from hilo_game import HiLo, HiLo_click, HiLo_CashOut
 from bank import exchange, sell, store, withdraw, bank
 
 # Global variables
@@ -301,20 +299,12 @@ def main() -> None:
     application.add_handler(CommandHandler("addcredits", check_started(add_credits)))
     application.add_handler(CommandHandler("reset_bag_data", check_started(reset_bag_data)))
     application.add_handler(CommandHandler("leaderboard", check_started(credits_leaderboard)))
-    application.add_handler(CommandHandler("hilo", check_started(HiLo)))
-    application.add_handler(CallbackQueryHandler(HiLo_click, pattern='^Hilo_'))
-    application.add_handler(CallbackQueryHandler(HiLo_CashOut, pattern='^HiLoCashOut$'))
     application.add_handler(CommandHandler("exchange", check_started(exchange)))  # For exchanging credits to coins
     application.add_handler(CommandHandler("sell", check_started(sell)))  # For exchanging coins back to credits
     application.add_handler(CommandHandler("store", check_started(store)))  # For storing credits in the bank
     application.add_handler(CommandHandler("withdraw", check_started(withdraw))) 
     application.add_handler(CommandHandler("bank", bank))
 
-
-    # Limbo game handlers
-    # Ensure callback data for Limbo starts with "limbo_"
-    application.add_handler(CommandHandler("limbo", limbo))
-    application.add_handler(CallbackQueryHandler(handle_limbo_buttons))
     # Dice-related command
     application.add_handler(CommandHandler("bdice", check_started(bdice)))
 
