@@ -21,7 +21,7 @@ async def exchange(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
 
-    # Get the amount and the type of currency to exchange
+    # Get the amount and type of currency to exchange
     try:
         amount = int(context.args[0])
         currency_type = context.args[1].lower()
@@ -35,7 +35,7 @@ async def exchange(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("You need to start the bot first by using /start.")
         return
 
-    # Determine conversion rates and check if user has enough credits
+    # Determine conversion rates
     if currency_type == "gold":
         credit_cost = 100000
     elif currency_type == "silver":
@@ -45,31 +45,35 @@ async def exchange(update: Update, context: CallbackContext) -> None:
     else:
         await update.message.reply_text("Invalid currency type. Choose between 'gold', 'silver', or 'bronze'.")
         return
-    
-    # Corrected line: Multiply credit cost by the amount of coins requested
+
+    # Calculate total cost
     total_credit_cost = amount * credit_cost
-    if user_data['credits'] < total_credit_cost:
-        await update.message.reply_text(f"You don't have enough credits for this exchange. You need {total_credit_cost} credits.")
+
+    # Check if user has enough credits
+    if user_data.get('credits', 0) < total_credit_cost:
+        await update.message.reply_text(f"You don't have enough credits. You need {total_credit_cost} credits.")
         return
 
-    # Perform the exchange
+    # Deduct credits and add coins to the user's bag
     user_data['credits'] -= total_credit_cost
+    user_data.setdefault('bag', {})
     user_data['bag'][currency_type] = user_data['bag'].get(currency_type, 0) + amount
     save_user(user_data)
 
-    await update.message.reply_text(f"Successfully exchanged {total_credit_cost} credits for {amount} {currency_type} coin(s).")
+    await update.message.reply_text(
+        f"Successfully exchanged {total_credit_cost} credits for {amount} {currency_type} coin(s)."
+    )
 
-# Reverse exchange functionality (to convert coins back to credits)
-async def reverse_exchange(update: Update, context: CallbackContext) -> None:
+async def sell(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
 
-    # Get the amount and the type of currency to reverse exchange
+    # Get the amount and type of coin to sell
     try:
         amount = int(context.args[0])
         currency_type = context.args[1].lower()
     except (IndexError, ValueError):
-        await update.message.reply_text("Usage: /exchange <amount> <currency_type (gold/silver/bronze)>")
+        await update.message.reply_text("Usage: /sell <amount> <currency_type (gold/silver/bronze)>")
         return
 
     # Fetch user data
@@ -78,24 +82,40 @@ async def reverse_exchange(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("You need to start the bot first by using /start.")
         return
 
-    # Check if user has the coins to reverse exchange
-    if currency_type not in user_data['bag'] or user_data['bag'][currency_type] < amount:
-        await update.message.reply_text(f"You don't have enough {currency_type} coins to exchange.")
+    # Check if user has the coins they want to sell
+    user_bag = user_data.get('bag', {})
+    if user_bag.get(currency_type, 0) < amount:
+        await update.message.reply_text(f"You don't have enough {currency_type} coins to sell.")
         return
 
-    # Reverse the exchange
+    # Determine credit values for selling coins
     if currency_type == "gold":
         credit_value = 100000
     elif currency_type == "silver":
         credit_value = 50000
     elif currency_type == "bronze":
         credit_value = 10000
+    else:
+        await update.message.reply_text("Invalid coin type. Choose between 'gold', 'silver', or 'bronze'.")
+        return
 
-    user_data['credits'] += amount * credit_value
-    user_data['bag'][currency_type] -= amount
+    # Calculate the total credit value for selling the coins
+    total_credit_value = amount * credit_value
+
+    # Update the user's bag and credits
+    user_data['credits'] += total_credit_value
+    user_bag[currency_type] -= amount
+
+    # Clean up if coin count goes to 0
+    if user_bag[currency_type] <= 0:
+        del user_bag[currency_type]
+
     save_user(user_data)
 
-    await update.message.reply_text(f"Successfully reversed the exchange. You now have {user_data['credits']} credits and {user_data['bag'][currency_type]} {currency_type} coin(s).")
+    await update.message.reply_text(
+        f"Successfully sold {amount} {currency_type} coin(s) for {total_credit_value} credits.\n"
+        f"Your new balance: {user_data['credits']} credits."
+    )
 
 # Bank system - Store credits
 async def store(update: Update, context: CallbackContext) -> None:
@@ -169,15 +189,5 @@ async def bank(update: Update, context: CallbackContext) -> None:
     # Get the user's virtual bank balance
     bank_balance = user_data.get('bank', 0)  # Default to 0 if not found
 
-    # Check if the user has at least 37 credits in the virtual bank
-    if bank_balance < 37:
-        await update.message.reply_text("You don't have enough credits to check your bank balance.")
-        return
-
-    # Deduct 37 credits from the bank if the user has enough
-    user_data['bank'] -= 37
-    save_user(user_data)  # Save updated data
-
-    # Show the bank balance after deduction
+    # Show the bank balance
     await update.message.reply_text(f"Your virtual bank balance is: {bank_balance} credits.")
-
