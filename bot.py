@@ -19,7 +19,7 @@ from limbo import limbo, handle_limbo_buttons
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from hilo_game import HiLo, HiLo_click, HiLo_CashOut
-from bank import exchange, reverse_exchange, store, withdraw, bank
+from bank import exchange, sell, store, withdraw, bank
 
 # Global variables
 OWNER_ID = 5667016949
@@ -305,7 +305,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(HiLo_click, pattern='^Hilo_'))
     application.add_handler(CallbackQueryHandler(HiLo_CashOut, pattern='^HiLoCashOut$'))
     application.add_handler(CommandHandler("exchange", check_started(exchange)))  # For exchanging credits to coins
-    application.add_handler(CommandHandler("reverse_exchange", check_started(reverse_exchange)))  # For exchanging coins back to credits
+    application.add_handler(CommandHandler("sell", check_started(sell)))  # For exchanging coins back to credits
     application.add_handler(CommandHandler("store", check_started(store)))  # For storing credits in the bank
     application.add_handler(CommandHandler("withdraw", check_started(withdraw))) 
     application.add_handler(CommandHandler("bank", bank))
