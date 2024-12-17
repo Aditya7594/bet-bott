@@ -100,145 +100,78 @@ async def HiLo(update: Update, context: CallbackContext):
 
 # Handle click event on High or Low button
 async def HiLo_click(update: Update, context: CallbackContext):
-    user_name = update.effective_user.first_name
-    user_id = update.effective_user.id
     query = update.callback_query
+    user_id = query.from_user.id
     message_id = query.message.message_id
 
-    # Check if the game session exists
     if message_id not in cd:
-        await query.answer("Game session has expired or doesn't exist.", show_alert=True)
-        return None
+        await query.answer("No active game found. Start a new game with /HiLo <bet_amount>.", show_alert=True)
+        return
 
-    keyboard = cd[message_id]['keyboard']
-    logs = cd[message_id]['logs']
-    bet = cd[message_id]['bet']
-    player_id = cd[message_id]['user_id']
-    hand = cd[message_id]['hand']
-    table = cd[message_id]['table']
-    mult = cd[message_id]['mult']
+    game_data = cd[message_id]
+    player_id = game_data['user_id']
 
-    if update.callback_query.from_user.id != player_id:
-        await query.answer('Not yours', show_alert=True)
-        return None
+    if user_id != player_id:
+        await query.answer("This game is not yours.", show_alert=True)
+        return
 
-    house_edge = 0.98
+    logs = game_data['logs']
+    bet = game_data['bet']
+    hand = game_data['hand']
+    table = game_data['table']
+    mult = game_data['mult']
+    keyboard = game_data['keyboard']
 
-    mapping = {
-        'A': 0,
-        '2': 1,
-        '3': 2,
-        '4': 3,
-        '5': 4,
-        '6': 5,
-        '7': 6,
-        '8': 7,
-        '9': 8,
-        '10': 9,
-        'J': 10,
-        'Q': 11,
-        'K': 12,
-    }
+    mapping = {'A': 0, '2': 1, '3': 2, '4': 3, '5': 4, '6': 5, '7': 6, '8': 7, '9': 8, '10': 9, 'J': 10, 'Q': 11, 'K': 12}
+    p_mapping = {0: 1.062, 1: 1.158, 2: 1.274, 3: 1.416, 4: 1.593, 5: 1.82, 6: 2.123, 7: 1.82, 8: 1.593, 9: 1.416, 10: 1.274, 11: 1.158, 12: 1.062}
 
-    p_mapping = {
-        0: 1.062,
-        1: 1.158,
-        2: 1.274,
-        3: 1.416,
-        4: 1.593,
-        5: 1.82,
-        6: 2.123,
-        7: 1.82,
-        8: 1.593,
-        9: 1.416,
-        10: 1.274,
-        11: 1.158,
-        12: 1.062,
-    }
-
-    match = re.search(r'[A-Z0-9]+$', hand)
-    user_card = match.group()
-    match = re.search(r'[A-Z0-9]+$', table)
-    table_card = match.group()
-    user_number = mapping.get(user_card)
-    table_number = mapping.get(table_card)
+    user_card = re.search(r'[A-Z0-9]+$', hand).group()
+    table_card = re.search(r'[A-Z0-9]+$', table).group()
+    user_number = mapping[user_card]
+    table_number = mapping[table_card]
 
     choice = query.data.split("_")[-1]
     logs.append(f'|{table}')
     if len(logs) > 5:
-        logs.remove(logs[0])
+        logs.pop(0)
 
     log_text = ''.join(logs)
 
-    if choice == 'High':
-        if user_number <= table_number:
-            multiplier = p_mapping.get(user_number)
-            winnings = int(bet * multiplier * mult)
+    if (choice == 'High' and user_number <= table_number) or (choice == 'Low' and user_number >= table_number):
+        multiplier = p_mapping[user_number]
+        winnings = int(bet * multiplier * mult)
 
-            # Update credits after winning
-            user_data = get_user_by_id(user_id)
-            user_data["credits"] += winnings
-            save_user(user_data)
+        user_data = get_user_by_id(user_id)
+        user_data["credits"] += winnings
+        save_user(user_data)
 
-            text = f'<b><u>📈 HiLo Game 📉</u></b>\n\n'
-            text += f'Bet amount: {bet} 👾\n'
-            text += f'Current multiplier: {round(multiplier*mult, 3)}x\n'
-            text += f'Winning Amount: {winnings} 👾\n\n'
-            text += f'Card on Table revealed to be {table} , You bet on High and won!\n<b>Now guess the next one!</b>\n\n'
-            text += f'You have: <b>{table}</b>\n'
-            text += f'On Table: <b>?</b>\n\n'
-            text += f'<b><u>Logs</u></b>\n{log_text}'
+        text = (
+            f"<b><u>📈 HiLo Game 📉</u></b>\n\n"
+            f"Bet amount: {bet} 👾\n"
+            f"Current multiplier: {round(multiplier * mult, 3)}x\n"
+            f"Winning Amount: {winnings} 👾\n\n"
+            f"Card on Table revealed to be {table}. You bet on {choice} and won!\n<b>Now guess the next one!</b>\n\n"
+            f"You have: <b>{table}</b>\nOn Table: <b>?</b>\n\n"
+            f"<b><u>Logs</u></b>\n{log_text}"
+        )
 
-            cd[message_id]['hand'] = table
-            cd[message_id]['table'] = random.choice(deck)
-            cd[message_id]['mult'] = multiplier * mult
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+        cd[message_id]['hand'] = table
+        cd[message_id]['table'] = random.choice(deck)
+        cd[message_id]['mult'] = multiplier * mult
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
 
-        if user_number > table_number:
-            text = f'<b><u>📈 HiLo Game 📉</u></b>\n\n'
-            text += f'Bet amount: {bet} 👾\n'
-            text += f'Current multiplier: {0}x\n\n'
-            text += f'<b><u>Logs</u></b>\n{log_text}\n\n'
-            text += f'Card on Table revealed to be {table} , You bet on High and Lost!\n<b>Game Over</b>\n'
-            hilo_limit[user_id] += 1
-            del cd[message_id]  # Clean up the session after the game ends
-            await query.edit_message_text(text, parse_mode=ParseMode.HTML)
+    else:
+        text = (
+            f"<b><u>📈 HiLo Game 📉</u></b>\n\n"
+            f"Bet amount: {bet} 👾\n"
+            f"Current multiplier: {0}x\n\n"
+            f"Card on Table revealed to be {table}. You bet on {choice} and lost!\n<b>Game Over</b>\n\n"
+            f"<b><u>Logs</u></b>\n{log_text}"
+        )
+        hilo_limit[user_id] += 1
+        del cd[message_id]
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML)
 
-    if choice == 'Low':
-        if user_number >= table_number:
-            multiplier = p_mapping.get(user_number)
-            winnings = int(bet * multiplier * mult)
-
-            # Update credits after winning
-            user_data = get_user_by_id(user_id)
-            user_data["credits"] += winnings
-            save_user(user_data)
-
-            text = f'<b><u>📈 HiLo Game 📉</u></b>\n\n'
-            text += f'Bet amount: {bet} 👾\n'
-            text += f'Current multiplier: {round(multiplier * mult, 3)}x\n'
-            text += f'Winning Amount: {winnings} 👾\n\n'
-            text += f'Card on Table revealed to be {table} , You bet on Low and won!\n<b>Now guess the next one!</b>\n\n'
-            text += f'You have: <b>{table}</b>\n'
-            text += f'On Table: <b>?</b>\n\n'
-            text += f'<b><u>Logs</u></b>\n{log_text}'
-
-            cd[message_id]['hand'] = table
-            cd[message_id]['table'] = random.choice(deck)
-            cd[message_id]['mult'] = multiplier * mult
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-
-        if user_number < table_number:
-            text = f'<b><u>📈 HiLo Game 📉</u></b>\n\n'
-            text += f'Bet amount: {bet} 👾\n'
-            text += f'Current multiplier: {0}x\n\n'
-            text += f'<b><u>Logs</u></b>\n{log_text}\n\n'
-            text += f'Card on Table revealed to be {table} , You bet on Low and Lost!\n<b>Game Over</b>\n'
-            hilo_limit[user_id] += 1
-            del cd[message_id]  # Clean up the session after the game ends
-            await query.edit_message_text(text, parse_mode=ParseMode.HTML)
 
 async def HiLo_CashOut(update: Update, context: CallbackContext):
     query = update.callback_query
