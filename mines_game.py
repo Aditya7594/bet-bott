@@ -17,13 +17,19 @@ def get_user_by_id(user_id):
 def save_user(user_data):
     users_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
 
-# Global variables for the game
-cd = {}  # Stores game context data for each user
+# Global dictionary for tracking current Mines games
+current_mines_games = {}
 
 # Command to start Mines game
 async def Mines(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     user_data = get_user_by_id(user_id)
+    
+    # Check if the user already has an active game
+    if user_id in current_mines_games:
+        await update.message.reply_text("You already have an ongoing game! Please finish your current game first.")
+        return
+    
     if not user_data:
         await update.message.reply_text("No user data found. Please try again later.")
         return
@@ -77,10 +83,11 @@ async def Mines(update: Update, context: CallbackContext):
         'user_id': user_id,
         'multiplier': 1,
         'mines_hit': False,
-        'total_bombs': total_bombs  # Store the bomb count for later use
+        'total_bombs': total_bombs,  # Store the bomb count for later use
+        'in_progress': True  # Mark the game as in progress
     }
 
-    cd[user_id] = game_state
+    current_mines_games[user_id] = game_state
 
     # Set up the buttons
     keyboard = []
@@ -102,9 +109,9 @@ async def Mines(update: Update, context: CallbackContext):
 async def Mines_click(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
-    game_state = cd.get(user_id)
+    game_state = current_mines_games.get(user_id)
 
-    if not game_state:
+    if not game_state or not game_state.get('in_progress', False):
         await query.answer("No active game found. Start a new game with /Mines <bet_amount> <bomb_count>.", show_alert=True)
         return
 
@@ -141,8 +148,9 @@ async def Mines_click(update: Update, context: CallbackContext):
         user_data["credits"] += bet
         save_user(user_data)
 
-        # Delete the game state after game over
-        del cd[user_id]
+        # End the game session and update in-progress status
+        game_state['in_progress'] = False
+        del current_mines_games[user_id]
 
         await query.edit_message_text(text, parse_mode=ParseMode.HTML)
         return
@@ -178,9 +186,9 @@ async def Mines_click(update: Update, context: CallbackContext):
 async def Mines_CashOut(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = update.effective_user.id
-    game_state = cd.get(user_id)
+    game_state = current_mines_games.get(user_id)
 
-    if not game_state:
+    if not game_state or not game_state.get('in_progress', False):
         await query.answer("No active game found. Start a new game with /Mines <bet_amount> <bomb_count>.", show_alert=True)
         return
 
@@ -197,8 +205,9 @@ async def Mines_CashOut(update: Update, context: CallbackContext):
     user_data["credits"] += winnings
     save_user(user_data)
 
-    # End the game session
-    del cd[user_id]
+    # End the game session and update in-progress status
+    game_state['in_progress'] = False
+    del current_mines_games[user_id]
 
     text = f"<b><u>💎 Mines Game 💎</u></b>\n\n"
     text += f"Bet amount: {bet} 👾\n"
@@ -206,4 +215,3 @@ async def Mines_CashOut(update: Update, context: CallbackContext):
     text += f"<b>You cashed out and won: {winnings} 👾</b>"
 
     await query.edit_message_text(text, parse_mode=ParseMode.HTML)
-
