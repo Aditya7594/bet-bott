@@ -312,9 +312,8 @@ def main() -> None:
 
     # Limbo game handlers
     # Ensure callback data for Limbo starts with "limbo_"
-    application.add_handler(CommandHandler("limbo", check_started(limbo)))
-    application.add_handler(CallbackQueryHandler(handle_limbo_buttons, pattern="^limbo_"))  # Adjusted pattern for Limbo callbacks
-
+    application.add_handler(CommandHandler("limbo", limbo))
+    application.add_handler(CallbackQueryHandler(handle_limbo_buttons))
     # Dice-related command
     application.add_handler(CommandHandler("bdice", check_started(bdice)))
 
