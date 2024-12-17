@@ -16,6 +16,7 @@ def save_user(user_data):
     users_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
 
 # Exchange functionality
+# Exchange functionality
 async def exchange(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
@@ -45,16 +46,18 @@ async def exchange(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("Invalid currency type. Choose between 'gold', 'silver', or 'bronze'.")
         return
     
-    if user_data['credits'] < amount * credit_cost:
-        await update.message.reply_text(f"You don't have enough credits for this exchange. You need {amount * credit_cost} credits.")
+    # Corrected line: Multiply credit cost by the amount of coins requested
+    total_credit_cost = amount * credit_cost
+    if user_data['credits'] < total_credit_cost:
+        await update.message.reply_text(f"You don't have enough credits for this exchange. You need {total_credit_cost} credits.")
         return
 
     # Perform the exchange
-    user_data['credits'] -= amount * credit_cost
+    user_data['credits'] -= total_credit_cost
     user_data['bag'][currency_type] = user_data['bag'].get(currency_type, 0) + amount
     save_user(user_data)
 
-    await update.message.reply_text(f"Successfully exchanged {amount * credit_cost} credits for {amount} {currency_type} coin(s).")
+    await update.message.reply_text(f"Successfully exchanged {total_credit_cost} credits for {amount} {currency_type} coin(s).")
 
 # Reverse exchange functionality (to convert coins back to credits)
 async def reverse_exchange(update: Update, context: CallbackContext) -> None:
@@ -151,3 +154,30 @@ async def withdraw(update: Update, context: CallbackContext) -> None:
     save_user(user_data)
 
     await update.message.reply_text(f"Successfully withdrew {amount} credits from your virtual bank. Your current balance is {user_data['credits']} credits.")
+
+# Bank balance command - Show user's bank balance and deduct 37 credits
+async def bank(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = str(user.id)
+
+    # Fetch user data
+    user_data = get_user_by_id(user_id)
+    if not user_data:
+        await update.message.reply_text("You need to start the bot first by using /start.")
+        return
+
+    # Get the user's virtual bank balance
+    bank_balance = user_data.get('bank', 0)  # Default to 0 if not found
+
+    # Check if the user has at least 37 credits in the virtual bank
+    if bank_balance < 37:
+        await update.message.reply_text("You don't have enough credits to check your bank balance.")
+        return
+
+    # Deduct 37 credits from the bank if the user has enough
+    user_data['bank'] -= 37
+    save_user(user_data)  # Save updated data
+
+    # Show the bank balance after deduction
+    await update.message.reply_text(f"Your virtual bank balance is: {bank_balance} credits.")
+
