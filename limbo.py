@@ -46,11 +46,6 @@ async def limbo(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("You're already playing Limbo. Please finish that game before starting a new one.")
         return
 
-    # Check if user is already in an active Mines game
-    if user_id in cd:
-        await update.message.reply_text("You're already playing Mines. Please finish that game before starting a new one.")
-        return
-
     user_data = get_user_by_id(user_id)
     if not user_data:
         await update.message.reply_text("You need to start the bot first by using /start.")
