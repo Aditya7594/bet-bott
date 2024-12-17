@@ -6,10 +6,11 @@ import logging
 from telegram import Update, ChatPermissions
 from telegram.ext import filters, ContextTypes
 import logging
-from datetime import datetime
+from datetime import datetimefrom datetime, timedelta
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, CallbackQuery
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters
 from token_1 import token
+
 
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos
 from minigame import dart, basketball, flip, dice, credits_leaderboard,football
@@ -17,10 +18,12 @@ from limbo import limbo, handle_limbo_buttons
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from hilo_game import HiLo, HiLo_click, HiLo_CashOut
+from mines_game import Mines, Mines_click, Mines_CashOut
 
 # Global variables
 OWNER_ID = 5667016949
 muted_users = set()
+last_interaction_time = {}
 
 # List of owner IDs
 OWNER_IDS = [5667016949, 1474610394]
@@ -168,6 +171,34 @@ async def add_credits(update: Update, context: CallbackContext) -> None:
     # Send confirmation message
     await update.message.reply_text(f"Successfully added {credits_to_add} credits to user {target_user_id}. New balance: {new_credits} credits.")
 
+async def check_game_timeout():
+    current_time = datetime.now()
+    
+    for user_id, last_time in last_interaction_time.items():
+        if (current_time - last_time).total_seconds() > 180:  # If no interaction for 3 minutes
+            game_state = cd.get(user_id)
+            if game_state:
+                # Refund the credits and remove the game data
+                bet = game_state['bet']
+                user_data = get_user_by_id(user_id)
+                if user_data:
+                    user_data['credits'] += bet
+                    save_user(user_data)
+                
+                # Notify user and delete game data
+                await context.bot.send_message(user_id, "Your game was canceled due to inactivity. Your credits have been refunded.")
+                del cd[user_id]  # Remove the game state
+
+            # Remove from the timeout tracker
+            del last_interaction_time[user_id]
+
+# Set up a background task to check for timeouts every minute
+async def timeout_task():
+    while True:
+        await asyncio.sleep(60)  # Wait for 1 minute
+        await check_game_timeout()
+
+
 
 def main() -> None:
     # Create the Application and pass the bot token
@@ -198,9 +229,13 @@ def main() -> None:
     application.add_handler(CommandHandler("daily", daily))
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
+    application.add_handler(CommandHandler("Mines", Mines))
+    application.add_handler(CallbackQueryHandler(Mines_click, pattern="^\d+$"))  # Tile clicks
+    application.add_handler(CallbackQueryHandler(Mines_CashOut, pattern="^MinesCashOut$"))
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.job_queue.run_once(timeout_task, 0)
 
     # Add callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(button))
