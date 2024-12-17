@@ -19,7 +19,7 @@ from limbo import limbo, handle_limbo_buttons
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from hilo_game import HiLo, HiLo_click, HiLo_CashOut
-from bank import exchange, reverse_exchange, store, withdraw
+from bank import exchange, reverse_exchange, store, withdraw, bank
 
 # Global variables
 OWNER_ID = 5667016949
