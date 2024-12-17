@@ -27,6 +27,12 @@ async def bdice(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("Usage: /bdice <bet_amount> <your_guess_total (3-18)>")
         return
 
+    # Check if the bet amount is within the maximum limit
+    max_bet = 5000
+    if bet_amount > max_bet:
+        await update.message.reply_text(f"The maximum bet amount is {max_bet} credits.")
+        return
+
     if user_guess < 3 or user_guess > 18:
         await update.message.reply_text("Your guess must be between 3 and 18.")
         return
