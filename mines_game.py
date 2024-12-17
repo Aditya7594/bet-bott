@@ -26,6 +26,10 @@ mines_limit = {}  # Tracks the number of games played by each user
 async def Mines(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     user_data = get_user_by_id(user_id)
+    if not user_data:
+        await update.message.reply_text("No user data found. Please try again later.")
+        return
+
     credit = user_data.get("credits", 0)  # Get user's credits
 
     # Parse bet amount and number of bombs from the command
@@ -54,7 +58,7 @@ async def Mines(update: Update, context: CallbackContext):
         user_data["credits"] -= bet
         save_user(user_data)
 
-    except:
+    except Exception as e:
         await update.message.reply_text('/Mines <bet amount> <bombs count>')
         return
 
