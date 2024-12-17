@@ -20,7 +20,6 @@ from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from hilo_game import HiLo, HiLo_click, HiLo_CashOut
 from bank import exchange, sell, store, withdraw, bank
-from xox_game import xox, handle_xox_click 
 
 # Global variables
 OWNER_ID = 5667016949
@@ -310,8 +309,6 @@ def main() -> None:
     application.add_handler(CommandHandler("store", check_started(store)))  # For storing credits in the bank
     application.add_handler(CommandHandler("withdraw", check_started(withdraw))) 
     application.add_handler(CommandHandler("bank", bank))
-    application.add_handler(CommandHandler("xox", check_started(xox)))
-    application.add_handler(CallbackQueryHandler(handle_xox_click))
 
 
     # Limbo game handlers
