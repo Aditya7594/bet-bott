@@ -7,10 +7,7 @@ from telegram.ext import CallbackContext
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
 db = client['telegram_bot']
 users_collection = db['users']
-
-# Global game state for Limbo and Mines
-current_limbo_games = {}
-cd = {}
+limbo_games_collection = db['limbo_games']  # Separate MongoDB collection for Limbo games
 
 # Weighted multiplier generation thresholds for Limbo
 MULTIPLIER_THRESHOLDS = [
@@ -28,7 +25,6 @@ def save_user(user_data):
     users_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
 
 # Limbo Game functions
-
 def generate_weighted_multiplier():
     random_number = random.uniform(0, 1)
     if random_number <= 0.5:
@@ -43,13 +39,16 @@ def generate_weighted_multiplier():
 async def limbo(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
-    
-    # Check if user is already in a game (Mines or Limbo)
-    if user_id in cd:  # User is in an active Mines game
-        await update.message.reply_text("You're already playing Mines. Please finish that game before starting a new one.")
-        return
-    if user_id in current_limbo_games:  # User is already in an active Limbo game
+
+    # Check if user is already in an active Limbo game
+    limbo_game = limbo_games_collection.find_one({"user_id": user_id})
+    if limbo_game:
         await update.message.reply_text("You're already playing Limbo. Please finish that game before starting a new one.")
+        return
+
+    # Check if user is already in an active Mines game
+    if user_id in cd:
+        await update.message.reply_text("You're already playing Mines. Please finish that game before starting a new one.")
         return
 
     user_data = get_user_by_id(user_id)
@@ -73,39 +72,28 @@ async def limbo(update: Update, context: CallbackContext) -> None:
     user_data['credits'] -= bet_amount
     save_user(user_data)
 
+    # Generate random multipliers
     multipliers = [generate_weighted_multiplier() for _ in range(5)]
-    current_limbo_games[user_id] = {
+
+    # Store the game in the MongoDB collection for Limbo games
+    limbo_games_collection.insert_one({
+        'user_id': user_id,
         'bet': bet_amount,
         'multipliers': multipliers,
-        'current_index': 0,
-    }
+        'current_index': 0
+    })
 
     await send_limbo_message(update, user_id, context)
 
-# Mines Game functions (Updated for isolation)
-
-async def Mines(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    user_data = get_user_by_id(user_id)
-    credit = user_data.get("credits", 0)  # Get user's credits
-
-    # Check if user is already playing Limbo
-    if user_id in current_limbo_games:
-        await update.message.reply_text("You're already playing Limbo. Please finish that game before starting Mines.")
-        return
-
-    # Continue with your Mines game logic...
-    # Here, handle Mines game start, bet validation, and game initialization as before.
-
 # Function to send Limbo game message
 async def send_limbo_message(update: Update, user_id: str, context: CallbackContext):
-    game = current_limbo_games.get(user_id)
-    if not game:
+    limbo_game = limbo_games_collection.find_one({"user_id": user_id})
+    if not limbo_game:
         return
 
-    current_index = game['current_index']
-    bet = game['bet']
-    current_multiplier = game['multipliers'][current_index]
+    current_index = limbo_game['current_index']
+    bet = limbo_game['bet']
+    current_multiplier = limbo_game['multipliers'][current_index]
 
     # Generate inline buttons
     keyboard = []
@@ -119,7 +107,7 @@ async def send_limbo_message(update: Update, user_id: str, context: CallbackCont
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    multipliers_display = '\n'.join([f"{i+1}. {'?' if i > current_index else game['multipliers'][i]}" for i in range(5)])
+    multipliers_display = '\n'.join([f"{i+1}. {'?' if i > current_index else limbo_game['multipliers'][i]}" for i in range(5)])
 
     game_message = (
         "🎰 *Limbo Game*:\n\n"
@@ -142,8 +130,8 @@ async def handle_limbo_buttons(update: Update, context: CallbackContext) -> None
     await query.answer()
 
     user_id = str(update.effective_user.id)
-    game = current_limbo_games.get(user_id)
-    if not game:
+    limbo_game = limbo_games_collection.find_one({"user_id": user_id})
+    if not limbo_game:
         await query.edit_message_text("No active game found. Start a new game with /limbo <bet_amount>.")
         return
 
@@ -155,14 +143,14 @@ async def handle_limbo_buttons(update: Update, context: CallbackContext) -> None
 
 # Handle Take action
 async def handle_take(update: Update, context: CallbackContext, user_id: str):
-    game = current_limbo_games.pop(user_id, None)
-    if not game:
+    limbo_game = limbo_games_collection.find_one_and_delete({"user_id": user_id})
+    if not limbo_game:
         return
 
-    multiplier = game['multipliers'][game['current_index']]
-    winnings = int(game['bet'] * multiplier)
+    multiplier = limbo_game['multipliers'][limbo_game['current_index']]
+    winnings = int(limbo_game['bet'] * multiplier)
 
-    # Update credits
+    # Update user's credits
     user_data = get_user_by_id(user_id)
     user_data['credits'] += winnings
     save_user(user_data)
@@ -174,12 +162,16 @@ async def handle_take(update: Update, context: CallbackContext, user_id: str):
 
 # Handle Next action (moving to next multiplier)
 async def handle_next(update: Update, context: CallbackContext, user_id: str):
-    game = current_limbo_games.get(user_id)
-    if not game:
+    limbo_game = limbo_games_collection.find_one({"user_id": user_id})
+    if not limbo_game:
         return
 
-    if game['current_index'] < 4:
-        game['current_index'] += 1
+    if limbo_game['current_index'] < 4:
+        new_index = limbo_game['current_index'] + 1
+        limbo_games_collection.update_one(
+            {"user_id": user_id},
+            {"$set": {"current_index": new_index}}
+        )
         await send_limbo_message(update, user_id, context)
     else:
         await handle_take(update, context, user_id)
