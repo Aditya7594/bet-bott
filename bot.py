@@ -308,6 +308,7 @@ def main() -> None:
     application.add_handler(CommandHandler("reverse_exchange", check_started(reverse_exchange)))  # For exchanging coins back to credits
     application.add_handler(CommandHandler("store", check_started(store)))  # For storing credits in the bank
     application.add_handler(CommandHandler("withdraw", check_started(withdraw))) 
+    application.add_handler(CommandHandler("bank", bank))
 
     # Limbo game handlers
     # Ensure callback data for Limbo starts with "limbo_"
