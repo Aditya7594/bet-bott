@@ -208,6 +208,62 @@ async def timeout_task():
         await asyncio.sleep(60)  # Wait for 1 minute
         await check_game_timeout()
 
+
+async def reset(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+
+    # Check if the user is the owner
+    if user_id not in OWNER_IDS:
+        await update.message.reply_text("You don't have permission to use this command.")
+        return
+
+    # Create inline keyboard for confirmation
+    keyboard = [
+        [
+            InlineKeyboardButton("Yes", callback_data="reset_yes"),
+            InlineKeyboardButton("No", callback_data="reset_no"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text("Are you sure you want to reset all user data? This will wipe all progress!", reply_markup=reply_markup)
+
+# Handle the callback data when the owner confirms reset
+async def reset_confirmation(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    # Check if the user is the owner
+    if user_id not in OWNER_IDS:
+        await query.answer("You don't have permission to do this.", show_alert=True)
+        return
+
+    # Check the callback data (Yes or No)
+    if query.data == "reset_yes":
+        # Reset all users' data and give them 5000 credits
+        users_collection.update_many({}, {"$set": {
+            "credits": 5000,  # Set credits to 5000 after reset
+            "daily": None,
+            "win": 0,
+            "loss": 0,
+            "achievement": [],
+            "faction": "None",
+            "ban": None,
+            "title": "None",
+            "primos": 0,
+            "bag": {}
+        }})
+        
+        # Inform the owner that the reset was successful
+        await query.answer("All user data has been reset to default values, and all users have received 5000 credits.", show_alert=True)
+
+    elif query.data == "reset_no":
+        # Inform the owner that the reset was canceled
+        await query.answer("User data reset was canceled.", show_alert=True)
+
+    # Delete the inline keyboard after answering
+    await query.edit_message_reply_markup(reply_markup=None)
+
 def main() -> None:
     # Create the Application and pass the bot token
     application = Application.builder().token(token).build()
@@ -237,6 +293,8 @@ def main() -> None:
     application.add_handler(CommandHandler("daily", check_started(daily)))
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
+    application.add_handler(CommandHandler("reset", reset))
+    application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
 
     # Message handlers
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
