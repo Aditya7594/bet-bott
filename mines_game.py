@@ -1,9 +1,8 @@
 import random
-import asyncio
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import CommandHandler, CallbackQueryHandler, CallbackContext, Application
-from telegram.constants import ParseMode
+from telegram.ext import CallbackContext, CommandHandler, CallbackQueryHandler
 from pymongo import MongoClient
+from telegram.constants import ParseMode
 
 # MongoDB client to store user data
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
@@ -20,7 +19,6 @@ def save_user(user_data):
 
 # Global variables for the game
 cd = {}  # Stores game context data for each user
-mines_limit = {}  # Tracks the number of games played by each user
 
 # Command to start Mines game
 async def Mines(update: Update, context: CallbackContext):
@@ -100,8 +98,6 @@ async def Mines(update: Update, context: CallbackContext):
 
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
-    # Set a timeout of 3 minutes (180 seconds) for inactivity
-    context.job_queue.run_once(cancel_game_due_to_inactivity, 180, context=user_id, data=bet)
 
 async def Mines_click(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -210,3 +206,4 @@ async def Mines_CashOut(update: Update, context: CallbackContext):
     text += f"<b>You cashed out and won: {winnings} 👾</b>"
 
     await query.edit_message_text(text, parse_mode=ParseMode.HTML)
+
