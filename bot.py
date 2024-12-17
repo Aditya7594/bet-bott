@@ -287,23 +287,32 @@ def main() -> None:
     application.add_handler(CommandHandler("hilo", check_started(HiLo)))
     application.add_handler(CallbackQueryHandler(HiLo_click, pattern='^Hilo_'))
     application.add_handler(CallbackQueryHandler(HiLo_CashOut, pattern='^HiLoCashOut$'))
+
+    # Limbo game handlers
+    # Ensure callback data for Limbo starts with "limbo_"
     application.add_handler(CommandHandler("limbo", check_started(limbo)))
-    application.add_handler(CallbackQueryHandler(handle_limbo_buttons))
+    application.add_handler(CallbackQueryHandler(handle_limbo_buttons, pattern="^limbo_"))  # Adjusted pattern for Limbo callbacks
+
+    # Dice-related command
     application.add_handler(CommandHandler("bdice", check_started(bdice)))
+
+    # Daily-related commands
     application.add_handler(CommandHandler("daily", check_started(daily)))
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
-    application.add_handler(CommandHandler("reset", reset))
-    application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
 
-    # Message handlers
+    # Reset functionality (ensure callback data pattern is distinct)
+    application.add_handler(CommandHandler("reset", reset))  # Command to initiate reset
+    application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))  # Pattern adjusted for reset callbacks
+
+    # Message handlers for rewards and other messages
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Run the timeout task every minute
+    # Run the timeout task every minute (this checks for timeout game interactions)
     application.job_queue.run_once(timeout_task, 0)
 
-    # Add callback query handler for inline buttons
+    # Add callback query handler for inline buttons (ensure inline button callbacks are unique)
     application.add_handler(CallbackQueryHandler(button))
 
     # Start polling for updates
