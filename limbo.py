@@ -8,10 +8,11 @@ client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?r
 db = client['telegram_bot']
 users_collection = db['users']
 
-# Global game state
+# Global game state for Limbo and Mines
 current_limbo_games = {}
+cd = {}
 
-# Weighted multiplier generation thresholds
+# Weighted multiplier generation thresholds for Limbo
 MULTIPLIER_THRESHOLDS = [
     (0.5, 0.8),   # 50% chance for multipliers between 0.5 - 0.8
     (0.81, 1.5),  # 30% chance for multipliers between 0.81 - 1.5
@@ -19,11 +20,14 @@ MULTIPLIER_THRESHOLDS = [
     (2.51, 4.0),  # 5% chance for multipliers between 2.51 - 4.0
 ]
 
+# MongoDB functions
 def get_user_by_id(user_id):
     return users_collection.find_one({"user_id": user_id})
 
 def save_user(user_data):
     users_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
+
+# Limbo Game functions
 
 def generate_weighted_multiplier():
     random_number = random.uniform(0, 1)
@@ -39,9 +43,16 @@ def generate_weighted_multiplier():
 async def limbo(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
-    user_data = get_user_by_id(user_id)
+    
+    # Check if user is already in a game (Mines or Limbo)
+    if user_id in cd:  # User is in an active Mines game
+        await update.message.reply_text("You're already playing Mines. Please finish that game before starting a new one.")
+        return
+    if user_id in current_limbo_games:  # User is already in an active Limbo game
+        await update.message.reply_text("You're already playing Limbo. Please finish that game before starting a new one.")
+        return
 
-    # Check if user started the bot
+    user_data = get_user_by_id(user_id)
     if not user_data:
         await update.message.reply_text("You need to start the bot first by using /start.")
         return
@@ -50,6 +61,7 @@ async def limbo(update: Update, context: CallbackContext) -> None:
     if not context.args or not context.args[0].isdigit():
         await update.message.reply_text("Please provide a valid bet amount. Example: /limbo 1000")
         return
+
     bet_amount = int(context.args[0])
 
     # Check credits
@@ -70,6 +82,22 @@ async def limbo(update: Update, context: CallbackContext) -> None:
 
     await send_limbo_message(update, user_id, context)
 
+# Mines Game functions (Updated for isolation)
+
+async def Mines(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    user_data = get_user_by_id(user_id)
+    credit = user_data.get("credits", 0)  # Get user's credits
+
+    # Check if user is already playing Limbo
+    if user_id in current_limbo_games:
+        await update.message.reply_text("You're already playing Limbo. Please finish that game before starting Mines.")
+        return
+
+    # Continue with your Mines game logic...
+    # Here, handle Mines game start, bet validation, and game initialization as before.
+
+# Function to send Limbo game message
 async def send_limbo_message(update: Update, user_id: str, context: CallbackContext):
     game = current_limbo_games.get(user_id)
     if not game:
@@ -87,16 +115,11 @@ async def send_limbo_message(update: Update, user_id: str, context: CallbackCont
             InlineKeyboardButton("Next", callback_data=f"next_{user_id}")
         ])
     else:
-        keyboard.append([
-            InlineKeyboardButton("Take", callback_data=f"take_{user_id}")
-        ])
+        keyboard.append([InlineKeyboardButton("Take", callback_data=f"take_{user_id}")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    multipliers_display = '\n'.join([
-        f"{i+1}. {'?' if i > current_index else game['multipliers'][i]}"
-        for i in range(5)
-    ])
+    multipliers_display = '\n'.join([f"{i+1}. {'?' if i > current_index else game['multipliers'][i]}" for i in range(5)])
 
     game_message = (
         "🎰 *Limbo Game*:\n\n"
@@ -109,14 +132,11 @@ async def send_limbo_message(update: Update, user_id: str, context: CallbackCont
     )
 
     if update.message:
-        await update.message.reply_text(
-            game_message, reply_markup=reply_markup, parse_mode='Markdown'
-        )
+        await update.message.reply_text(game_message, reply_markup=reply_markup, parse_mode='Markdown')
     else:
-        await update.callback_query.edit_message_text(
-            game_message, reply_markup=reply_markup, parse_mode='Markdown'
-        )
+        await update.callback_query.edit_message_text(game_message, reply_markup=reply_markup, parse_mode='Markdown')
 
+# Handle Limbo button presses (Take or Next)
 async def handle_limbo_buttons(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
@@ -133,6 +153,7 @@ async def handle_limbo_buttons(update: Update, context: CallbackContext) -> None
     elif action == 'next':
         await handle_next(update, context, user_id)
 
+# Handle Take action
 async def handle_take(update: Update, context: CallbackContext, user_id: str):
     game = current_limbo_games.pop(user_id, None)
     if not game:
@@ -151,6 +172,7 @@ async def handle_take(update: Update, context: CallbackContext, user_id: str):
         parse_mode='Markdown'
     )
 
+# Handle Next action (moving to next multiplier)
 async def handle_next(update: Update, context: CallbackContext, user_id: str):
     game = current_limbo_games.get(user_id)
     if not game:
