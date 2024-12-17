@@ -189,19 +189,15 @@ def main() -> None:
     application.add_handler(CommandHandler("addcredits", add_credits))
     application.add_handler(CommandHandler("reset_bag_data", reset_bag_data))
     application.add_handler(CommandHandler("leaderboard", credits_leaderboard))
+    application.add_handler(CommandHandler("hilo", HiLo))
+    application.add_handler(CallbackQueryHandler(HiLo_click, pattern='^Hilo_'))
+    application.add_handler(CallbackQueryHandler(HiLo_CashOut, pattern='^HiLoCashOut$'))
     application.add_handler(CommandHandler("limbo", limbo))
     application.add_handler(CallbackQueryHandler(handle_limbo_buttons))
     application.add_handler(CommandHandler("bdice", bdice))
     application.add_handler(CommandHandler("daily", daily))
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
-    application.add_handler(CommandHandler("hilo", HiLo))
-    application.add_handler(CallbackQueryHandler(HiLo_click, pattern='^Hilo_'))
-    application.add_handler(CallbackQueryHandler(HiLo_CashOut, pattern='^HiLoCashOut$'))
-
-
-
-
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
