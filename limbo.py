@@ -79,23 +79,23 @@ async def send_limbo_message(update: Update, user_id: str, context: CallbackCont
     bet = game['bet']
     current_multiplier = game['multipliers'][current_index]
 
-    # Generate inline buttons with clear identifiers
+    # Generate inline buttons
     keyboard = []
     if current_index < 4:
-        keyboard.append([ 
-            InlineKeyboardButton("Take", callback_data=f"limbo_take_{user_id}"),
-            InlineKeyboardButton("Next", callback_data=f"limbo_next_{user_id}")
+        keyboard.append([
+            InlineKeyboardButton("Take", callback_data=f"take_{user_id}"),
+            InlineKeyboardButton("Next", callback_data=f"next_{user_id}")
         ])
     else:
-        keyboard.append([ 
-            InlineKeyboardButton("Take", callback_data=f"limbo_take_{user_id}")
+        keyboard.append([
+            InlineKeyboardButton("Take", callback_data=f"take_{user_id}")
         ])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    multipliers_display = '\n'.join([ 
-        f"{i+1}. {'?' if i > current_index else game['multipliers'][i]}" 
-        for i in range(5) 
+    multipliers_display = '\n'.join([
+        f"{i+1}. {'?' if i > current_index else game['multipliers'][i]}"
+        for i in range(5)
     ])
 
     game_message = (
@@ -116,6 +116,22 @@ async def send_limbo_message(update: Update, user_id: str, context: CallbackCont
         await update.callback_query.edit_message_text(
             game_message, reply_markup=reply_markup, parse_mode='Markdown'
         )
+
+async def handle_limbo_buttons(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(update.effective_user.id)
+    game = current_limbo_games.get(user_id)
+    if not game:
+        await query.edit_message_text("No active game found. Start a new game with /limbo <bet_amount>.")
+        return
+
+    action = query.data.split('_')[0]
+    if action == 'take':
+        await handle_take(update, context, user_id)
+    elif action == 'next':
+        await handle_next(update, context, user_id)
 
 async def handle_take(update: Update, context: CallbackContext, user_id: str):
     game = current_limbo_games.pop(user_id, None)
