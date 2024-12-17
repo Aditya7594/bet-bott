@@ -67,13 +67,13 @@ async def bdice(update: Update, context: CallbackContext) -> None:
     # Calculate reward multiplier
     difference = abs(user_guess - dice_total)
     if difference == 0:
-        multiplier = 5
-    elif difference <= 1:
         multiplier = 3
-    elif difference <= 3:
+    elif difference <= 1:
         multiplier = 1.5
+    elif difference <= 3:
+        multiplier = 0.75
     elif difference <= 6:
-        multiplier = 0.5
+        multiplier = 0
     else:
         multiplier = 0
 
