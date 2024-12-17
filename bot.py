@@ -5,6 +5,7 @@ import secrets
 import logging
 from telegram import Update, ChatPermissions
 from telegram.ext import filters, ContextTypes
+from functools import wraps
 import logging
 from datetime import datetime, timedelta
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, CallbackQuery
@@ -54,6 +55,17 @@ def save_genshin_user(user_data):
 def escape_markdown_v2(text):
     escape_chars = r'\_*[]()~`>#+-=|{}.!'
     return ''.join(f'\\{char}' if char in escape_chars else char for char in text)
+
+
+def check_started(func):
+    @wraps(func)
+    async def wrapped(update: Update, context: CallbackContext, *args, **kwargs):
+        user_id = str(update.effective_user.id)
+        if get_user_by_id(user_id) is None:
+            await update.message.reply_text("You need to start the bot first by using /start.")
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapped
 
 async def start(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
@@ -191,51 +203,52 @@ async def check_game_timeout():
             # Remove from the timeout tracker
             del last_interaction_time[user_id]
 
-# Set up a background task to check for timeouts every minute
 async def timeout_task():
     while True:
         await asyncio.sleep(60)  # Wait for 1 minute
         await check_game_timeout()
 
-
-
 def main() -> None:
     # Create the Application and pass the bot token
     application = Application.builder().token(token).build()
 
-    # Add command handlers
+    # Add command handlers with check_started decorator
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("profile", profile))
-    application.add_handler(CommandHandler("flip", flip))
-    application.add_handler(CommandHandler("dart", dart))
-    application.add_handler(CommandHandler("basketball", basketball))
-    application.add_handler(CommandHandler("football", football))
-    application.add_handler(CommandHandler("dice", dice))
-    application.add_handler(CommandHandler("pull", pull))
-    application.add_handler(CommandHandler("bag", bag))
-    application.add_handler(CommandHandler('add_primos', add_primos))
-    application.add_handler(CommandHandler("Primos_leaderboard", leaderboard))
-    application.add_handler(CommandHandler('drop_primos', drop_primos))
-    application.add_handler(CommandHandler("addcredits", add_credits))
-    application.add_handler(CommandHandler("reset_bag_data", reset_bag_data))
-    application.add_handler(CommandHandler("leaderboard", credits_leaderboard))
-    application.add_handler(CommandHandler("hilo", HiLo))
+    application.add_handler(CommandHandler("profile", check_started(profile)))
+    application.add_handler(CommandHandler("flip", check_started(flip)))
+    application.add_handler(CommandHandler("dart", check_started(dart)))
+    application.add_handler(CommandHandler("basketball", check_started(basketball)))
+    application.add_handler(CommandHandler("football", check_started(football)))
+    application.add_handler(CommandHandler("dice", check_started(dice)))
+    application.add_handler(CommandHandler("pull", check_started(pull)))
+    application.add_handler(CommandHandler("bag", check_started(bag)))
+    application.add_handler(CommandHandler('add_primos', check_started(add_primos)))
+    application.add_handler(CommandHandler("Primos_leaderboard", check_started(leaderboard)))
+    application.add_handler(CommandHandler('drop_primos', check_started(drop_primos)))
+    application.add_handler(CommandHandler("addcredits", check_started(add_credits)))
+    application.add_handler(CommandHandler("reset_bag_data", check_started(reset_bag_data)))
+    application.add_handler(CommandHandler("leaderboard", check_started(credits_leaderboard)))
+    application.add_handler(CommandHandler("hilo", check_started(HiLo)))
     application.add_handler(CallbackQueryHandler(HiLo_click, pattern='^Hilo_'))
     application.add_handler(CallbackQueryHandler(HiLo_CashOut, pattern='^HiLoCashOut$'))
-    application.add_handler(CommandHandler("limbo", limbo))
+    application.add_handler(CommandHandler("limbo", check_started(limbo)))
     application.add_handler(CallbackQueryHandler(handle_limbo_buttons))
-    application.add_handler(CommandHandler("bdice", bdice))
-    application.add_handler(CommandHandler("daily", daily))
+    application.add_handler(CommandHandler("bdice", check_started(bdice)))
+    application.add_handler(CommandHandler("daily", check_started(daily)))
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
 
+    # Message handlers
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    # Run the timeout task every minute
     application.job_queue.run_once(timeout_task, 0)
 
     # Add callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(button))
 
+    # Start polling for updates
     application.run_polling()
 
 if __name__ == '__main__':
