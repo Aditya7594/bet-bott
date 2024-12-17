@@ -47,19 +47,16 @@ async def flip(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     chat_id = update.effective_chat.id
     result = secrets.choice(["heads", "tails"])
-    
+
     # Create a safe HTML link for the user
-    user_link = f"<a href='tg://user?id={user.id}'>{escape_html(user.first_name)}</a>"
+    user_link = f"<a href='tg://user?id={user.id}'>{escape(user.first_name)}</a>"
 
     # Get current IST time
     ist_timestamp = get_ist_time()
 
     # Construct the message
-    message = (
-        f"『 {user_link} 』flipped a coin! 🪙\n\n"
-        f"It's <b>{result}</b>!\n"
-        f"🕰️ Timestamp (IST): {ist_timestamp}"
-    )
+    message = f"『 {user_link} 』flipped a coin! 🪙\n\n" if update.message.reply_to_message else f"Flipped a coin! 🪙\n\n"
+    message += f"It's <b>{result}</b>!\n🕰️ Timestamp (IST): {ist_timestamp}"
 
     # Reply to a specific message if applicable
     if update.message.reply_to_message:
@@ -71,40 +68,49 @@ async def flip(update: Update, context: CallbackContext) -> None:
             reply_to_message_id=original_msg_id
         )
     else:
-        # Send the message normally
+        # Send the message normally without tagging any user
         await update.message.reply_text(message, parse_mode='HTML')
 
 async def dice(update: Update, context: CallbackContext) -> None:
+    """Handle the /dice command to roll a dice."""
     chat_type = update.effective_chat.type
     if chat_type in ['group', 'supergroup']:
         if update.message.reply_to_message:
             user_dice_msg_id = update.message.reply_to_message.message_id
             await context.bot.send_dice(chat_id=update.effective_chat.id, reply_to_message_id=user_dice_msg_id)
         else:
-            await update.message.reply_text("Please reply to a user's message to roll a dice for them.")
+            # If no reply to a message, send dice without tagging anyone
+            await update.message.reply_dice()
     else:
+        # Send dice normally without reply
         await context.bot.send_dice(chat_id=update.effective_chat.id)
 
 async def football(update: Update, context: CallbackContext) -> None:
+    """Handle the /football command to simulate a football action."""
     chat_type = update.effective_chat.type
     if chat_type in ['group', 'supergroup']:
         if update.message.reply_to_message:
             user_msg_id = update.message.reply_to_message.message_id
             await context.bot.send_dice(chat_id=update.effective_chat.id, emoji='⚽', reply_to_message_id=user_msg_id)
         else:
-            await update.message.reply_text("Please reply to a user's message to play football for them.")
+            # If no reply to a message, send football emoji without tagging anyone
+            await context.bot.send_dice(chat_id=update.effective_chat.id, emoji='⚽')
     else:
+        # Send dice with football emoji normally without reply
         await context.bot.send_dice(chat_id=update.effective_chat.id, emoji='⚽')
 
 async def basketball(update: Update, context: CallbackContext) -> None:
+    """Handle the /basketball command to simulate a basketball action."""
     chat_type = update.effective_chat.type
     if chat_type in ['group', 'supergroup']:
         if update.message.reply_to_message:
             user_msg_id = update.message.reply_to_message.message_id
             await context.bot.send_dice(chat_id=update.effective_chat.id, emoji='🏀', reply_to_message_id=user_msg_id)
         else:
-            await update.message.reply_text("Please reply to a user's message to play basketball for them.")
+            # If no reply to a message, send basketball emoji without tagging anyone
+            await context.bot.send_dice(chat_id=update.effective_chat.id, emoji='🏀')
     else:
+        # Send dice with basketball emoji normally without reply
         await context.bot.send_dice(chat_id=update.effective_chat.id, emoji='🏀')
 
 async def dart(update: Update, context: CallbackContext) -> None:
