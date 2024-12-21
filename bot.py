@@ -124,14 +124,23 @@ async def reffer(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
 
+    # Fetch user data from the database to check how many users they've referred
+    user_data = get_user_by_id(user_id)
+
+    if user_data:
+        referral_count = user_data.get('referrals', 0)
+    else:
+        referral_count = 0
+
     # Generate a referral link
     bot_username = (await context.bot.get_me()).username
     referral_link = f"https://t.me/{bot_username}?start={user_id}"
 
-    # Send the referral link to the user
+    # Send the referral link and the referral count to the user
     await update.message.reply_text(
         f"🔗 Share this referral link with your friends:\n\n"
         f"{referral_link}\n\n"
+        f"You have referred {referral_count} users.\n\n"
         "When they join and start the bot using your link, both of you will receive 1000 credits!"
     )
 
