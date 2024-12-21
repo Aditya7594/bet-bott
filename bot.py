@@ -201,7 +201,7 @@ async def add_credits(update: Update, context: CallbackContext) -> None:
     credits_to_add = None
 
     # Check if the user is the owner
-    if user_id not in OWNER_IDS:
+    if user_id not in OWNER_ID:
         await update.message.reply_text("You don't have permission to use this command.")
         return
 
