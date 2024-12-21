@@ -25,8 +25,6 @@ OWNER_ID = 5667016949
 muted_users = set()
 last_interaction_time = {}
 
-# List of owner IDs
-OWNER_IDS = [5667016949, 1474610394]
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -285,6 +283,45 @@ async def reset_confirmation(update: Update, context: CallbackContext) -> None:
     # Delete the inline keyboard after answering
     await query.edit_message_reply_markup(reply_markup=None)
 
+async def reach(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+
+    # Check if the user is an owner
+    if user_id not in OWNER_ID:
+        await update.message.reply_text("You don't have permission to use this command.")
+        return
+
+    try:
+        # Retrieve bot statistics
+        total_users = users_collection.count_documents({})
+        total_genshin_users = genshin_collection.count_documents({})
+
+        # Aggregate total credits
+        total_credits_result = users_collection.aggregate([
+            {"$group": {"_id": None, "total_credits": {"$sum": "$credits"}}}
+        ])
+        total_credits_value = next(total_credits_result, {}).get("total_credits", 0)
+
+        # (Optional) Track the number of groups the bot is present in
+        total_groups = len(await context.bot.get_chat_administrators(update.effective_chat.id))
+
+        # Format the stats message
+        stats_message = (
+            "<b>🤖 Bot Statistics:</b>\n\n"
+            f"👥 Total Users: {total_users}\n"
+            f"🌌 Total Genshin Users: {total_genshin_users}\n"
+            f"💰 Total Credits in Game: {total_credits_value}\n"
+            f"🏢 Total Groups: {total_groups}\n"
+        )
+
+        # Send the statistics to the owner
+        await update.message.reply_text(stats_message, parse_mode="HTML")
+
+    except Exception as e:
+        # Handle any errors and notify the user
+        await update.message.reply_text("An error occurred while fetching bot stats. Please try again later.")
+        print(f"Error in /reach command: {e}")
+
 
 def main() -> None:
     # Create the Application and pass the bot token
@@ -311,6 +348,7 @@ def main() -> None:
     application.add_handler(CommandHandler("store", check_started(store)))  # For storing credits in the bank
     application.add_handler(CommandHandler("withdraw", check_started(withdraw))) 
     application.add_handler(CommandHandler("bank", bank))
+    application.add_handler(CommandHandler("reach", reach))
 
     # Dice-related command
     application.add_handler(CommandHandler("bdice", check_started(bdice)))
