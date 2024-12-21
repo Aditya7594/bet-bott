@@ -119,26 +119,21 @@ async def start(update: Update, context: CallbackContext):
             f"Welcome back, {first_name}! Use /profile to view your details."
         )
 
-async def reffer(update: Update, context: CallbackContext):
+async def reffer(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
 
-    # Fetch user data
-    user_data = get_user_by_id(user_id)
-    if not user_data:
-        await update.message.reply_text("You need to start the bot first by using /start.")
-        return
-
     # Generate a referral link
-    referral_link = generate_referral_link(user_id)
+    bot_username = (await context.bot.get_me()).username
+    referral_link = f"https://t.me/{bot_username}?start={user_id}"
 
     # Send the referral link to the user
     await update.message.reply_text(
-        f"🔗 Share this referral link with your friends:
-{referral_link}
-
-🎁 You'll earn 1,000 credits when they join and start the bot! They will also receive 1,000 bonus credits."
+        f"🔗 Share this referral link with your friends:\n\n"
+        f"{referral_link}\n\n"
+        "When they join and start the bot using your link, both of you will receive 1000 credits!"
     )
+
 
 async def profile(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
