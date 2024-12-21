@@ -98,7 +98,6 @@ async def HiLo(update: Update, context: CallbackContext):
         'mult': 1
     }
 
-# Handle click event on High or Low button
 async def HiLo_click(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
@@ -141,23 +140,22 @@ async def HiLo_click(update: Update, context: CallbackContext):
         multiplier = p_mapping[user_number]
         winnings = int(bet * multiplier * mult)
 
-        user_data = get_user_by_id(user_id)
-        user_data["credits"] += winnings
-        save_user(user_data)
+        # Update session data instead of directly adding credits
+        cd[message_id]['hand'] = table
+        cd[message_id]['table'] = random.choice(deck)
+        cd[message_id]['mult'] = multiplier * mult
+        cd[message_id]['winnings'] = winnings  # Store winnings for cashout
 
         text = (
             f"<b><u>📈 HiLo Game 📉</u></b>\n\n"
             f"Bet amount: {bet} 👾\n"
             f"Current multiplier: {round(multiplier * mult, 3)}x\n"
-            f"Winning Amount: {winnings} 👾\n\n"
+            f"Potential Winnings: {winnings} 👾\n\n"
             f"Card on Table revealed to be {table}. You bet on {choice} and won!\n<b>Now guess the next one!</b>\n\n"
             f"You have: <b>{table}</b>\nOn Table: <b>?</b>\n\n"
             f"<b><u>Logs</u></b>\n{log_text}"
         )
 
-        cd[message_id]['hand'] = table
-        cd[message_id]['table'] = random.choice(deck)
-        cd[message_id]['mult'] = multiplier * mult
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
 
     else:
@@ -173,55 +171,47 @@ async def HiLo_click(update: Update, context: CallbackContext):
         await query.edit_message_text(text, parse_mode=ParseMode.HTML)
 
 
+
 async def HiLo_CashOut(update: Update, context: CallbackContext):
     query = update.callback_query
     message_id = query.message.message_id
     user_id = update.effective_user.id
 
-    # Check if the game session exists
     if message_id not in cd:
         await query.answer("Game session has expired or doesn't exist.", show_alert=True)
         return
 
-    # Retrieve game data
     game_data = cd[message_id]
     bet = game_data['bet']
     mult = game_data['mult']
+    winnings = game_data.get('winnings', 0)  # Get stored winnings
     logs = game_data['logs']
     player_id = game_data['user_id']
 
-    # Ensure the user calling cashout is the original player
     if user_id != player_id:
         await query.answer("This game session is not yours!", show_alert=True)
         return
 
-    # Handle the logic to "take" the multiplier and calculate the winnings
-    multiplier = mult
-    winnings = int(bet * multiplier)
-
-    # Fetch user data and handle the case where the user might not be found in the DB
     user_data = get_user_by_id(user_id)
     if not user_data:
         user_data = {"user_id": user_id, "credits": 0}
         save_user(user_data)
 
-    # Update the user's credits
+    # Add the winnings to the user's credits
     user_data['credits'] += winnings
-    save_user(user_data)  # Save the updated user data back to the database
+    save_user(user_data)
 
-    # Remove the game session from context data
     del cd[message_id]
-    hilo_limit[user_id] += 1  # Increment the daily game limit
+    hilo_limit[user_id] += 1
 
-    # Prepare the message and send the results to the user
     log_text = ''.join(logs)
     text = (
         f'<b><u>📈 HiLo Game 📉</u></b>\n\n'
         f'Bet amount: {bet} 👾\n'
-        f'Current multiplier: {round(multiplier, 3)}x\n'
+        f'Final multiplier: {round(mult, 3)}x\n'
         f'<b>You Won: {winnings} 👾</b>\n\n'
         f'<b><u>Logs</u></b>\n{log_text}'
     )
 
-    # Send the final result to the user
     await query.edit_message_text(text, parse_mode=ParseMode.HTML)
+
