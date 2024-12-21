@@ -54,6 +54,10 @@ def escape_markdown_v2(text):
     escape_chars = r'\_*[]()~`>#+-=|{}.!'
     return ''.join(f'\\{char}' if char in escape_chars else char for char in text)
 
+def generate_referral_link(user_id):
+    return f"https://t.me/YourBotUsername?start=ref{user_id}"
+
+
 
 def check_started(func):
     @wraps(func)
@@ -65,20 +69,33 @@ def check_started(func):
         return await func(update, context, *args, **kwargs)
     return wrapped
 
-async def start(update: Update, context: CallbackContext) -> None:
+async def start(update: Update, context: CallbackContext):
     user = update.effective_user
     user_id = str(user.id)
-    first_name = user.first_name  # Get user's first name
+    first_name = user.first_name
 
-    # Save in general users collection
+    # Check if the user came through a referral link
+    if context.args and context.args[0].startswith("ref"):
+        referrer_id = context.args[0][3:]
+        referrer = get_user_by_id(referrer_id)
+
+        if referrer and referrer_id != user_id:  # Ensure referrer exists and isn't the same as the referee
+            # Add credits to the referrer
+            referrer['credits'] += 1000
+            save_user(referrer)
+
+            # Send a message to the referrer
+            await context.bot.send_message(referrer_id, 
+                                           f"🎉 You referred {first_name} to the bot and earned 1,000 credits!")
+
+    # Check if the user already exists
     existing_user = get_user_by_id(user_id)
-
-    if existing_user is None:
+    if not existing_user:
         new_user = {
             "user_id": user_id,
-            "first_name": first_name,  # Save the first name
+            "first_name": first_name,
             "join_date": datetime.now().strftime('%m/%d/%y'),
-            "credits": 5000,
+            "credits": 5000 + (1000 if context.args and context.args[0].startswith("ref") else 0),
             "daily": None,
             "win": 0,
             "loss": 0,
@@ -90,32 +107,38 @@ async def start(update: Update, context: CallbackContext) -> None:
             "bag": {}
         }
         save_user(new_user)
-        logger.info(f"User {user_id} started the bot with first name: {first_name}.")
-
         await update.message.reply_text(
-            f"Welcome {first_name}! You've received 5000 credits to start betting. Use /profile to check your details."
+            f"Welcome {first_name}! You've received 5,000 credits to start betting. Use /profile to check your details."
         )
+
+        # Notify the referee if they joined through a referral link
+        if context.args and context.args[0].startswith("ref"):
+            await update.message.reply_text("🎉 You joined through a referral link and earned 1,000 bonus credits!")
     else:
-        logger.info(f"User {user_id} ({first_name}) already exists.")
         await update.message.reply_text(
             f"Welcome back, {first_name}! Use /profile to view your details."
         )
 
-    # Save in genshin_users collection
-    existing_genshin_user = get_genshin_user_by_id(user_id)
+async def reffer(update: Update, context: CallbackContext):
+    user = update.effective_user
+    user_id = str(user.id)
 
-    if existing_genshin_user is None:
-        new_genshin_user = {
-            "user_id": user_id,
-            "first_name": first_name,  # Save the first name in Genshin users
-            "primos": 16000,  # Adjust initial primogems as needed
-            "bag": {}
-        }
-        save_genshin_user(new_genshin_user)
-        logger.info(f"Genshin user {user_id} initialized with first name: {first_name}.")
-    else:
-        logger.info(f"Genshin user {user_id} ({first_name}) already exists.")
+    # Fetch user data
+    user_data = get_user_by_id(user_id)
+    if not user_data:
+        await update.message.reply_text("You need to start the bot first by using /start.")
+        return
 
+    # Generate a referral link
+    referral_link = generate_referral_link(user_id)
+
+    # Send the referral link to the user
+    await update.message.reply_text(
+        f"🔗 Share this referral link with your friends:
+{referral_link}
+
+🎁 You'll earn 1,000 credits when they join and start the bot! They will also receive 1,000 bonus credits."
+    )
 
 async def profile(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
@@ -340,6 +363,7 @@ def main() -> None:
     application.add_handler(CommandHandler("withdraw", check_started(withdraw))) 
     application.add_handler(CommandHandler("bank", bank))
     application.add_handler(CommandHandler("reach", reach))
+    application.add_handler(CommandHandler("reffer", reffer))
 
     # Dice-related command
     application.add_handler(CommandHandler("bdice", check_started(bdice)))
