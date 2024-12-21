@@ -76,16 +76,17 @@ async def start(update: Update, context: CallbackContext):
 
     # Check if the user came through a referral link
     if context.args and context.args[0].startswith("ref"):
-        referrer_id = context.args[0][3:]
+        referrer_id = context.args[0][3:]  # Get the referrer ID from the referral link
         referrer = get_user_by_id(referrer_id)
 
-        if referrer and referrer_id != user_id:  # Ensure referrer exists and isn't the same as the referee
+        if referrer and referrer_id != user_id:  # Ensure referrer exists and isn't the same as the user
             # Add credits and primogems to the referrer
             referrer['credits'] += 1000
             referrer['primos'] += 1000  # Add 1000 Primogems
+            referrer['referrals'] = referrer.get('referrals', 0) + 1  # Increment referral count
             save_user(referrer)
 
-            # Send a message to the referrer
+            # Notify the referrer about the new referral
             await context.bot.send_message(referrer_id, 
                                            f"🎉 You referred {first_name} to the bot and earned 1,000 credits and 1,000 Primogems!")
 
@@ -105,7 +106,8 @@ async def start(update: Update, context: CallbackContext):
             "faction": "None",
             "ban": None,
             "title": "None",
-            "bag": {}
+            "bag": {},
+            "referrals": 0  # Initialize referral count
         }
         save_user(new_user)
         await update.message.reply_text(
@@ -134,15 +136,16 @@ async def reffer(update: Update, context: CallbackContext) -> None:
 
     # Generate a referral link
     bot_username = (await context.bot.get_me()).username
-    referral_link = f"https://t.me/{bot_username}?start={user_id}"
+    referral_link = f"https://t.me/{bot_username}?start=ref{user_id}"
 
     # Send the referral link and the referral count to the user
     await update.message.reply_text(
         f"🔗 Share this referral link with your friends:\n\n"
         f"{referral_link}\n\n"
         f"You have referred {referral_count} users.\n\n"
-        "When they join and start the bot using your link, both of you will receive 1000 credits!"
+        "When they join and start the bot using your link, both of you will receive 1000 credits and 1000 Primogems!"
     )
+
 
 
 async def profile(update: Update, context: CallbackContext) -> None:
