@@ -245,6 +245,7 @@ async def reset(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text("Are you sure you want to reset all user data? This will wipe all progress!", reply_markup=reply_markup)
 
 # Handle the callback data when the owner confirms reset
+# Handle the callback data when the owner confirms reset
 async def reset_confirmation(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
@@ -256,7 +257,7 @@ async def reset_confirmation(update: Update, context: CallbackContext) -> None:
 
     # Check the callback data (Yes or No)
     if query.data == "reset_yes":
-        # Reset all users' data and give them 5000 credits
+        # Reset all users' data and set specified values to defaults
         users_collection.update_many({}, {"$set": {
             "credits": 5000,  # Set credits to 5000 after reset
             "daily": None,
@@ -267,7 +268,11 @@ async def reset_confirmation(update: Update, context: CallbackContext) -> None:
             "ban": None,
             "title": "None",
             "primos": 0,
-            "bag": {}
+            "bag": {},
+            "bank": 0,  # Reset bank balance to 0
+            "gold_coins": 0,  # Reset gold coins to 0
+            "silver_coins": 0,  # Reset silver coins to 0
+            "bronze_coins": 0  # Reset bronze coins to 0
         }})
         
         # Inform the owner that the reset was successful
@@ -279,6 +284,7 @@ async def reset_confirmation(update: Update, context: CallbackContext) -> None:
 
     # Delete the inline keyboard after answering
     await query.edit_message_reply_markup(reply_markup=None)
+
 
 def main() -> None:
     # Create the Application and pass the bot token
