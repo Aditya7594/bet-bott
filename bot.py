@@ -80,13 +80,14 @@ async def start(update: Update, context: CallbackContext):
         referrer = get_user_by_id(referrer_id)
 
         if referrer and referrer_id != user_id:  # Ensure referrer exists and isn't the same as the referee
-            # Add credits to the referrer
+            # Add credits and primogems to the referrer
             referrer['credits'] += 1000
+            referrer['primos'] += 1000  # Add 1000 Primogems
             save_user(referrer)
 
             # Send a message to the referrer
             await context.bot.send_message(referrer_id, 
-                                           f"🎉 You referred {first_name} to the bot and earned 1,000 credits!")
+                                           f"🎉 You referred {first_name} to the bot and earned 1,000 credits and 1,000 Primogems!")
 
     # Check if the user already exists
     existing_user = get_user_by_id(user_id)
@@ -96,6 +97,7 @@ async def start(update: Update, context: CallbackContext):
             "first_name": first_name,
             "join_date": datetime.now().strftime('%m/%d/%y'),
             "credits": 5000 + (1000 if context.args and context.args[0].startswith("ref") else 0),
+            "primos": 1000 if context.args and context.args[0].startswith("ref") else 0,  # Add 1000 Primogems if referred
             "daily": None,
             "win": 0,
             "loss": 0,
@@ -103,17 +105,16 @@ async def start(update: Update, context: CallbackContext):
             "faction": "None",
             "ban": None,
             "title": "None",
-            "primos": 0,
             "bag": {}
         }
         save_user(new_user)
         await update.message.reply_text(
-            f"Welcome {first_name}! You've received 5,000 credits to start betting. Use /profile to check your details."
+            f"Welcome {first_name}! You've received 5,000 credits and 1,000 Primogems to start betting. Use /profile to check your details."
         )
 
         # Notify the referee if they joined through a referral link
         if context.args and context.args[0].startswith("ref"):
-            await update.message.reply_text("🎉 You joined through a referral link and earned 1,000 bonus credits!")
+            await update.message.reply_text("🎉 You joined through a referral link and earned 1,000 bonus credits and 1,000 Primogems!")
     else:
         await update.message.reply_text(
             f"Welcome back, {first_name}! Use /profile to view your details."
