@@ -41,8 +41,8 @@ async def HiLo(update: Update, context: CallbackContext):
     if user_id not in hilo_limit:
         hilo_limit[user_id] = 0
 
-    if hilo_limit[user_id] >= 150:
-        await update.message.reply_text('Daily limit of 150 games reached', parse_mode=ParseMode.HTML)
+    if hilo_limit[user_id] >= 1500:
+        await update.message.reply_text('Daily limit of 1500 games reached', parse_mode=ParseMode.HTML)
         return
 
     bet = 0
