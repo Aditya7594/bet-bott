@@ -201,7 +201,7 @@ async def add_credits(update: Update, context: CallbackContext) -> None:
     credits_to_add = None
 
     # Check if the user is the owner
-    if user_id not in OWNER_ID:
+    if user_id != OWNER_ID:  # Ensure OWNER_ID is a single integer
         await update.message.reply_text("You don't have permission to use this command.")
         return
 
@@ -220,12 +220,13 @@ async def add_credits(update: Update, context: CallbackContext) -> None:
         return
 
     # Add the credits to the target user
-    new_credits = target_user_data['credits'] + credits_to_add
+    new_credits = target_user_data.get('credits', 0) + credits_to_add  # Handle missing 'credits' key
     target_user_data['credits'] = new_credits
     save_user(target_user_data)
 
     # Send confirmation message
     await update.message.reply_text(f"Successfully added {credits_to_add} credits to user {target_user_id}. New balance: {new_credits} credits.")
+
 
 async def check_game_timeout():
     current_time = datetime.now()
