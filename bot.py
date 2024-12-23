@@ -18,7 +18,6 @@ from minigame import dart, basketball, flip, dice, credits_leaderboard,football
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from bank import exchange, sell, store, withdraw, bank
-from hilo_game import HiLo, HiLo_click, HiLo_CashOut
 
 # Global variables
 OWNER_ID = 5667016949
@@ -376,10 +375,6 @@ def main() -> None:
 
     # Dice-related command
     application.add_handler(CommandHandler("bdice", check_started(bdice)))
-
-    application.add_handler(CommandHandler("HiLo", HiLo))  # HiLo game start
-    application.add_handler(CallbackQueryHandler(HiLo_click, pattern="^Hilo_"))  # Handle HiLo button clicks
-    application.add_handler(CallbackQueryHandler(HiLo_CashOut, pattern="^HiLoCashOut"))
 
     # Daily-related commands
     application.add_handler(CommandHandler("daily", check_started(daily)))
