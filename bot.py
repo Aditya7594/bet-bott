@@ -381,9 +381,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
     
-    app.add_handler(CommandHandler("hilo", start_hilo))
-    app.add_handler(CallbackQueryHandler(hilo_click, pattern="hilo_(high|low)"))
-    app.add_handler(CallbackQueryHandler(hilo_cashout, pattern="hilo_cashout"))
+    application.add_handler(CommandHandler("hilo", start_hilo))
+    application.add_handler(CallbackQueryHandler(hilo_click, pattern="hilo_(high|low)"))
+    application.add_handler(CallbackQueryHandler(hilo_cashout, pattern="hilo_cashout"))
 
     # Reset functionality (ensure callback data pattern is distinct)
     application.add_handler(CommandHandler("reset", reset))  # Command to initiate reset
