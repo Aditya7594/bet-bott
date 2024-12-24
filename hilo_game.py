@@ -63,7 +63,7 @@ async def start_hilo(update: Update, context):
     try:
         bet = int(context.args[0])
     except (IndexError, ValueError):
-        await update.message.reply_text("📜 <b>Usage:</b> /hilo <bet amount>\n\n💡 Place your bets between 100 and 10,000 credits to begin the game!", parse_mode="HTML")
+        await update.message.reply_text("📜 <b>Usage:</b> /hilo <bet amount>.", parse_mode="HTML")
         return
 
     if bet < 100 or bet > 10000:
