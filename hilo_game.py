@@ -1,217 +1,192 @@
+import os
 import random
-import re
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext
+from PIL import Image
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from pymongo import MongoClient
 
+# MongoDB setup
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
 db = client['telegram_bot']
 users_collection = db['users']
 
-# Function to get user data from MongoDB
-def get_user_by_id(user_id):
-    return users_collection.find_one({"user_id": str(user_id)})
+# Card deck setup
+CARD_VALUES = {'A': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, 'J': 11, 'Q': 12, 'K': 13}
+SUITS = ['diamonds', 'hearts', 'clubs', 'spades']
+DECK = [(suit, value) for suit in SUITS for value in CARD_VALUES.keys()]
 
-# Function to save user data to MongoDB
-def save_user(user_data):
-    users_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
+# Game state tracking
+games = {}
+daily_limits = {}
 
-# Sample deck for HiLo game
-deck = []
-number = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
-suit = ['♦️', '♥️', '♣️', '♠️']
-for i in number:
-    for j in suit:
-        deck.append(f'{j}{i}')
+# MongoDB helper functions
+def get_user(user_id):
+    user = users_collection.find_one({"user_id": str(user_id)})
+    if not user:
+        user = {"user_id": str(user_id), "credits": 1000}  # Default starting credits
+        users_collection.insert_one(user)
+    return user
 
-# Global game state
-cd = {}  # Context data for each game
-hilo_limit = {}  # Tracks the number of games played by each user
+def update_user(user_id, credits):
+    users_collection.update_one({"user_id": str(user_id)}, {"$set": {"credits": credits}}, upsert=True)
 
-# Start command to initialize HiLo game
-async def HiLo(update: Update, context: CallbackContext):
+def resize_card_image(card):
+    suit, value = card
+    folder_path = os.path.join(os.path.dirname(__file__), "playingcards")
+    filename = f"{suit.lower()}_{value}.png"
+    path = os.path.join(folder_path, filename)
+
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Card image not found: {path}")
+
+    resized_path = os.path.join(folder_path, f"resized_{suit.lower()}_{value}.png")
+    if not os.path.exists(resized_path):
+        with Image.open(path) as img:
+            img.thumbnail((200, 300))  # Resize to smaller dimensions
+            img.save(resized_path)
+    return resized_path
+
+# Start HiLo game
+# Start HiLo game
+async def start_hilo(update: Update, context):
     user_id = update.effective_user.id
-    user_data = get_user_by_id(user_id)
-    credit = user_data.get("credits", 0)  # Fix to get the user's credits
-    user_name = update.effective_user.first_name
-    query = update.callback_query
-    keyboard = [[]]
+    user = get_user(user_id)
+    credits = user["credits"]
 
-    if user_id not in hilo_limit:
-        hilo_limit[user_id] = 0
+    if user_id not in daily_limits:
+        daily_limits[user_id] = 0
 
-    if hilo_limit[user_id] >= 1500:
-        await update.message.reply_text('Daily limit of 1500 games reached', parse_mode=ParseMode.HTML)
+    if daily_limits[user_id] >= 5:
+        await update.message.reply_text("⏳ You've reached your daily limit of games! Come back tomorrow for more fun!")
         return
 
-    bet = 0
     try:
-        bet = int(update.message.text.split()[1])
-        if bet < 100:
-            await update.message.reply_text('Minimum Bet is 100 👾')
-            return
-
-        if bet > 10000:
-            await update.message.reply_text('Maximum bet is 10,000 👾')
-            return
-
-        if credit < bet:
-            await update.message.reply_text('Not enough credit to make this bet')
-            return
-
-        user_data["credits"] -= bet
-        save_user(user_data)  # Deduct bet from the user's credits
-
-    except:
-        await update.message.reply_text('/HiLo <bet amount>')
+        bet = int(context.args[0])
+    except (IndexError, ValueError):
+        await update.message.reply_text("📜 <b>Usage:</b> /hilo <bet amount>\n\n💡 Place your bets between 100 and 10,000 credits to begin the game!", parse_mode="HTML")
         return
 
-    keyboard.append([InlineKeyboardButton('High', callback_data='Hilo_High'), InlineKeyboardButton('Low', callback_data='Hilo_Low')])
-    keyboard.append([InlineKeyboardButton('CashOut', callback_data='HiLoCashOut')])
+    if bet < 100 or bet > 10000:
+        await update.message.reply_text("❌ Your bet must be between 100 and 10,000 credits! Try again.")
+        return
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    if credits < bet:
+        await update.message.reply_text("🚫 You don't have enough credits to place this bet! Check your balance and try again.")
+        return
 
-    hand = random.choice(deck)
-    table = random.choice(deck)
+    update_user(user_id, credits - bet)
 
-    text = f'<b><u>📈 HiLo Game 📉</u></b>\n\n'
-    text += f'Bet amount: {bet} 👾\n'
-    text += f'Current multiplier: None\n\n'
-    text += f'You have: <b>{hand}</b>\n'
-    text += f'On Table: <b>?</b>\n\n'
-    text += f'<i>How to play: Choose High if you predict the card on table is higher value than your card,</i>\n'
-    text += f'<i>Choose Low if you predict the card on table is lower value than your card.</i>\n'
-    text += f'<i>You can cashout anytime, but losing 1 guess and its game over, you lose all balances.</i>'
+    player_card = random.choice(DECK)
 
-    message = await update.message.reply_text(text=text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-    message_id = message.message_id
-
-    # Store game data using message_id to track the session
-    cd[message_id] = {
-        'bet': bet,
-        'keyboard': keyboard,
-        'logs': [f'|{hand}'],
-        'user_id': user_id,
-        'hand': hand,
-        'table': table,
-        'mult': 1
+    games[user_id] = {
+        "bet": bet,
+        "player_card": player_card,
+        "multiplier": 1.0,
     }
 
-async def HiLo_click(update: Update, context: CallbackContext):
-    query = update.callback_query
-    user_id = query.from_user.id
-    message_id = query.message.message_id
+    buttons = [
+        [InlineKeyboardButton("⬆️ High", callback_data="hilo_high"), InlineKeyboardButton("⬇️ Low", callback_data="hilo_low")],
+        [InlineKeyboardButton("💰 Cash Out", callback_data="hilo_cashout")],
+    ]
 
-    if message_id not in cd:
-        await query.answer("No active game found. Start a new game with /HiLo <bet_amount>.", show_alert=True)
-        return
+    card_image_path = resize_card_image(player_card)
 
-    game_data = cd[message_id]
-    player_id = game_data['user_id']
-
-    if user_id != player_id:
-        await query.answer("This game is not yours.", show_alert=True)
-        return
-
-    logs = game_data['logs']
-    bet = game_data['bet']
-    hand = game_data['hand']
-    table = game_data['table']
-    mult = game_data['mult']
-    keyboard = game_data['keyboard']
-
-    mapping = {'A': 0, '2': 1, '3': 2, '4': 3, '5': 4, '6': 5, '7': 6, '8': 7, '9': 8, '10': 9, 'J': 10, 'Q': 11, 'K': 12}
-    p_mapping = {0: 1.062, 1: 1.158, 2: 1.274, 3: 1.416, 4: 1.593, 5: 1.82, 6: 2.123, 7: 1.82, 8: 1.593, 9: 1.416, 10: 1.274, 11: 1.158, 12: 1.062}
-
-    user_card = re.search(r'[A-Z0-9]+$', hand).group()
-    table_card = re.search(r'[A-Z0-9]+$', table).group()
-    user_number = mapping[user_card]
-    table_number = mapping[table_card]
-
-    choice = query.data.split("_")[-1]
-    logs.append(f'|{table}')
-    if len(logs) > 5:
-        logs.pop(0)
-
-    log_text = ''.join(logs)
-
-    if (choice == 'High' and user_number <= table_number) or (choice == 'Low' and user_number >= table_number):
-        multiplier = p_mapping[user_number]
-        winnings = int(bet * multiplier * mult)
-
-        # Update session data instead of directly adding credits
-        cd[message_id]['hand'] = table
-        cd[message_id]['table'] = random.choice(deck)
-        cd[message_id]['mult'] = multiplier * mult
-        cd[message_id]['winnings'] = winnings  # Store winnings for cashout
-
-        text = (
-            f"<b><u>📈 HiLo Game 📉</u></b>\n\n"
-            f"Bet amount: {bet} 👾\n"
-            f"Current multiplier: {round(multiplier * mult, 3)}x\n"
-            f"Potential Winnings: {winnings} 👾\n\n"
-            f"Card on Table revealed to be {table}. You bet on {choice} and won!\n<b>Now guess the next one!</b>\n\n"
-            f"You have: <b>{table}</b>\nOn Table: <b>?</b>\n\n"
-            f"<b><u>Logs</u></b>\n{log_text}"
-        )
-
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
-
-    else:
-        text = (
-            f"<b><u>📈 HiLo Game 📉</u></b>\n\n"
-            f"Bet amount: {bet} 👾\n"
-            f"Current multiplier: {0}x\n\n"
-            f"Card on Table revealed to be {table}. You bet on {choice} and lost!\n<b>Game Over</b>\n\n"
-            f"<b><u>Logs</u></b>\n{log_text}"
-        )
-        hilo_limit[user_id] += 1
-        del cd[message_id]
-        await query.edit_message_text(text, parse_mode=ParseMode.HTML)
-
-
-
-async def HiLo_CashOut(update: Update, context: CallbackContext):
-    query = update.callback_query
-    message_id = query.message.message_id
-    user_id = update.effective_user.id
-
-    if message_id not in cd:
-        await query.answer("Game session has expired or doesn't exist.", show_alert=True)
-        return
-
-    game_data = cd[message_id]
-    bet = game_data['bet']
-    mult = game_data['mult']
-    winnings = game_data.get('winnings', 0)  # Get stored winnings
-    logs = game_data['logs']
-    player_id = game_data['user_id']
-
-    if user_id != player_id:
-        await query.answer("This game session is not yours!", show_alert=True)
-        return
-
-    user_data = get_user_by_id(user_id)
-    if not user_data:
-        user_data = {"user_id": user_id, "credits": 0}
-        save_user(user_data)
-
-    # Add the winnings to the user's credits
-    user_data['credits'] += winnings
-    save_user(user_data)
-
-    del cd[message_id]
-    hilo_limit[user_id] += 1
-
-    log_text = ''.join(logs)
     text = (
-        f'<b><u>📈 HiLo Game 📉</u></b>\n\n'
-        f'Bet amount: {bet} 👾\n'
-        f'Final multiplier: {round(mult, 3)}x\n'
-        f'<b>You Won: {winnings} 👾</b>\n\n'
-        f'<b><u>Logs</u></b>\n{log_text}'
+        f"🎮 <b>HiLo Game</b> 🎮\n\n"
+        f"🃏 Your Card: <b>{player_card[1]} of {player_card[0]}</b>\n"
+        f"❓ Table Card: <b>Hidden</b>\n\n"
+        f"💵 Bet: <b>{bet} credits</b>\n"
+        f"🔄 Multiplier: <b>1.0x</b>\n\n"
+        f"🤔 <b>Will the next card be higher or lower?</b>\n"
     )
 
-    await query.edit_message_text(text, parse_mode=ParseMode.HTML)
+    with open(card_image_path, "rb") as card_image:
+        await update.message.reply_photo(photo=card_image, caption=text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode="HTML")
 
+# Handle HiLo choices
+async def hilo_click(update: Update, context):
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    if user_id not in games:
+        await query.answer("⚠️ No active game found! Start a new game with /hilo <bet amount>.", show_alert=True)
+        return
+
+    game = games[user_id]
+    player_card = game["player_card"]
+    table_card = random.choice(DECK)
+    bet = game["bet"]
+
+    player_value = CARD_VALUES[player_card[1]]
+    table_value = CARD_VALUES[table_card[1]]
+    choice = query.data.split("_")[-1]
+
+    if (choice == "high" and table_value > player_value) or (choice == "low" and table_value < player_value):
+        game["player_card"] = table_card
+        game["multiplier"] += 0.4
+
+        buttons = [
+            [InlineKeyboardButton("⬆️ High", callback_data="hilo_high"), InlineKeyboardButton("⬇️ Low", callback_data="hilo_low")],
+            [InlineKeyboardButton("💰 Cash Out", callback_data="hilo_cashout")],
+        ]
+
+        text = (
+            f"🎮 <b>HiLo Game</b> 🎮\n\n"
+            f"✅ <b>Correct!</b>\n"
+            f"🃏 Your New Card: <b>{table_card[1]} of {table_card[0]}</b>\n"
+            f"❓ Table Card: <b>Hidden</b>\n\n"
+            f"💵 Bet: <b>{bet} credits</b>\n"
+            f"🔄 Multiplier: <b>{round(game['multiplier'], 2)}x</b>\n\n"
+            f"🎉 Great guess! Will the next card be higher or lower?\n"
+        )
+
+        card_image_path = resize_card_image(table_card)
+        with open(card_image_path, "rb") as card_image:
+            await query.edit_message_media(
+                media=InputMediaPhoto(media=card_image),
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+            await query.edit_message_caption(caption=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        del games[user_id]
+        daily_limits[user_id] += 1
+
+        text = (
+            f"🎮 <b>HiLo Game</b> 🎮\n\n"
+            f"❌ <b>Wrong guess!</b>\n"
+            f"🃏 The Table Card was: <b>{table_card[1]} of {table_card[0]}</b>\n\n"
+            f"💵 Bet: <b>{bet} credits</b>\n\n"
+            f"😢 Better luck next time!"
+        )
+        buttons = []  # Remove buttons after losing
+        card_image_path = resize_card_image(table_card)
+        with open(card_image_path, "rb") as card_image:
+            await query.edit_message_media(
+                media=InputMediaPhoto(media=card_image),
+                reply_markup=None,
+            )
+            await query.edit_message_caption(caption=text, parse_mode="HTML", reply_markup=None)
+
+# Handle Cash Out
+async def hilo_cashout(update: Update, context):
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    if user_id not in games:
+        await query.answer("⚠️ No active game found to cash out.", show_alert=True)
+        return
+
+    game = games.pop(user_id)
+    winnings = round(game["bet"] * game["multiplier"])
+    user = get_user(user_id)
+
+    update_user(user_id, user["credits"] + winnings)
+    daily_limits[user_id] += 1
+
+    text = (
+        f"🎮 <b>HiLo Game</b> 🎮\n\n"
+        f"💰 <b>You cashed out successfully!</b>\n\n"
+        f"🏆 Winnings: <b>{winnings} credits</b>\n\n"
+        f"🎊 Congratulations and thanks for playing! See you again soon!"
+    )
+    await query.edit_message_caption(caption=text, parse_mode="HTML", reply_markup=None)
