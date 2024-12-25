@@ -59,10 +59,18 @@ async def bdice(update: Update, context: CallbackContext) -> None:
 
     # Increment daily play count
     user_data['bdice_daily']['plays'] += 1
+    save_user(user_data)
 
-    # Send dice animation and collect results
+    # Start the dice game as a background task
+    asyncio.create_task(process_dice_game(update, user_data, bet_amount, user_guess))
+
+    # Notify the user that the game is in progress
+    await update.message.reply_text("Rolling the dice... Please wait for the results!")
+
+async def process_dice_game(update: Update, user_data: dict, bet_amount: int, user_guess: int) -> None:
+    # Simulate dice rolls
     dice_results = []
-    for i in range(3):
+    for _ in range(3):
         dice_message = await update.message.reply_dice(emoji="🎲")  # Send animated dice
         await asyncio.sleep(3)  # Wait for the animation to finish
         dice_results.append(dice_message.dice.value)
@@ -78,8 +86,6 @@ async def bdice(update: Update, context: CallbackContext) -> None:
         multiplier = 1.5
     elif difference <= 3:
         multiplier = 0.75
-    elif difference <= 6:
-        multiplier = 0
     else:
         multiplier = 0
 
