@@ -347,50 +347,66 @@ async def reach(update: Update, context: CallbackContext):
 async def give(update: Update, context: CallbackContext) -> None:
     giver = update.effective_user
     giver_id = str(giver.id)
+    message = update.message
 
-    # Parse command arguments
-    try:
-        target_user_id = str(context.args[0])  # Target user ID
-        credits_to_give = int(context.args[1])  # Amount of credits to transfer
-    except (IndexError, ValueError):
-        await update.message.reply_text("Usage: /give <user_id> <amount>")
+    # Check if the command is a reply or has a tagged user
+    if message.reply_to_message:
+        receiver = message.reply_to_message.from_user
+    elif message.entities and len(message.entities) > 1:
+        receiver = message.parse_entities().get(list(message.entities)[1])
+    else:
+        await update.message.reply_text("Please tag a user or reply to their message to give credits.")
         return
 
-    if credits_to_give <= 0:
-        await update.message.reply_text("The amount of credits to give must be positive.")
+    receiver_id = str(receiver.id)
+
+    # Ensure the giver and receiver are not the same
+    if giver_id == receiver_id:
+        await update.message.reply_text("You cannot give credits to yourself.")
         return
 
-    # Fetch the giver's data
+    # Check if an amount was provided
+    if len(context.args) != 1 or not context.args[0].isdigit():
+        await update.message.reply_text("Usage: /give <amount> (by tagging or replying to a user).")
+        return
+
+    amount = int(context.args[0])
+    if amount <= 0:
+        await update.message.reply_text("Please specify a positive amount of credits to give.")
+        return
+
+    # Fetch data for both users
     giver_data = get_user_by_id(giver_id)
-    if giver_data is None:
+    receiver_data = get_user_by_id(receiver_id)
+
+    if not giver_data:
         await update.message.reply_text("You need to start the bot first by using /start.")
         return
-
-    # Ensure the giver has enough credits
-    if giver_data.get("credits", 0) < credits_to_give:
-        await update.message.reply_text("You do not have enough credits to complete this transaction.")
+    if not receiver_data:
+        await update.message.reply_text("The user you are trying to give credits to hasn't started the bot.")
         return
 
-    # Fetch the recipient's data
-    recipient_data = get_user_by_id(target_user_id)
-    if recipient_data is None:
-        await update.message.reply_text("The recipient has not started the bot yet.")
+    # Check if the giver has enough credits
+    if giver_data['credits'] < amount:
+        await update.message.reply_text(f"You don't have enough credits to give. Your current balance is {giver_data['credits']}.")
         return
 
-    # Deduct credits from the giver and add them to the recipient
-    giver_data["credits"] -= credits_to_give
-    recipient_data["credits"] = recipient_data.get("credits", 0) + credits_to_give
+    # Update the balances
+    giver_data['credits'] -= amount
+    receiver_data['credits'] += amount
 
-    # Save updated data to the database
     save_user(giver_data)
-    save_user(recipient_data)
+    save_user(receiver_data)
 
     # Notify both users
-    await update.message.reply_text(f"Successfully sent {credits_to_give} credits to user {target_user_id}.")
-    await context.bot.send_message(
-        target_user_id, 
-        f"🎉 {giver.first_name} sent you {credits_to_give} credits!"
+    await update.message.reply_text(
+        f"Successfully transferred {amount} credits to {receiver.first_name}. Your new balance is {giver_data['credits']} credits."
     )
+    await context.bot.send_message(
+        chat_id=receiver_id,
+        text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
+    )
+
 
 
 def main() -> None:
