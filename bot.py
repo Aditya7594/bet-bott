@@ -344,6 +344,54 @@ async def reach(update: Update, context: CallbackContext):
         await update.message.reply_text("An error occurred while fetching bot stats. Please try again later.")
         print(f"Error in /reach command: {e}")
 
+async def give(update: Update, context: CallbackContext) -> None:
+    giver = update.effective_user
+    giver_id = str(giver.id)
+
+    # Parse command arguments
+    try:
+        target_user_id = str(context.args[0])  # Target user ID
+        credits_to_give = int(context.args[1])  # Amount of credits to transfer
+    except (IndexError, ValueError):
+        await update.message.reply_text("Usage: /give <user_id> <amount>")
+        return
+
+    if credits_to_give <= 0:
+        await update.message.reply_text("The amount of credits to give must be positive.")
+        return
+
+    # Fetch the giver's data
+    giver_data = get_user_by_id(giver_id)
+    if giver_data is None:
+        await update.message.reply_text("You need to start the bot first by using /start.")
+        return
+
+    # Ensure the giver has enough credits
+    if giver_data.get("credits", 0) < credits_to_give:
+        await update.message.reply_text("You do not have enough credits to complete this transaction.")
+        return
+
+    # Fetch the recipient's data
+    recipient_data = get_user_by_id(target_user_id)
+    if recipient_data is None:
+        await update.message.reply_text("The recipient has not started the bot yet.")
+        return
+
+    # Deduct credits from the giver and add them to the recipient
+    giver_data["credits"] -= credits_to_give
+    recipient_data["credits"] = recipient_data.get("credits", 0) + credits_to_give
+
+    # Save updated data to the database
+    save_user(giver_data)
+    save_user(recipient_data)
+
+    # Notify both users
+    await update.message.reply_text(f"Successfully sent {credits_to_give} credits to user {target_user_id}.")
+    await context.bot.send_message(
+        target_user_id, 
+        f"🎉 {giver.first_name} sent you {credits_to_give} credits!"
+    )
+
 
 def main() -> None:
     # Create the Application and pass the bot token
@@ -384,6 +432,9 @@ def main() -> None:
     application.add_handler(CommandHandler("hilo", start_hilo))
     application.add_handler(CallbackQueryHandler(hilo_click, pattern="hilo_(high|low)"))
     application.add_handler(CallbackQueryHandler(hilo_cashout, pattern="hilo_cashout"))
+
+    application.add_handler(CommandHandler("give", check_started(give)))
+
 
     # Reset functionality (ensure callback data pattern is distinct)
     application.add_handler(CommandHandler("reset", reset))  # Command to initiate reset
