@@ -18,11 +18,13 @@ from minigame import dart, basketball, flip, dice, credits_leaderboard,football
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from bank import exchange, sell, store, withdraw, bank
-from hilo_game import start_hilo, hilo_click, hilo_cashout
+#from hilo_game import start_hilo, hilo_click, hilo_cashout
+from cards import gacha, gacha, my_collection,view_card, card_pull
 # Global variables
 OWNER_ID = 5667016949
 muted_users = set()
 last_interaction_time = {}
+user_daily_credits = {}
 
 
 logging.basicConfig(
@@ -258,7 +260,7 @@ async def reset(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
 
     # Check if the user is the owner
-    if user_id not in OWNER_IDS:
+    if user_id != OWNER_ID:
         await update.message.reply_text("You don't have permission to use this command.")
         return
 
@@ -271,16 +273,17 @@ async def reset(update: Update, context: CallbackContext) -> None:
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text("Are you sure you want to reset all user data? This will wipe all progress!", reply_markup=reply_markup)
+    await update.message.reply_text(
+        "Are you sure you want to reset all user data? This will wipe all progress!",
+        reply_markup=reply_markup
+    )
 
-# Handle the callback data when the owner confirms reset
-# Handle the callback data when the owner confirms reset
 async def reset_confirmation(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
 
     # Check if the user is the owner
-    if user_id not in OWNER_IDS:
+    if user_id != OWNER_ID:
         await query.answer("You don't have permission to do this.", show_alert=True)
         return
 
@@ -301,7 +304,8 @@ async def reset_confirmation(update: Update, context: CallbackContext) -> None:
             "bank": 0,  # Reset bank balance to 0
             "gold_coins": 0,  # Reset gold coins to 0
             "silver_coins": 0,  # Reset silver coins to 0
-            "bronze_coins": 0  # Reset bronze coins to 0
+            "bronze_coins": 0,  # Reset bronze coins to 0
+            "cards": [],  # Reset cards to 0
         }})
         
         # Inform the owner that the reset was successful
@@ -407,13 +411,48 @@ async def give(update: Update, context: CallbackContext) -> None:
         text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
     )
 
+async def reward_credits(update: Update, context: CallbackContext):
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    # Get current date (reset the daily credits count at midnight)
+    today = datetime.now().date()
+
+    # Fetch user data
+    user_data = get_user_by_id(user_id)
+    if user_data:
+        last_message_date = user_data.get('last_message_date', None)
+
+        # Check if it's a new day and reset the daily credits if necessary
+        if last_message_date != str(today):
+            user_data['daily_credits'] = 0
+            user_data['last_message_date'] = str(today)
+            save_user(user_data)
+
+        # Check if user has already reached the daily cap
+        if user_data['daily_credits'] < 10000:
+            # Calculate how many credits they can still earn today
+            credits_to_add = 10
+            if user_data['daily_credits'] + credits_to_add > 10000:
+                credits_to_add = 10000 - user_data['daily_credits']
+            
+            # Update the user's credits and daily credits
+            user_data['credits'] += credits_to_add
+            user_data['daily_credits'] += credits_to_add
+            save_user(user_data)
+
+            # Send a confirmation message
+            await update.message.reply_text(f"🎉 You've received {credits_to_add} credits for chatting! Your total today: {user_data['daily_credits']} credits.")
+        else:
+            await update.message.reply_text("You've reached the daily credit limit of 10,000 credits for chatting.")
+    else:
+        await update.message.reply_text("Please start the bot first using /start.")
+
 
 
 def main() -> None:
-    # Create the Application and pass the bot token
     application = Application.builder().token(token).build()
 
-    # Add command handlers with check_started decorator
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("profile", check_started(profile)))
     application.add_handler(CommandHandler("flip", check_started(flip)))
@@ -429,44 +468,43 @@ def main() -> None:
     application.add_handler(CommandHandler("addcredits", check_started(add_credits)))
     application.add_handler(CommandHandler("reset_bag_data", check_started(reset_bag_data)))
     application.add_handler(CommandHandler("leaderboard", check_started(credits_leaderboard)))
-    application.add_handler(CommandHandler("exchange", check_started(exchange)))  # For exchanging credits to coins
-    application.add_handler(CommandHandler("sell", check_started(sell)))  # For exchanging coins back to credits
-    application.add_handler(CommandHandler("store", check_started(store)))  # For storing credits in the bank
+    application.add_handler(CommandHandler("exchange", check_started(exchange)))  
+    application.add_handler(CommandHandler("sell", check_started(sell)))  
+    application.add_handler(CommandHandler("store", check_started(store)))  
     application.add_handler(CommandHandler("withdraw", check_started(withdraw))) 
     application.add_handler(CommandHandler("bank", bank))
     application.add_handler(CommandHandler("reach", reach))
     application.add_handler(CommandHandler("reffer", reffer))
 
-    # Dice-related command
     application.add_handler(CommandHandler("bdice", check_started(bdice)))
 
-    # Daily-related commands
     application.add_handler(CommandHandler("daily", check_started(daily)))
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
     
-    application.add_handler(CommandHandler("hilo", start_hilo))
-    application.add_handler(CallbackQueryHandler(hilo_click, pattern="hilo_(high|low)"))
-    application.add_handler(CallbackQueryHandler(hilo_cashout, pattern="hilo_cashout"))
+   #application.add_handler(CommandHandler("hilo", start_hilo))
+    #application.add_handler(CallbackQueryHandler(hilo_click, pattern="hilo_(high|low)"))
+    #application.add_handler(CallbackQueryHandler(hilo_cashout, pattern="hilo_cashout"))
 
     application.add_handler(CommandHandler("give", check_started(give)))
 
+    application.add_handler(CommandHandler("gacha", gacha))
+    application.add_handler(CommandHandler("mycollection", my_collection))
+    application.add_handler(CommandHandler("view", view_card))
+    application.add_handler(CallbackQueryHandler(card_pull, pattern="^(normal|special)$"))
 
-    # Reset functionality (ensure callback data pattern is distinct)
-    application.add_handler(CommandHandler("reset", reset))  # Command to initiate reset
-    application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))  # Pattern adjusted for reset callbacks
+    application.add_handler(CommandHandler("reset", reset))  
+    application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))  
 
-    # Message handlers for rewards and other messages
+
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Run the timeout task every minute (this checks for timeout game interactions)
+ 
     application.job_queue.run_once(timeout_task, 0)
 
-    # Add callback query handler for inline buttons (ensure inline button callbacks are unique)
     application.add_handler(CallbackQueryHandler(button))
 
-    # Start polling for updates
     application.run_polling()
 
 if __name__ == '__main__':
