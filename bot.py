@@ -81,15 +81,20 @@ async def start(update: Update, context: CallbackContext):
         referrer = get_user_by_id(referrer_id)
 
         if referrer and referrer_id != user_id:  # Ensure referrer exists and isn't the same as the user
-            # Add credits and primogems to the referrer
-            referrer['credits'] += 1000
-            referrer['primos'] += 1000  # Add 1000 Primogems
-            referrer['referrals'] = referrer.get('referrals', 0) + 1  # Increment referral count
-            save_user(referrer)
+            # Check if the user is new
+            existing_user = get_user_by_id(user_id)
+            if not existing_user:  # Only give rewards if the user is new
+                # Add credits and primogems to the referrer
+                referrer['credits'] += 1000
+                referrer['primos'] += 1000  # Add 1000 Primogems
+                referrer['referrals'] = referrer.get('referrals', 0) + 1  # Increment referral count
+                save_user(referrer)
 
-            # Notify the referrer about the new referral
-            await context.bot.send_message(referrer_id, 
-                                           f"🎉 You referred {first_name} to the bot and earned 1,000 credits and 1,000 Primogems!")
+                # Notify the referrer about the new referral
+                await context.bot.send_message(
+                    referrer_id, 
+                    f"🎉 You referred {first_name} to the bot and earned 1,000 credits and 1,000 Primogems!"
+                )
 
     # Check if the user already exists
     existing_user = get_user_by_id(user_id)
@@ -122,6 +127,7 @@ async def start(update: Update, context: CallbackContext):
         await update.message.reply_text(
             f"Welcome back, {first_name}! Use /profile to view your details."
         )
+
 
 async def reffer(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
