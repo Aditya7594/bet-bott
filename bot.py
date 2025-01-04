@@ -417,6 +417,49 @@ async def give(update: Update, context: CallbackContext) -> None:
         text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
     )
 
+async def chat_reward(update: Update, context: CallbackContext) -> None:
+    user_id = str(update.effective_user.id)
+    user_data = get_user_by_id(user_id)
+
+    if not user_data:
+        # Create user data if not present
+        user_data = {
+            "user_id": user_id,
+            "credits": 5000,  # Initial credits
+            "bag": {},
+            "daily_credits": 0,  # Credits earned today
+            "last_chat_time": None,  # Last time the user chatted
+            "daily": None,  # Time of last reward claim
+            "win": 0,
+            "loss": 0,
+        }
+        save_user(user_data)
+
+    # Check if the user has already earned 10,000 credits for the day
+    if user_data["daily_credits"] >= 10000:
+        return  # Exit if the user has already earned their daily limit
+
+    # Grant 10 credits for each chat if the user hasn't reached the daily limit
+    credits_to_grant = 10
+    if user_data["daily_credits"] + credits_to_grant > 10000:
+        credits_to_grant = 10000 - user_data["daily_credits"]  # Make sure we don't exceed the limit
+
+    # Update credits and daily earnings
+    user_data["credits"] += credits_to_grant
+    user_data["daily_credits"] += credits_to_grant
+
+    # Save the updated user data
+    save_user(user_data)
+
+    # Notify the user about the credits earned
+    await update.message.reply_text(f"🎉 You've earned {credits_to_grant} credits for chatting! Your new balance is {user_data['credits']} credits.")
+
+    # Check if it's a new day and reset daily earnings
+    if user_data["daily"] and datetime.now() - datetime.strptime(user_data["daily"], "%Y-%m-%d") >= timedelta(days=1):
+        user_data["daily_credits"] = 0  # Reset daily credits
+        user_data["daily"] = datetime.now().strftime("%Y-%m-%d")  # Update the date to current day
+        save_user(user_data)
+
 
 def main() -> None:
     application = Application.builder().token(token).build()
@@ -466,6 +509,7 @@ def main() -> None:
 
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_reward))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
  
