@@ -446,7 +446,7 @@ async def reward_credits(update: Update, context: CallbackContext):
         else:
             await update.message.reply_text("You've reached the daily credit limit of 10,000 credits for chatting.")
     else:
-        await update.message.reply_text("Please start the bot first using /start.")= 10
+        await update.message.reply_text("Please start the bot first using /start.")
     save_user(user_data)
 
 
