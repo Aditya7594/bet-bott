@@ -411,43 +411,22 @@ async def give(update: Update, context: CallbackContext) -> None:
         text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
     )
 
-async def reward_credits(update: Update, context: CallbackContext):
-    user = update.effective_user
-    user_id = str(user.id)
-    
-    # Get current date (reset the daily credits count at midnight)
-    today = datetime.now().date()
-
-    # Fetch user data
+async def reward_credits_per_message(update: Update, context: CallbackContext) -> None:
+    user_id = str(update.effective_user.id)
     user_data = get_user_by_id(user_id)
-    if user_data:
-        last_message_date = user_data.get('last_message_date', None)
-
-        # Check if it's a new day and reset the daily credits if necessary
-        if last_message_date != str(today):
-            user_data['daily_credits'] = 0
-            user_data['last_message_date'] = str(today)
-            save_user(user_data)
-
-        # Check if user has already reached the daily cap
-        if user_data['daily_credits'] < 10000:
-            # Calculate how many credits they can still earn today
-            credits_to_add = 10
-            if user_data['daily_credits'] + credits_to_add > 10000:
-                credits_to_add = 10000 - user_data['daily_credits']
-            
-            # Update the user's credits and daily credits
-            user_data['credits'] += credits_to_add
-            user_data['daily_credits'] += credits_to_add
-            save_user(user_data)
-
-            # Send a confirmation message
-            await update.message.reply_text(f"🎉 You've received {credits_to_add} credits for chatting! Your total today: {user_data['daily_credits']} credits.")
-        else:
-            await update.message.reply_text("You've reached the daily credit limit of 10,000 credits for chatting.")
-    else:
-        await update.message.reply_text("Please start the bot first using /start.")
-
+    
+    if not user_data:
+        # Create user data if not present
+        user_data = {
+            "user_id": user_id,
+            "credits": 100,  # Initial credits
+            "bag": {}
+        }
+        save_user(user_data)
+    
+    # Increment credits by 10
+    user_data["credits"] += 10
+    save_user(user_data)
 
 
 def main() -> None:
@@ -498,6 +477,7 @@ def main() -> None:
 
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_credits_per_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
  
