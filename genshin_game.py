@@ -126,19 +126,47 @@ async def start(update: Update, context: CallbackContext) -> None:
         logger.info(f"Genshin user {user_id} initialized.")
 async def reward_primos(update: Update, context: CallbackContext) -> None:
     user_id = str(update.effective_user.id)
-    user_data = get_genshin_user_by_id(user_id)
     
-    if not user_data:
-        # Create user data if not present
-        user_data = {
+    # Fetch or create data in genshin_collection
+    genshin_user_data = genshin_collection.find_one({"user_id": user_id})
+    if not genshin_user_data:
+        genshin_user_data = {
             "user_id": user_id,
             "primos": 16000,  # Initial primogems
             "bag": {}
         }
-        save_genshin_user(user_data)
+        genshin_collection.insert_one(genshin_user_data)
+    
     # Increment primos by 5
-    user_data["primos"] += 5
-    save_genshin_user(user_data)
+    genshin_collection.update_one(
+        {"user_id": user_id},
+        {"$inc": {"primos": 5}}
+    )
+    updated_genshin_user = genshin_collection.find_one({"user_id": user_id})
+    
+    # Fetch or create data in users_collection
+    user_data = users_collection.find_one({"user_id": user_id})
+    if not user_data:
+        user_data = {
+            "user_id": user_id,
+            "credits": 100  # Initial credits
+        }
+        users_collection.insert_one(user_data)
+    
+    # Increment credits by 10
+    users_collection.update_one(
+        {"user_id": user_id},
+        {"$inc": {"credits": 10}}
+    )
+    updated_user_data = users_collection.find_one({"user_id": user_id})
+    
+    # Send a message to the user to confirm the rewards
+    await update.message.reply_text(
+        f"You have been rewarded with 5 Primogems and 10 Credits! 🎉\n"
+        f"Total Primogems: {updated_genshin_user['primos']}\n"
+        f"Total Credits: {updated_user_data['credits']}"
+    )
+
 async def add_primos(update: Update, context: CallbackContext) -> None:
     if update.effective_user.id != OWNER_ID:
         await update.message.reply_text("🔒 You don't have permission to use this command.")
