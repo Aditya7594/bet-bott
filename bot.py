@@ -417,39 +417,6 @@ async def give(update: Update, context: CallbackContext) -> None:
         text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
     )
 
-async def chat_reward(update: Update, context: CallbackContext) -> None:
-    user_id = str(update.effective_user.id)
-    user_data = get_user_by_id(user_id)
-
-    if not user_data:
-        # Initialize user data if not present
-        user_data = {
-            "user_id": user_id,
-            "credits": 5000,  # Initial credits
-            "daily_credits": 0,
-            "daily": datetime.now().strftime("%Y-%m-%d"),
-        }
-        save_user(user_data)
-
-    # Reset daily limit if it's a new day
-    if user_data["daily"]:
-        last_daily_date = datetime.strptime(user_data["daily"], "%Y-%m-%d")
-        if datetime.now() - last_daily_date >= timedelta(days=1):
-            user_data["daily_credits"] = 0
-            user_data["daily"] = datetime.now().strftime("%Y-%m-%d")
-
-    if user_data["daily_credits"] >= 10000:
-        await update.message.reply_text("You've reached your daily credit limit of 10,000.")
-        return
-
-    credits_to_grant = 10
-    if user_data["daily_credits"] + credits_to_grant > 10000:
-        credits_to_grant = 10000 - user_data["daily_credits"]
-
-    user_data["credits"] += credits_to_grant
-    user_data["daily_credits"] += credits_to_grant
-
-    save_user(user_data)
 
 
 
@@ -501,7 +468,6 @@ def main() -> None:
 
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_reward))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
  
