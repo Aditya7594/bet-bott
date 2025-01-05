@@ -139,7 +139,7 @@ async def start(update: Update, context: CallbackContext) -> None:
 async def reward_primos(update: Update, context: CallbackContext) -> None:
     user_id = str(update.effective_user.id)
     now = datetime.utcnow() + timedelta(hours=5, minutes=30)  # Convert to IST (UTC +5:30)
-    
+
     # Calculate today's reset time (5:00 AM IST)
     today_5am = now.replace(hour=5, minute=0, second=0, microsecond=0)
     if now < today_5am:  # If current time is before 5:00 AM, adjust to the previous day's 5:00 AM
@@ -158,8 +158,14 @@ async def reward_primos(update: Update, context: CallbackContext) -> None:
         }
         save_genshin_user(user_data)
 
+    # Initialize missing fields if necessary
+    if "daily_earned" not in user_data:
+        user_data["daily_earned"] = 0
+    if "last_reset" not in user_data:
+        user_data["last_reset"] = today_5am
+
     # Check if the user's rewards need a reset
-    if user_data.get("last_reset", today_5am) < today_5am:
+    if user_data["last_reset"] < today_5am:
         user_data["daily_earned"] = 0  # Reset daily earned primogems
         user_data["last_reset"] = today_5am  # Update reset time
 
@@ -172,6 +178,7 @@ async def reward_primos(update: Update, context: CallbackContext) -> None:
     user_data["primos"] += 5
     user_data["daily_earned"] += 5
     save_genshin_user(user_data)
+
 
 
 async def add_primos(update: Update, context: CallbackContext) -> None:
