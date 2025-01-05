@@ -154,13 +154,21 @@ async def view_card(update: Update, context: CallbackContext) -> None:
     # Retrieve the flattened card list
     flat_card_list = context.user_data.get("flat_card_list", [])
 
+    if not flat_card_list:
+        await update.message.reply_text("Your card collection is empty or not loaded.")
+        return
+
+    # Validate card number
     if card_number < 0 or card_number >= len(flat_card_list):
-        await update.message.reply_text("Invalid card number.")
+        await update.message.reply_text("Invalid card number. Please choose a valid card.")
         return
 
     # Get the selected card name
     card_name = flat_card_list[card_number]
     card_filename = card_name.lower().replace(" ", "_") + ".png"
+
+    # Debug: Log the selected card name and filename
+    logger.info(f"User selected card: {card_name}, filename: {card_filename}")
 
     # Check both card directories for the image
     card_path = os.path.join(NORMAL_CARDS_DIR, card_filename)
@@ -171,4 +179,5 @@ async def view_card(update: Update, context: CallbackContext) -> None:
     if os.path.exists(card_path):
         await update.message.reply_photo(photo=open(card_path, 'rb'))
     else:
-        await update.message.reply_text("Card image not found.")
+        await update.message.reply_text(f"Card image for '{card_name}' not found.")
+
