@@ -23,7 +23,6 @@ def get_genshin_user_by_id(user_id):
 def save_genshin_user(user_data):
     genshin_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
 
-# Updated exchange functionality
 async def exchange(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
@@ -33,7 +32,7 @@ async def exchange(update: Update, context: CallbackContext) -> None:
         amount = int(context.args[0])
         currency_type = context.args[1].lower()
     except (IndexError, ValueError):
-        await update.message.reply_text("Usage: /exchange <amount> <currency_type (gold/silver/bronze/primo)>")
+        await update.message.reply_text("Usage: /exchange <amount> <currency_type (gold/silver/bronze/primos)>")
         return
 
     # Fetch user data from the main users collection
@@ -42,10 +41,10 @@ async def exchange(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("You need to start the bot first by using /start.")
         return
 
-    # Fetch genshin user data for primo
+    # Fetch genshin user data for primos
     genshin_user_data = get_genshin_user_by_id(user_id)
-    if not genshin_user_data and currency_type == "primo":
-        await update.message.reply_text("You need to link your Genshin account first to exchange primo.")
+    if not genshin_user_data and currency_type == "primos":
+        await update.message.reply_text("You need to link your Genshin account first to exchange primos.")
         return
 
     # Determine conversion rates
@@ -55,31 +54,31 @@ async def exchange(update: Update, context: CallbackContext) -> None:
         credit_cost = 50000
     elif currency_type == "bronze":
         credit_cost = 10000
-    elif currency_type == "primo":
-        credit_cost = 1  # 1 primo = 1 credit
+    elif currency_type == "primos":
+        credit_cost = 1  # 1 primos = 1 credit
     else:
-        await update.message.reply_text("Invalid currency type. Choose between 'gold', 'silver', 'bronze', or 'primo'.")
+        await update.message.reply_text("Invalid currency type. Choose between 'gold', 'silver', 'bronze', or 'primos'.")
         return
 
     # Calculate total cost
     total_credit_cost = amount * credit_cost
 
-    if currency_type == "primo":
-        # Check if user has enough primo in genshin collection
-        if genshin_user_data.get("primo", 0) < amount:
-            await update.message.reply_text(f"You don't have enough primo. You need {amount} primo.")
+    if currency_type == "primos":
+        # Check if user has enough primos in genshin collection
+        if genshin_user_data.get("primos", 0) < amount:
+            await update.message.reply_text(f"You don't have enough primos. You need {amount} primos.")
             return
 
-        # Deduct primo and add credits to the user's account
-        genshin_user_data["primo"] -= amount
+        # Deduct primos and add credits to the user's account
+        genshin_user_data["primos"] -= amount
         user_data["credits"] += total_credit_cost
         save_genshin_user(genshin_user_data)
         save_user(user_data)
 
         await update.message.reply_text(
-            f"Successfully exchanged {amount} primo for {total_credit_cost} credits.\n"
+            f"Successfully exchanged {amount} primos for {total_credit_cost} credits.\n"
             f"Your new balance: {user_data['credits']} credits.\n"
-            f"Remaining primo: {genshin_user_data['primo']}."
+            f"Remaining primos: {genshin_user_data['primos']}."
         )
     else:
         # Check if user has enough credits for other currency types
@@ -96,7 +95,6 @@ async def exchange(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(
             f"Successfully exchanged {total_credit_cost} credits for {amount} {currency_type} coin(s)."
         )
-
 
 async def sell(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
