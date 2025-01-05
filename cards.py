@@ -130,8 +130,9 @@ async def my_collection(update: Update, context: CallbackContext) -> None:
     card_counts = Counter(user_data['cards'])
     flat_card_list = [card for card, count in card_counts.items() for _ in range(count)]
 
-    # Store the flat list in the context for use in the /view command
-    context.user_data["flat_card_list"] = flat_card_list
+    # Persist the flat list to MongoDB instead of transient `context.user_data`
+    user_data['flat_card_list'] = flat_card_list
+    save_user(user_data)
 
     # Display the collection with accurate numbering
     collection = "\n".join(
@@ -151,23 +152,26 @@ async def view_card(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("Please provide the number of the card you want to view.")
         return
 
-    # Retrieve the flattened card list
-    flat_card_list = context.user_data.get("flat_card_list", [])
+    # Retrieve user data and their flat card list
+    user_id = update.effective_user.id
+    user_data = get_user_by_id(str(user_id))
 
-    if not flat_card_list:
+    if not user_data or not user_data.get('flat_card_list', []):
         await update.message.reply_text("Your card collection is empty or not loaded.")
         return
+
+    flat_card_list = user_data['flat_card_list']
 
     # Validate card number
     if card_number < 0 or card_number >= len(flat_card_list):
         await update.message.reply_text("Invalid card number. Please choose a valid card.")
         return
 
-    # Get the selected card name
+    # Get the selected card name and construct filename
     card_name = flat_card_list[card_number]
     card_filename = card_name.lower().replace(" ", "_") + ".png"
 
-    # Debug: Log the selected card name and filename
+    # Log the selected card name and filename for debugging
     logger.info(f"User selected card: {card_name}, filename: {card_filename}")
 
     # Check both card directories for the image
@@ -176,8 +180,14 @@ async def view_card(update: Update, context: CallbackContext) -> None:
         card_path = os.path.join(SPECIAL_CARDS_DIR, card_filename)
 
     # Send the card image or an error message
-    if os.path.exists(card_path):
-        await update.message.reply_photo(photo=open(card_path, 'rb'))
-    else:
-        await update.message.reply_text(f"Card image for '{card_name}' not found.")
+    try:
+        if os.path.exists(card_path):
+            with open(card_path, 'rb') as card_image:
+                await update.message.reply_photo(photo=card_image, caption=f"🎴 {card_name}")
+        else:
+            await update.message.reply_text(f"Card image for '{card_name}' not found.")
+    except Exception as e:
+        logger.error(f"Error sending card image: {e}")
+        await update.message.reply_text("An error occurred while retrieving the card image.")
+
 
