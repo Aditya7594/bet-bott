@@ -142,12 +142,17 @@ async def my_collection(update: Update, context: CallbackContext) -> None:
 
 
 async def view_card(update: Update, context: CallbackContext) -> None:
+    """
+    Handle the /view command where users can view a specific card from their collection.
+    """
     try:
+        # Parse the card number (1-based)
         card_number = int(context.args[0]) - 1
     except (IndexError, ValueError):
         await update.message.reply_text("Please provide the number of the card you want to view.")
         return
 
+    # Retrieve user data and their flat card list
     user_id = update.effective_user.id
     user_data = get_user_by_id(str(user_id))
 
@@ -157,28 +162,31 @@ async def view_card(update: Update, context: CallbackContext) -> None:
 
     flat_card_list = user_data['flat_card_list']
 
+    # Validate card number
     if card_number < 0 or card_number >= len(flat_card_list):
         await update.message.reply_text("Invalid card number. Please choose a valid card.")
         return
 
+    # Get the selected card name and construct filename
     card_name = flat_card_list[card_number]
-    card_filename = card_name.lower().replace(" ", "_").replace("-", "_") + ".png"
+    card_filename = card_name.replace(" ", "_").upper() + ".png"  # Match uppercase naming convention
 
+    # Log the selected card name and filename for debugging
+    logger.info(f"User selected card: {card_name}, filename: {card_filename}")
+
+    # Always look for images in NORMAL_CARDS_DIR
     card_path = os.path.join(NORMAL_CARDS_DIR, card_filename)
-    if not os.path.exists(card_path):
-        card_path = os.path.join(SPECIAL_CARDS_DIR, card_filename)
 
-    logger.info(f"Looking for card image at: {card_path}")
+    # Log available files in the directory for debugging
+    logger.info(f"Available files in {NORMAL_CARDS_DIR}: {os.listdir(NORMAL_CARDS_DIR)}")
 
+    # Send the card image or an error message
     try:
         if os.path.exists(card_path):
             with open(card_path, 'rb') as card_image:
                 await update.message.reply_photo(photo=card_image, caption=f"🎴 {card_name}")
         else:
-            logger.warning(f"Card image not found: {card_filename}")
             await update.message.reply_text(f"Card image for '{card_name}' not found.")
     except Exception as e:
         logger.error(f"Error sending card image: {e}")
         await update.message.reply_text("An error occurred while retrieving the card image.")
-
-
