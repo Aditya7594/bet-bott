@@ -184,7 +184,7 @@ async def view_card(update: Update, context: CallbackContext) -> None:
     try:
         if os.path.exists(card_path):
             with open(card_path, 'rb') as card_image:
-                await update.message.reply_photo(photo=card_image, caption=f"🎴 {card_name}")
+                await update.message.reply_photo(photo=card_image)
         else:
             await update.message.reply_text(f"Card image for '{card_name}' not found.")
     except Exception as e:
