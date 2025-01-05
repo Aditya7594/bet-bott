@@ -86,6 +86,8 @@ def save_user(user_data):
 async def start(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
+    first_name = user.first_name  # Fetch user's first name for genshin_users collection
+
     # Save in general users collection
     existing_user = get_user_by_id(user_id)
     if existing_user is None:
@@ -113,17 +115,26 @@ async def start(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(
             "You have already started the bot. Use /profile to view your details."
         )
+
     # Save in genshin_users collection
     existing_genshin_user = get_genshin_user_by_id(user_id)
     if existing_genshin_user is None:
+        now = datetime.utcnow() + timedelta(hours=5, minutes=30)  # Convert to IST
+        today_5am = now.replace(hour=5, minute=0, second=0, microsecond=0)
+        if now < today_5am:  # Adjust to the previous day's 5:00 AM if before reset
+            today_5am -= timedelta(days=1)
+
         new_genshin_user = {
             "user_id": user_id,
             "first_name": first_name,
             "primos": 16000,  # Initial primogems
-            "bag": {}
+            "bag": {},
+            "daily_earned": 0,        # New field to track daily earned primogems
+            "last_reset": today_5am,  # New field to track the last reset time
         }
         save_genshin_user(new_genshin_user)
         logger.info(f"Genshin user {user_id} initialized.")
+
 
 async def reward_primos(update: Update, context: CallbackContext) -> None:
     user_id = str(update.effective_user.id)
