@@ -3,7 +3,7 @@ from telegram.ext import CallbackContext
 import random
 from pymongo import MongoClient
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Tuple
 
 OWNER_ID = 5667016949
@@ -124,21 +124,44 @@ async def start(update: Update, context: CallbackContext) -> None:
         }
         save_genshin_user(new_genshin_user)
         logger.info(f"Genshin user {user_id} initialized.")
+
 async def reward_primos(update: Update, context: CallbackContext) -> None:
     user_id = str(update.effective_user.id)
-    user_data = get_genshin_user_by_id(user_id)
+    now = datetime.utcnow() + timedelta(hours=5, minutes=30)  # Convert to IST (UTC +5:30)
     
+    # Calculate today's reset time (5:00 AM IST)
+    today_5am = now.replace(hour=5, minute=0, second=0, microsecond=0)
+    if now < today_5am:  # If current time is before 5:00 AM, adjust to the previous day's 5:00 AM
+        today_5am -= timedelta(days=1)
+
+    # Fetch user data
+    user_data = get_genshin_user_by_id(user_id)
     if not user_data:
         # Create user data if not present
         user_data = {
             "user_id": user_id,
             "primos": 16000,  # Initial primogems
-            "bag": {}
+            "bag": {},
+            "last_reset": today_5am,  # Record last reset time
+            "daily_earned": 0  # Track daily earned primogems
         }
         save_genshin_user(user_data)
+
+    # Check if the user's rewards need a reset
+    if user_data.get("last_reset", today_5am) < today_5am:
+        user_data["daily_earned"] = 0  # Reset daily earned primogems
+        user_data["last_reset"] = today_5am  # Update reset time
+
+    # Enforce daily limit of 10,000 primogems
+    if user_data["daily_earned"] >= 10000:
+        # Do nothing if daily limit is reached (silently stop rewarding)
+        return
+
     # Increment primos by 5
     user_data["primos"] += 5
+    user_data["daily_earned"] += 5
     save_genshin_user(user_data)
+
 
 async def add_primos(update: Update, context: CallbackContext) -> None:
     if update.effective_user.id != OWNER_ID:
