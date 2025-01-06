@@ -75,28 +75,26 @@ async def start(update: Update, context: CallbackContext):
     user_id = str(user.id)
     first_name = user.first_name
 
-    # Check if the user came through a referral link
     if context.args and context.args[0].startswith("ref"):
-        referrer_id = context.args[0][3:]  # Get the referrer ID from the referral link
+        referrer_id = str(context.args[0][3:])
         referrer = get_user_by_id(referrer_id)
 
-        if referrer and referrer_id != user_id:  # Ensure referrer exists and isn't the same as the user
-            # Check if the user is new
+        if referrer and referrer_id != user_id:
+            logging.info(f"Referrer before update: {referrer}")
             existing_user = get_user_by_id(user_id)
-            if not existing_user:  # Only give rewards if the user is new
-                # Add credits and primogems to the referrer
-                referrer['credits'] += 1000
-                referrer['primos'] += 1000  # Add 1000 Primogems
-                referrer['referrals'] = referrer.get('referrals', 0) + 1  # Increment referral count
+            if not existing_user:
+                referrer['credits'] = referrer.get('credits', 0) + 1000
+                referrer['primos'] = referrer.get('primos', 0) + 1000
+                referrer['referrals'] = referrer.get('referrals', 0) + 1
                 save_user(referrer)
 
-                # Notify the referrer about the new referral
+                logging.info(f"Referrer after update: {referrer}")
+
                 await context.bot.send_message(
-                    referrer_id, 
+                    referrer_id,
                     f"🎉 You referred {first_name} to the bot and earned 1,000 credits and 1,000 Primogems!"
                 )
 
-    # Check if the user already exists
     existing_user = get_user_by_id(user_id)
     if not existing_user:
         new_user = {
@@ -104,7 +102,7 @@ async def start(update: Update, context: CallbackContext):
             "first_name": first_name,
             "join_date": datetime.now().strftime('%m/%d/%y'),
             "credits": 5000 + (1000 if context.args and context.args[0].startswith("ref") else 0),
-            "primos": 1000 if context.args and context.args[0].startswith("ref") else 0,  # Add 1000 Primogems if referred
+            "primos": 1000 if context.args and context.args[0].startswith("ref") else 0,
             "daily": None,
             "win": 0,
             "loss": 0,
@@ -113,20 +111,25 @@ async def start(update: Update, context: CallbackContext):
             "ban": None,
             "title": "None",
             "bag": {},
-            "referrals": 0  # Initialize referral count
+            "referrals": 0
         }
         save_user(new_user)
+
+        logging.info(f"New user created: {new_user}")
+
         await update.message.reply_text(
             f"Welcome {first_name}! You've received 5,000 credits and 1,000 Primogems to start betting. Use /profile to check your details."
         )
 
-        # Notify the referee if they joined through a referral link
         if context.args and context.args[0].startswith("ref"):
-            await update.message.reply_text("🎉 You joined through a referral link and earned 1,000 bonus credits and 1,000 Primogems!")
+            await update.message.reply_text(
+                "🎉 You joined through a referral link and earned 1,000 bonus credits and 1,000 Primogems!"
+            )
     else:
         await update.message.reply_text(
             f"Welcome back, {first_name}! Use /profile to view your details."
         )
+
 
 
 async def reffer(update: Update, context: CallbackContext) -> None:
