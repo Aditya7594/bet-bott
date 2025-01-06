@@ -92,7 +92,7 @@ async def start(update: Update, context: CallbackContext):
 
                 await context.bot.send_message(
                     referrer_id,
-                    f"🎉 You referred {first_name} to the bot and earned 1,000 credits and 1,000 Primogems!"
+                    f"🎉 You referred {first_name} to the bot and earned 1,000 credits"
                 )
 
     existing_user = get_user_by_id(user_id)
@@ -118,12 +118,12 @@ async def start(update: Update, context: CallbackContext):
         logging.info(f"New user created: {new_user}")
 
         await update.message.reply_text(
-            f"Welcome {first_name}! You've received 5,000 credits and 1,000 Primogems to start betting. Use /profile to check your details."
+            f"Welcome {first_name}! You've received 5,000 credits and 16,000 Primogems to start betting. Use /profile to check your details."
         )
 
         if context.args and context.args[0].startswith("ref"):
             await update.message.reply_text(
-                "🎉 You joined through a referral link and earned 1,000 bonus credits and 1,000 Primogems!"
+                "🎉 You joined through a referral link and earned 1,000 credits!"
             )
     else:
         await update.message.reply_text(
