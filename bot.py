@@ -432,13 +432,13 @@ def main() -> None:
     application.add_handler(CommandHandler("basketball", check_started(basketball)))
     application.add_handler(CommandHandler("football", check_started(football)))
     application.add_handler(CommandHandler("dice", check_started(dice)))
-    application.add_handler(CommandHandler("pull", check_started(pull)))
-    application.add_handler(CommandHandler("bag", check_started(bag)))
-    application.add_handler(CommandHandler('add_primos', check_started(add_primos)))
-    application.add_handler(CommandHandler("Primos_leaderboard", check_started(leaderboard)))
-    application.add_handler(CommandHandler('drop_primos', check_started(drop_primos)))
+    application.add_handler(CommandHandler("pull", check_started(pull)))  # Pull command
+    application.add_handler(CommandHandler("bag", check_started(bag)))  # Bag command
+    application.add_handler(CommandHandler('add_primos', check_started(add_primos)))  # Add primos (admin)
+    application.add_handler(CommandHandler("Primos_leaderboard", check_started(leaderboard)))  # Primos leaderboard
+    application.add_handler(CommandHandler('drop_primos', check_started(drop_primos)))  # Drop primos (admin)
     application.add_handler(CommandHandler("addcredits", check_started(add_credits)))
-    application.add_handler(CommandHandler("reset_bag_data", check_started(reset_bag_data)))
+    application.add_handler(CommandHandler("reset_bag_data", check_started(reset_bag_data)))  # Reset bag data (admin)
     application.add_handler(CommandHandler("leaderboard", check_started(credits_leaderboard)))
     application.add_handler(CommandHandler("exchange", check_started(exchange)))  
     application.add_handler(CommandHandler("sell", check_started(sell)))  
