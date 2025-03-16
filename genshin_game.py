@@ -73,6 +73,12 @@ WEAPONS = {
     "Skyrider Sword": 3, "Slingshot": 3, "Thrilling Tales of Dragon Slayers": 3, "Traveler's Handy Sword": 3,
     "Twin Nephrite": 3, "White Iron Greatsword": 3, "White Tassel": 3
 }
+
+ARTIFACTS_FOLDER = "artifacts"
+ARTIFACTS = {os.path.splitext(file)[0].replace("_", " "): os.path.join(ARTIFACTS_FOLDER, file) for file in os.listdir(ARTIFACTS_FOLDER) if file.endswith(".png")}
+
+artifact_thresholds = {}
+
 def get_genshin_user_by_id(user_id):
     return genshin_collection.find_one({"user_id": user_id})
 def save_genshin_user(user_data):
@@ -157,6 +163,90 @@ async def reward_primos(update: Update, context: CallbackContext) -> None:
 
     # Save the updated user data
     save_genshin_user(user_data)
+
+async def set_threshold(update: Update, context: CallbackContext) -> None:
+    # Check if the user is an admin
+    if update.effective_user.id not in [OWNER_ID]:  # Add other admin IDs if needed
+        await update.message.reply_text("🔒 You don't have permission to use this command.")
+        return
+
+    try:
+        threshold = int(context.args[0])
+        if threshold <= 0:
+            await update.message.reply_text("❗ The threshold must be a positive number.")
+            return
+    except (IndexError, ValueError):
+        await update.message.reply_text("❗ Usage: /set <threshold> (e.g., /set 100)")
+        return
+
+    chat_id = update.effective_chat.id
+    artifact_thresholds[chat_id] = threshold
+    await update.message.reply_text(f"✅ Artifact reward threshold set to {threshold} messages.")
+
+async def send_artifact_reward(chat_id: int, context: CallbackContext) -> None:
+    # Select a random artifact
+    artifact_name, artifact_image = random.choice(list(ARTIFACTS.items()))
+
+    # Send artifact reward with image
+    with open(artifact_image, "rb") as image_file:
+        keyboard = [[InlineKeyboardButton("Get", callback_data=f"artifact_{artifact_name}")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        message = await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=image_file,
+            caption=f"🎉 **Artifact Reward!** 🎉\n\n"
+                    f"An artifact has appeared: **{artifact_name}**\n\n"
+                    f"Click the button below to claim it!",
+            reply_markup=reply_markup
+        )
+
+    # Store the message ID for later deletion
+    context.chat_data["artifact_message_id"] = message.message_id
+
+async def handle_artifact_button(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    user_id = str(query.from_user.id)
+    chat_id = query.message.chat_id
+
+    # Check if the artifact has already been claimed
+    if "artifact_claimed" in context.chat_data:
+        await query.answer("❌ This artifact has already been claimed.", show_alert=True)
+        return
+
+    # Mark the artifact as claimed
+    context.chat_data["artifact_claimed"] = True
+
+    
+    artifact_name = query.data.split("_")[1]
+
+    
+    user_data = get_genshin_user_by_id(user_id)
+    if not user_data:
+        user_data = {
+            "user_id": user_id,
+            "primos": 16000,
+            "bag": {"artifacts": {}},
+            "daily_earned": 0,
+            "last_reset": datetime.utcnow() + timedelta(hours=5, minutes=30),
+        }
+
+    if "artifacts" not in user_data["bag"]:
+        user_data["bag"]["artifacts"] = {}
+
+    if artifact_name not in user_data["bag"]["artifacts"]:
+        user_data["bag"]["artifacts"][artifact_name] = {"image": ARTIFACTS[artifact_name], "refinement": 1}
+    else:
+        user_data["bag"]["artifacts"][artifact_name]["refinement"] += 1
+
+    save_genshin_user(user_data)
+
+    await query.answer(f"🎉 You claimed the {artifact_name}!", show_alert=True)
+
+
+    artifact_message_id = context.chat_data.get("artifact_message_id")
+    if artifact_message_id:
+        await context.bot.delete_message(chat_id=chat_id, message_id=artifact_message_id)
+
 
 async def add_primos(update: Update, context: CallbackContext) -> None:
     if update.effective_user.id != OWNER_ID:
@@ -323,21 +413,26 @@ async def bag(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("🔹 You need to start the bot first by using /start.")
         return
 
+    # Display the user's bag
     primos = user_data.get("primos", 0)
     characters = user_data["bag"].get("characters", {})
     weapons = user_data["bag"].get("weapons", {})
+    artifacts = user_data["bag"].get("artifacts", {})
 
     # Total counts
     total_characters = sum(1 for _ in characters)
     total_weapons = sum(1 for _ in weapons)
+    total_artifacts = sum(1 for _ in artifacts)
 
-    # Generate the text for characters and weapons
+    # Generate the text for characters, weapons, and artifacts
     characters_str = "\n".join([f"✨ {char}: {info}" for char, info in characters.items()]) if characters else "No characters in bag."
     weapons_str = "\n".join([f"⚔️ {weapon}: {info}" for weapon, info in weapons.items()]) if weapons else "No weapons in bag."
+    artifacts_str = "\n".join([f"🖼️ {name}: R{info['refinement']}" for name, info in artifacts.items()]) if artifacts else "No artifacts in bag."
 
     keyboard = [
         [InlineKeyboardButton("Characters", callback_data="show_characters"),
-         InlineKeyboardButton("Weapons", callback_data="show_weapons")],
+         InlineKeyboardButton("Weapons", callback_data="show_weapons"),
+         InlineKeyboardButton("Artifacts", callback_data="show_artifacts")],
         [InlineKeyboardButton("Back", callback_data="back")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -346,11 +441,11 @@ async def bag(update: Update, context: CallbackContext) -> None:
         "🔹 **Your Bag:**\n\n"
         f"💎 **Primogems:** {primos}\n\n"
         f"👤 **Total Characters:** {total_characters}\n"
-        f"⚔️ **Total Weapons:** {total_weapons}"
+        f"⚔️ **Total Weapons:** {total_weapons}\n"
+        f"🖼️ **Total Artifacts:** {total_artifacts}"
     )
 
     await update.message.reply_text(response, reply_markup=reply_markup, parse_mode='Markdown')
-
 
 async def button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -367,7 +462,8 @@ async def button(update: Update, context: CallbackContext) -> None:
         characters_str = "\n".join([f"✨ {char}: {info}" for char, info in characters.items()]) if characters else "No characters in bag."
         response = f"👤 **Characters:**\n{characters_str}"
         keyboard = [
-            [InlineKeyboardButton("Weapons", callback_data="show_weapons")],
+            [InlineKeyboardButton("Weapons", callback_data="show_weapons"),
+             InlineKeyboardButton("Artifacts", callback_data="show_artifacts")],
             [InlineKeyboardButton("Back", callback_data="back")]
         ]
     elif query.data == "show_weapons":
@@ -375,7 +471,17 @@ async def button(update: Update, context: CallbackContext) -> None:
         weapons_str = "\n".join([f"⚔️ {weapon}: {info}" for weapon, info in weapons.items()]) if weapons else "No weapons in bag."
         response = f"⚔️ **Weapons:**\n{weapons_str}"
         keyboard = [
-            [InlineKeyboardButton("Characters", callback_data="show_characters")],
+            [InlineKeyboardButton("Characters", callback_data="show_characters"),
+             InlineKeyboardButton("Artifacts", callback_data="show_artifacts")],
+            [InlineKeyboardButton("Back", callback_data="back")]
+        ]
+    elif query.data == "show_artifacts":
+        artifacts = user_data["bag"].get("artifacts", {})
+        artifacts_str = "\n".join([f"🖼️ {name}: R{info['refinement']}" for name, info in artifacts.items()]) if artifacts else "No artifacts in bag."
+        response = f"🖼️ **Artifacts:**\n{artifacts_str}"
+        keyboard = [
+            [InlineKeyboardButton("Characters", callback_data="show_characters"),
+             InlineKeyboardButton("Weapons", callback_data="show_weapons")],
             [InlineKeyboardButton("Back", callback_data="back")]
         ]
     elif query.data == "back":
@@ -383,16 +489,20 @@ async def button(update: Update, context: CallbackContext) -> None:
         primos = user_data.get("primos", 0)
         characters = user_data["bag"].get("characters", {})
         weapons = user_data["bag"].get("weapons", {})
+        artifacts = user_data["bag"].get("artifacts", {})
 
         total_characters = sum(1 for _ in characters)
         total_weapons = sum(1 for _ in weapons)
+        total_artifacts = sum(1 for _ in artifacts)
 
         characters_str = "\n".join([f"✨ {char}: {info}" for char, info in characters.items()]) if characters else "No characters in bag."
         weapons_str = "\n".join([f"⚔️ {weapon}: {info}" for weapon, info in weapons.items()]) if weapons else "No weapons in bag."
+        artifacts_str = "\n".join([f"🖼️ {name}: R{info['refinement']}" for name, info in artifacts.items()]) if artifacts else "No artifacts in bag."
 
         keyboard = [
             [InlineKeyboardButton("Characters", callback_data="show_characters"),
-             InlineKeyboardButton("Weapons", callback_data="show_weapons")],
+             InlineKeyboardButton("Weapons", callback_data="show_weapons"),
+             InlineKeyboardButton("Artifacts", callback_data="show_artifacts")],
             [InlineKeyboardButton("Back", callback_data="back")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -401,7 +511,8 @@ async def button(update: Update, context: CallbackContext) -> None:
             "🔹 **Your Bag:**\n\n"
             f"💎 **Primogems:** {primos}\n\n"
             f"👤 **Total Characters:** {total_characters}\n"
-            f"⚔️ **Total Weapons:** {total_weapons}"
+            f"⚔️ **Total Weapons:** {total_weapons}\n"
+            f"🖼️ **Total Artifacts:** {total_artifacts}"
         )
 
         await query.edit_message_text(response, reply_markup=reply_markup, parse_mode='Markdown')
