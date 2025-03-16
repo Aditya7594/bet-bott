@@ -79,6 +79,7 @@ ARTIFACTS_FOLDER = "artifacts"
 ARTIFACTS = {os.path.splitext(file)[0].replace("_", " "): os.path.join(ARTIFACTS_FOLDER, file) for file in os.listdir(ARTIFACTS_FOLDER) if file.endswith(".png")}
 
 artifact_thresholds = {}
+message_counts = {}
 
 def get_genshin_user_by_id(user_id):
     return genshin_collection.find_one({"user_id": user_id})
@@ -164,6 +165,24 @@ async def reward_primos(update: Update, context: CallbackContext) -> None:
 
     # Save the updated user data
     save_genshin_user(user_data)
+    
+async def handle_message(update: Update, context: CallbackContext) -> None:
+    chat_id = update.effective_chat.id
+
+    # Initialize message count for the chat if it doesn't exist
+    if chat_id not in message_counts:
+        message_counts[chat_id] = 0
+
+    # Increment message count
+    message_counts[chat_id] += 1
+
+    # Check if the threshold is reached
+    if chat_id in artifact_thresholds and message_counts[chat_id] >= artifact_thresholds[chat_id]:
+        # Reset message count
+        message_counts[chat_id] = 0
+
+        # Send artifact reward
+        await send_artifact_reward(chat_id, context)
 
 async def set_threshold(update: Update, context: CallbackContext) -> None:
     # Check if the user is an admin
