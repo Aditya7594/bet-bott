@@ -439,7 +439,6 @@ async def pull(update: Update, context: CallbackContext) -> None:
     )
     await update.message.reply_text(response, parse_mode='Markdown')
 
-    
 async def bag(update: Update, context: CallbackContext) -> None:
     user_id = str(update.effective_user.id)
     user_data = get_genshin_user_by_id(user_id)
@@ -461,7 +460,17 @@ async def bag(update: Update, context: CallbackContext) -> None:
     # Generate the text for characters, weapons, and artifacts
     characters_str = "\n".join([f"✨ {char}: {info}" for char, info in characters.items()]) if characters else "No characters in bag."
     weapons_str = "\n".join([f"⚔️ {weapon}: {info}" for weapon, info in weapons.items()]) if weapons else "No weapons in bag."
-    artifacts_str = "\n".join([f"🖼️ {name}: x{info['count']}" for name, info in artifacts.items()]) if artifacts else "No artifacts in bag."  # Updated to use 'count'
+
+    # Handle artifacts with backward compatibility for 'refinement' field
+    artifacts_str = []
+    for name, info in artifacts.items():
+        if "count" in info:
+            artifacts_str.append(f"🖼️ {name}: x{info['count']}")
+        elif "refinement" in info:  # Backward compatibility for old 'refinement' field
+            artifacts_str.append(f"🖼️ {name}: x{info['refinement']}")
+        else:
+            artifacts_str.append(f"🖼️ {name}: x1")  # Default to x1 if neither field exists
+    artifacts_str = "\n".join(artifacts_str) if artifacts_str else "No artifacts in bag."
 
     keyboard = [
         [InlineKeyboardButton("Characters", callback_data="show_characters"),
