@@ -520,7 +520,16 @@ async def button(update: Update, context: CallbackContext) -> None:
         ]
     elif query.data == "show_artifacts":
         artifacts = user_data["bag"].get("artifacts", {})
-        artifacts_str = "\n".join([f"🖼️ {name}: R{info['refinement']}" for name, info in artifacts.items()]) if artifacts else "No artifacts in bag."
+        # Handle artifacts with backward compatibility for 'refinement' field
+        artifacts_str = []
+        for name, info in artifacts.items():
+            if "count" in info:
+                artifacts_str.append(f"🖼️ {name}: x{info['count']}")
+            elif "refinement" in info:  # Backward compatibility for old 'refinement' field
+                artifacts_str.append(f"🖼️ {name}: x{info['refinement']}")
+            else:
+                artifacts_str.append(f"🖼️ {name}: x1")  # Default to x1 if neither field exists
+        artifacts_str = "\n".join(artifacts_str) if artifacts_str else "No artifacts in bag."
         response = f"🖼️ **Artifacts:**\n{artifacts_str}"
         keyboard = [
             [InlineKeyboardButton("Characters", callback_data="show_characters"),
@@ -528,7 +537,7 @@ async def button(update: Update, context: CallbackContext) -> None:
             [InlineKeyboardButton("Back", callback_data="back")]
         ]
     elif query.data == "back":
-        # Correctly handle the "Back" button by using the existing `query` to update the message
+        # Handle the "Back" button by showing the main bag view
         primos = user_data.get("primos", 0)
         characters = user_data["bag"].get("characters", {})
         weapons = user_data["bag"].get("weapons", {})
@@ -540,7 +549,7 @@ async def button(update: Update, context: CallbackContext) -> None:
 
         characters_str = "\n".join([f"✨ {char}: {info}" for char, info in characters.items()]) if characters else "No characters in bag."
         weapons_str = "\n".join([f"⚔️ {weapon}: {info}" for weapon, info in weapons.items()]) if weapons else "No weapons in bag."
-        artifacts_str = "\n".join([f"🖼️ {name}: R{info['refinement']}" for name, info in artifacts.items()]) if artifacts else "No artifacts in bag."
+        artifacts_str = "\n".join([f"🖼️ {name}: x{info.get('count', info.get('refinement', 1))}" for name, info in artifacts.items()]) if artifacts else "No artifacts in bag."
 
         keyboard = [
             [InlineKeyboardButton("Characters", callback_data="show_characters"),
