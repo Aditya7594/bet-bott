@@ -5,6 +5,7 @@ from pymongo import MongoClient
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Tuple
+from telegram.ext import JobQueue
 import os
 
 OWNER_ID = 5667016949
@@ -203,6 +204,8 @@ async def set_threshold(update: Update, context: CallbackContext) -> None:
     artifact_thresholds[chat_id] = threshold
     await update.message.reply_text(f"✅ Artifact reward threshold set to {threshold} messages.")
 
+
+
 async def send_artifact_reward(chat_id: int, context: CallbackContext) -> None:
     artifact_name, artifact_image = random.choice(list(ARTIFACTS.items()))
 
@@ -219,11 +222,18 @@ async def send_artifact_reward(chat_id: int, context: CallbackContext) -> None:
                 reply_markup=reply_markup
             )
             context.chat_data["artifact_message_id"] = message.message_id
+
+            # Schedule a job to reset the artifact_claimed flag after 1 minute
+            context.job_queue.run_once(reset_artifact_claimed, 60, chat_id=chat_id)
     except FileNotFoundError:
         logger.error(f"Artifact image file not found: {artifact_image}")
         await context.bot.send_message(chat_id=chat_id, text="❌ Failed to send artifact reward. Please try again.")
 
-
+def reset_artifact_claimed(context: CallbackContext):
+    chat_id = context.job.chat_id
+    if "artifact_claimed" in context.chat_data:
+        del context.chat_data["artifact_claimed"]
+        logger.info(f"Artifact claim flag reset for chat {chat_id}.")
 async def handle_artifact_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = str(query.from_user.id)
@@ -237,10 +247,8 @@ async def handle_artifact_button(update: Update, context: CallbackContext) -> No
     # Mark the artifact as claimed
     context.chat_data["artifact_claimed"] = True
 
-    
     artifact_name = query.data.split("_")[1]
 
-    
     user_data = get_genshin_user_by_id(user_id)
     if not user_data:
         user_data = {
@@ -255,19 +263,18 @@ async def handle_artifact_button(update: Update, context: CallbackContext) -> No
         user_data["bag"]["artifacts"] = {}
 
     if artifact_name not in user_data["bag"]["artifacts"]:
-        user_data["bag"]["artifacts"][artifact_name] = {"image": ARTIFACTS[artifact_name], "refinement": 1}
+        user_data["bag"]["artifacts"][artifact_name] = {"image": ARTIFACTS[artifact_name], "count": 1}
     else:
-        user_data["bag"]["artifacts"][artifact_name]["refinement"] += 1
+        user_data["bag"]["artifacts"][artifact_name]["count"] += 1
 
     save_genshin_user(user_data)
 
-    await query.answer(f"🎉 You claimed the {artifact_name}!", show_alert=True)
+    await query.answer(f"🎉 You claimed the {artifact_name} (x{user_data['bag']['artifacts'][artifact_name]['count']})!", show_alert=True)
 
-
+    # Delete the artifact reward message
     artifact_message_id = context.chat_data.get("artifact_message_id")
     if artifact_message_id:
         await context.bot.delete_message(chat_id=chat_id, message_id=artifact_message_id)
-
 
 async def add_primos(update: Update, context: CallbackContext) -> None:
     if update.effective_user.id != OWNER_ID:
