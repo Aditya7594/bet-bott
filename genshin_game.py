@@ -5,6 +5,7 @@ from pymongo import MongoClient
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Tuple
+import os
 
 OWNER_ID = 5667016949
 logging.basicConfig(level=logging.INFO)
