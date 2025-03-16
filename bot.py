@@ -470,7 +470,8 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))  
 
     # Artifact-related handlers
-    application.add_handler(CommandHandler("set", set_threshold))  # Admin command to set artifact reward threshold
+    application.add_handler(CommandHandler("set", set_threshold)) 
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))# Admin command to set artifact reward threshold
     application.add_handler(CallbackQueryHandler(handle_artifact_button, pattern="^artifact_"))  # Handle artifact claim button
 
     # Message handlers
