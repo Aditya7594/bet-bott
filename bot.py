@@ -330,19 +330,28 @@ async def reset_confirmation(update: Update, context: CallbackContext) -> None:
 async def reach(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
 
+    # Check if the user is the owner
     if user_id != OWNER_ID:
-        await update.message.reply_text("You don't have permission to use this command.")
+        await update.message.reply_text("🔒 You don't have permission to use this command.")
         return
 
     try:
+        # Fetch total users
         total_users = users_collection.count_documents({})
+
+        # Fetch total Genshin users
         total_genshin_users = genshin_collection.count_documents({})
+
+        # Fetch total credits in the game
         total_credits_result = users_collection.aggregate([
             {"$group": {"_id": None, "total_credits": {"$sum": "$credits"}}}
         ])
         total_credits_value = next(total_credits_result, {}).get("total_credits", 0)
-        total_groups = 0
 
+        # Fetch total groups the bot is in
+        total_groups = db["groups"].count_documents({})  # Assuming you have a 'groups' collection
+
+        # Construct the stats message
         stats_message = (
             "<b>🤖 Bot Statistics:</b>\n\n"
             f"👥 Total Users: {total_users}\n"
@@ -354,8 +363,63 @@ async def reach(update: Update, context: CallbackContext):
         await update.message.reply_text(stats_message, parse_mode="HTML")
 
     except Exception as e:
+        logger.error(f"Error in /reach command: {e}")
         await update.message.reply_text("An error occurred while fetching bot stats. Please try again later.")
-        print(f"Error in /reach command: {e}")
+
+async def broadcast(update: Update, context: CallbackContext) -> None:
+    # Check if the user is the owner
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("🔒 You don't have permission to use this command.")
+        return
+
+    # Check if a message is provided
+    if not context.args:
+        await update.message.reply_text("❗ Usage: /broadcast <message>")
+        return
+
+    # Combine the arguments into a single message
+    broadcast_message = " ".join(context.args)
+
+    # Fetch all users and groups from the database
+    users = users_collection.find({}, {"user_id": 1})
+    groups = []  # Add logic to fetch groups if you store them in the database
+
+    # Counters for tracking
+    successful_users = 0
+    failed_users = 0
+    successful_groups = 0
+    failed_groups = 0
+
+    # Send the message to all users
+    for user in users:
+        user_id = user["user_id"]
+        try:
+            await context.bot.send_message(chat_id=user_id, text=broadcast_message)
+            successful_users += 1
+        except Exception as e:
+            logger.error(f"Failed to send broadcast to user {user_id}: {e}")
+            failed_users += 1
+
+    # Send the message to all groups (if applicable)
+    for group in groups:
+        group_id = group["group_id"]
+        try:
+            await context.bot.send_message(chat_id=group_id, text=broadcast_message)
+            successful_groups += 1
+        except Exception as e:
+            logger.error(f"Failed to send broadcast to group {group_id}: {e}")
+            failed_groups += 1
+
+    # Send a report to the owner
+    report_message = (
+        "📢 **Broadcast Report**\n\n"
+        f"✅ Successfully sent to {successful_users} users and {successful_groups} groups.\n"
+        f"❌ Failed to send to {failed_users} users and {failed_groups} groups.\n\n"
+        f"Total recipients: {successful_users + successful_groups}\n"
+        f"Total failures: {failed_users + failed_groups}"
+    )
+
+    await update.message.reply_text(report_message)
 
 async def give(update: Update, context: CallbackContext) -> None:
     giver = update.effective_user
@@ -447,46 +511,29 @@ def main() -> None:
     application.add_handler(CommandHandler("bank", bank))
     application.add_handler(CommandHandler("reach", reach))
     application.add_handler(CommandHandler("reffer", reffer))
-
     application.add_handler(CommandHandler("bdice", check_started(bdice)))
-
     application.add_handler(CommandHandler("daily", check_started(daily)))
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
-
-    # HiLo game handlers (commented out)
-    # application.add_handler(CommandHandler("hilo", start_hilo))
-    # application.add_handler(CallbackQueryHandler(hilo_click, pattern="hilo_(high|low)"))
-    # application.add_handler(CallbackQueryHandler(hilo_cashout, pattern="hilo_cashout"))
-
     application.add_handler(CommandHandler("give", check_started(give)))
-
     application.add_handler(CommandHandler("gacha", gacha))
     application.add_handler(CommandHandler("mycollection", my_collection))
     application.add_handler(CommandHandler("view", view_card))
     application.add_handler(CallbackQueryHandler(card_pull, pattern="^(normal|special)$"))
-
     application.add_handler(CommandHandler("reset", reset))  
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))  
-
-    # Artifact-related handlers
     application.add_handler(CommandHandler("set", set_threshold)) 
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))# Admin command to set artifact reward threshold
-    application.add_handler(CallbackQueryHandler(handle_artifact_button, pattern="^artifact_"))  # Handle artifact claim button
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(handle_artifact_button, pattern="^artifact_"))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(button))
 
-    # Message handlers
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))  # Reward primos for messages
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))  # Handle general messages
+    # Add the broadcast command
+    application.add_handler(CommandHandler("broadcast", broadcast))
 
     # Job queue
     application.job_queue.run_once(timeout_task, 0)
 
-    # Callback query handler for buttons
-    application.add_handler(CallbackQueryHandler(button))
-
     # Run the bot
     application.run_polling()
-
-
-if __name__ == '__main__':
-    main()
