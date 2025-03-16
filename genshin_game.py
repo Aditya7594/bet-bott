@@ -148,14 +148,14 @@ async def reward_primos(update: Update, context: CallbackContext) -> None:
     user_id = str(update.effective_user.id)
     user_data = get_genshin_user_by_id(user_id)
 
-    # If the user doesn't exist, initialize their data
     if not user_data:
+        # Initialize user data if it doesn't exist
         user_data = {
             "user_id": user_id,
-            "primos": 16000,  # Initial primogems
+            "primos": 16000,
             "bag": {},
             "daily_earned": 0,
-            "last_reset": datetime.utcnow() + timedelta(hours=5, minutes=30),  # IST time
+            "last_reset": datetime.utcnow() + timedelta(hours=5, minutes=30),
         }
         save_genshin_user(user_data)
 
@@ -204,24 +204,25 @@ async def set_threshold(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(f"✅ Artifact reward threshold set to {threshold} messages.")
 
 async def send_artifact_reward(chat_id: int, context: CallbackContext) -> None:
-    # Select a random artifact
     artifact_name, artifact_image = random.choice(list(ARTIFACTS.items()))
 
-    # Send artifact reward with image
-    with open(artifact_image, "rb") as image_file:
-        keyboard = [[InlineKeyboardButton("Get", callback_data=f"artifact_{artifact_name}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        message = await context.bot.send_photo(
-            chat_id=chat_id,
-            photo=image_file,
-            caption=f"🎉 **Artifact Reward!** 🎉\n\n"
-                    f"An artifact has appeared: **{artifact_name}**\n\n"
-                    f"Click the button below to claim it!",
-            reply_markup=reply_markup
-        )
+    try:
+        with open(artifact_image, "rb") as image_file:
+            keyboard = [[InlineKeyboardButton("Get", callback_data=f"artifact_{artifact_name}")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            message = await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=image_file,
+                caption=f"🎉 **Artifact Reward!** 🎉\n\n"
+                        f"An artifact has appeared: **{artifact_name}**\n\n"
+                        f"Click the button below to claim it!",
+                reply_markup=reply_markup
+            )
+            context.chat_data["artifact_message_id"] = message.message_id
+    except FileNotFoundError:
+        logger.error(f"Artifact image file not found: {artifact_image}")
+        await context.bot.send_message(chat_id=chat_id, text="❌ Failed to send artifact reward. Please try again.")
 
-    # Store the message ID for later deletion
-    context.chat_data["artifact_message_id"] = message.message_id
 
 async def handle_artifact_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -344,33 +345,26 @@ def draw_3_star_item(characters: Dict[str, int], weapons: Dict[str, int]) -> str
     return random.choice(three_star_items)
 
 def update_item(user_data: Dict, item: str, item_type: str):
+    if item_type not in ["characters", "weapons"]:
+        raise ValueError(f"Invalid item type: {item_type}")
+
     if item_type not in user_data["bag"]:
         user_data["bag"][item_type] = {}
-    
+
     if item not in user_data["bag"][item_type]:
         if item_type == "characters":
-            user_data["bag"][item_type][item] = "✨ C1"  # Start with Constellation C1
+            user_data["bag"][item_type][item] = "✨ C1"
         elif item_type == "weapons":
-            user_data["bag"][item_type][item] = "⚔️ R1"  # Start with Refinement R1
+            user_data["bag"][item_type][item] = "⚔️ R1"
     else:
         current_count = user_data["bag"][item_type][item]
         if item_type == "characters":
-            # Update constellation level
-            if 'C' in current_count:
-                current_level = int(current_count.split('C')[1])
-                new_level = current_level + 1
-                user_data["bag"][item_type][item] = f"✨ C{new_level}"
-            else:
-                user_data["bag"][item_type][item] = "✨ C2"  # Convert to C2 if initially missing
+            current_level = int(current_count.split('C')[1]) if 'C' in current_count else 1
+            user_data["bag"][item_type][item] = f"✨ C{current_level + 1}"
         elif item_type == "weapons":
-            # Update refinement level
-            if 'R' in current_count:
-                current_level = int(current_count.split('R')[1])
-                new_level = current_level + 1
-                user_data["bag"][item_type][item] = f"⚔️ R{new_level}"
-            else:
-                user_data["bag"][item_type][item] = "⚔️ R2"
-
+            current_level = int(current_count.split('R')[1]) if 'R' in current_count else 1
+            user_data["bag"][item_type][item] = f"⚔️ R{current_level + 1}"
+            
 async def pull(update: Update, context: CallbackContext) -> None:
     user_id = str(update.effective_user.id)
     user_data = get_genshin_user_by_id(user_id)
@@ -581,7 +575,6 @@ async def reset_bag_data(update: Update, context: CallbackContext) -> None:
     logger.info("Bag data reset for all users.")
     await update.message.reply_text("Bag data has been reset for all users.")
 
-# Function to drop primos to all users
 async def drop_primos(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     if user_id != OWNER_ID:
@@ -590,12 +583,18 @@ async def drop_primos(update: Update, context: CallbackContext) -> None:
 
     try:
         amount = int(context.args[0])
+        if amount <= 0:
+            await update.message.reply_text("Amount must be a positive number.")
+            return
     except (IndexError, ValueError):
-        await update.message.reply_text("Please specify a valid number of primos to drop. Usage: /drop <amount>")
+        await update.message.reply_text("Usage: /drop <amount> (e.g., /drop 100)")
         return
 
-    # Add the specified amount of primos to all users
-    genshin_collection.update_many({}, {"$inc": {"primos": amount}})
-    logger.info(f"{amount} primos dropped to all users.")
-    await update.message.reply_text(f"{amount} primos have been dropped to all users.")
+    try:
+        genshin_collection.update_many({}, {"$inc": {"primos": amount}})
+        logger.info(f"{amount} primos dropped to all users.")
+        await update.message.reply_text(f"{amount} primos have been dropped to all users.")
+    except Exception as e:
+        logger.error(f"Error dropping primos: {e}")
+        await update.message.reply_text("❌ An error occurred while dropping primos.")
 
