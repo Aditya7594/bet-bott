@@ -196,14 +196,21 @@ async def handle_message(update: Update, context: CallbackContext) -> None:
         await send_artifact_reward(chat_id, context)
 
 async def set_threshold(update: Update, context: CallbackContext) -> None:
-    # Check if the user is an admin
-    if update.effective_user.id not in [OWNER_ID]:  # Add other admin IDs if needed
-        await update.message.reply_text("🔒 You don't have permission to use this command.")
-        return
-
     # Check if the command is used in a group
     if update.effective_chat.type not in ["group", "supergroup"]:
         await update.message.reply_text("❗ This command can only be used in groups.")
+        return
+
+    # Fetch the list of admins in the group
+    chat_id = update.effective_chat.id
+    admins = await context.bot.get_chat_administrators(chat_id)
+
+    # Check if the user is an admin
+    user_id = update.effective_user.id
+    is_admin = any(admin.user.id == user_id for admin in admins)
+
+    if not is_admin:
+        await update.message.reply_text("🔒 You must be a group admin to use this command.")
         return
 
     # Validate the threshold input
@@ -217,7 +224,6 @@ async def set_threshold(update: Update, context: CallbackContext) -> None:
         return
 
     # Set the threshold for the group
-    chat_id = update.effective_chat.id
     artifact_thresholds[chat_id] = threshold
     await update.message.reply_text(f"✅ Artifact reward threshold set to {threshold} messages.")
 
