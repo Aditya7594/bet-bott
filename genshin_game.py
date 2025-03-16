@@ -204,8 +204,6 @@ async def set_threshold(update: Update, context: CallbackContext) -> None:
     artifact_thresholds[chat_id] = threshold
     await update.message.reply_text(f"✅ Artifact reward threshold set to {threshold} messages.")
 
-
-
 async def send_artifact_reward(chat_id: int, context: CallbackContext) -> None:
     artifact_name, artifact_image = random.choice(list(ARTIFACTS.items()))
 
@@ -221,34 +219,40 @@ async def send_artifact_reward(chat_id: int, context: CallbackContext) -> None:
                         f"Click the button below to claim it!",
                 reply_markup=reply_markup
             )
-            context.chat_data["artifact_message_id"] = message.message_id
+            # Store artifact-specific data
+            context.chat_data[f"artifact_{artifact_name}"] = {
+                "message_id": message.message_id,
+                "claimed": False  # Initialize as not claimed
+            }
 
-            # Schedule a job to reset the artifact_claimed flag after 1 minute
-            context.job_queue.run_once(reset_artifact_claimed, 60, chat_id=chat_id)
+            # Schedule a job to reset the artifact after 1 minute
+            context.job_queue.run_once(
+                reset_artifact_claimed,
+                60,  # 1 minute
+                chat_id=chat_id,
+                name=f"reset_{artifact_name}"  # Unique job name
+            )
     except FileNotFoundError:
         logger.error(f"Artifact image file not found: {artifact_image}")
         await context.bot.send_message(chat_id=chat_id, text="❌ Failed to send artifact reward. Please try again.")
 
-def reset_artifact_claimed(context: CallbackContext):
-    chat_id = context.job.chat_id
-    if "artifact_claimed" in context.chat_data:
-        del context.chat_data["artifact_claimed"]
-        logger.info(f"Artifact claim flag reset for chat {chat_id}.")
 async def handle_artifact_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = str(query.from_user.id)
     chat_id = query.message.chat_id
+    artifact_name = query.data.split("_")[1]
 
     # Check if the artifact has already been claimed
-    if "artifact_claimed" in context.chat_data:
+    artifact_data = context.chat_data.get(f"artifact_{artifact_name}")
+    if not artifact_data or artifact_data.get("claimed", False):
         await query.answer("❌ This artifact has already been claimed.", show_alert=True)
         return
 
     # Mark the artifact as claimed
-    context.chat_data["artifact_claimed"] = True
+    artifact_data["claimed"] = True
+    context.chat_data[f"artifact_{artifact_name}"] = artifact_data
 
-    artifact_name = query.data.split("_")[1]
-
+    # Update user's bag with the artifact
     user_data = get_genshin_user_by_id(user_id)
     if not user_data:
         user_data = {
@@ -271,10 +275,19 @@ async def handle_artifact_button(update: Update, context: CallbackContext) -> No
 
     await query.answer(f"🎉 You claimed the {artifact_name} (x{user_data['bag']['artifacts'][artifact_name]['count']})!", show_alert=True)
 
-    # Delete the artifact reward message
-    artifact_message_id = context.chat_data.get("artifact_message_id")
+    
+    artifact_message_id = artifact_data.get("message_id")
     if artifact_message_id:
         await context.bot.delete_message(chat_id=chat_id, message_id=artifact_message_id)
+
+def reset_artifact_claimed(context: CallbackContext):
+    job = context.job
+    chat_id = job.chat_id
+    artifact_name = job.name.replace("reset_", "")  
+    if f"artifact_{artifact_name}" in context.chat_data:
+        del context.chat_data[f"artifact_{artifact_name}"]
+        logger.info(f"Current chat_data: {context.chat_data}")
+        logger.info(f"Artifact {artifact_name} reset for chat {chat_id}.")
 
 async def add_primos(update: Update, context: CallbackContext) -> None:
     if update.effective_user.id != OWNER_ID:
