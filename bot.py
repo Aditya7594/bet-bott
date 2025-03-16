@@ -511,29 +511,48 @@ def main() -> None:
     application.add_handler(CommandHandler("bank", bank))
     application.add_handler(CommandHandler("reach", reach))
     application.add_handler(CommandHandler("reffer", reffer))
+
     application.add_handler(CommandHandler("bdice", check_started(bdice)))
+
     application.add_handler(CommandHandler("daily", check_started(daily)))
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
+
+    # HiLo game handlers (commented out)
+    # application.add_handler(CommandHandler("hilo", start_hilo))
+    # application.add_handler(CallbackQueryHandler(hilo_click, pattern="hilo_(high|low)"))
+    # application.add_handler(CallbackQueryHandler(hilo_cashout, pattern="hilo_cashout"))
+
     application.add_handler(CommandHandler("give", check_started(give)))
+
     application.add_handler(CommandHandler("gacha", gacha))
     application.add_handler(CommandHandler("mycollection", my_collection))
     application.add_handler(CommandHandler("view", view_card))
     application.add_handler(CallbackQueryHandler(card_pull, pattern="^(normal|special)$"))
+
     application.add_handler(CommandHandler("reset", reset))  
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))  
-    application.add_handler(CommandHandler("set", set_threshold)) 
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(handle_artifact_button, pattern="^artifact_"))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(button))
 
-    # Add the broadcast command
-    application.add_handler(CommandHandler("broadcast", broadcast))
+    # Artifact-related handlers
+    application.add_handler(CommandHandler("set", set_threshold)) 
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))# Admin command to set artifact reward threshold
+    application.add_handler(CallbackQueryHandler(handle_artifact_button, pattern="^artifact_")) 
+    
+    application.add_handler(CommandHandler("broadcast", broadcast))# Handle artifact claim button
+
+    # Message handlers
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))  # Reward primos for messages
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))  # Handle general messages
 
     # Job queue
     application.job_queue.run_once(timeout_task, 0)
 
+    # Callback query handler for buttons
+    application.add_handler(CallbackQueryHandler(button))
+
     # Run the bot
     application.run_polling()
+
+
+if __name__ == '__main__':
+    main()
