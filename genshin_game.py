@@ -267,15 +267,15 @@ async def handle_artifact_button(update: Update, context: CallbackContext) -> No
         user_data["bag"]["artifacts"] = {}
 
     if artifact_name not in user_data["bag"]["artifacts"]:
-        user_data["bag"]["artifacts"][artifact_name] = {"image": ARTIFACTS[artifact_name], "count": 1}
+        user_data["bag"]["artifacts"][artifact_name] = {"image": ARTIFACTS[artifact_name], "count": 1}  # Initialize count
     else:
-        user_data["bag"]["artifacts"][artifact_name]["count"] += 1
+        user_data["bag"]["artifacts"][artifact_name]["count"] += 1  # Increment count
 
     save_genshin_user(user_data)
 
     await query.answer(f"🎉 You claimed the {artifact_name} (x{user_data['bag']['artifacts'][artifact_name]['count']})!", show_alert=True)
 
-    
+    # Delete the artifact reward message
     artifact_message_id = artifact_data.get("message_id")
     if artifact_message_id:
         await context.bot.delete_message(chat_id=chat_id, message_id=artifact_message_id)
@@ -461,7 +461,7 @@ async def bag(update: Update, context: CallbackContext) -> None:
     # Generate the text for characters, weapons, and artifacts
     characters_str = "\n".join([f"✨ {char}: {info}" for char, info in characters.items()]) if characters else "No characters in bag."
     weapons_str = "\n".join([f"⚔️ {weapon}: {info}" for weapon, info in weapons.items()]) if weapons else "No weapons in bag."
-    artifacts_str = "\n".join([f"🖼️ {name}: R{info['refinement']}" for name, info in artifacts.items()]) if artifacts else "No artifacts in bag."
+    artifacts_str = "\n".join([f"🖼️ {name}: x{info['count']}" for name, info in artifacts.items()]) if artifacts else "No artifacts in bag."  # Updated to use 'count'
 
     keyboard = [
         [InlineKeyboardButton("Characters", callback_data="show_characters"),
