@@ -177,8 +177,11 @@ async def handle_message(update: Update, context: CallbackContext) -> None:
     # Increment message count
     message_counts[chat_id] += 1
 
+    # Get the threshold for the chat (default to 100 if not set)
+    threshold = artifact_thresholds.get(chat_id, 100)
+
     # Check if the threshold is reached
-    if chat_id in artifact_thresholds and message_counts[chat_id] >= artifact_thresholds[chat_id]:
+    if message_counts[chat_id] >= threshold:
         # Reset message count
         message_counts[chat_id] = 0
 
@@ -191,14 +194,18 @@ async def set_threshold(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("🔒 You don't have permission to use this command.")
         return
 
-    try:
-        threshold = int(context.args[0])
-        if threshold <= 0:
-            await update.message.reply_text("❗ The threshold must be a positive number.")
+    # If no threshold is provided, set the default to 100
+    if not context.args:
+        threshold = 100
+    else:
+        try:
+            threshold = int(context.args[0])
+            if threshold <= 0:
+                await update.message.reply_text("❗ The threshold must be a positive number.")
+                return
+        except ValueError:
+            await update.message.reply_text("❗ Usage: /set <threshold> (e.g., /set 100)")
             return
-    except (IndexError, ValueError):
-        await update.message.reply_text("❗ Usage: /set <threshold> (e.g., /set 100)")
-        return
 
     chat_id = update.effective_chat.id
     artifact_thresholds[chat_id] = threshold
