@@ -570,12 +570,6 @@ async def leaderboard(update: Update, context: CallbackContext) -> None:
 
     await update.message.reply_text(leaderboard_message, parse_mode='Markdown')
 
-def handle_message(update, context):
-    chat_id = update.effective_chat.id
-    message_counts[chat_id] = message_counts.get(chat_id, 0) + 1
-    if message_counts[chat_id] % 100 == 0:
-        send_reward(update, context)
-
 async def reset_bag_data(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     if user_id != OWNER_ID:
