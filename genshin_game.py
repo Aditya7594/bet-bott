@@ -170,6 +170,10 @@ async def reward_primos(update: Update, context: CallbackContext) -> None:
 async def handle_message(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
 
+    # Skip if the message is not from a group
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        return
+
     # Initialize message count for the chat if it doesn't exist
     if chat_id not in message_counts:
         message_counts[chat_id] = 0
@@ -179,6 +183,9 @@ async def handle_message(update: Update, context: CallbackContext) -> None:
 
     # Get the threshold for the chat (default to 100 if not set)
     threshold = artifact_thresholds.get(chat_id, 100)
+
+    # Ensure the threshold is at least 50
+    threshold = max(threshold, 50)
 
     # Check if the threshold is reached
     if message_counts[chat_id] >= threshold:
@@ -194,19 +201,22 @@ async def set_threshold(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("🔒 You don't have permission to use this command.")
         return
 
-    # If no threshold is provided, set the default to 100
-    if not context.args:
-        threshold = 100
-    else:
-        try:
-            threshold = int(context.args[0])
-            if threshold <= 0:
-                await update.message.reply_text("❗ The threshold must be a positive number.")
-                return
-        except ValueError:
-            await update.message.reply_text("❗ Usage: /set <threshold> (e.g., /set 100)")
-            return
+    # Check if the command is used in a group
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        await update.message.reply_text("❗ This command can only be used in groups.")
+        return
 
+    # Validate the threshold input
+    try:
+        threshold = int(context.args[0])
+        if threshold < 50 or threshold > 300:
+            await update.message.reply_text("❗ The threshold must be between 50 and 300.")
+            return
+    except (IndexError, ValueError):
+        await update.message.reply_text("❗ Usage: /set <threshold> (e.g., /set 100)")
+        return
+
+    # Set the threshold for the group
     chat_id = update.effective_chat.id
     artifact_thresholds[chat_id] = threshold
     await update.message.reply_text(f"✅ Artifact reward threshold set to {threshold} messages.")
