@@ -21,7 +21,7 @@ from claim import daily, random_claim, claim_credits, send_random_claim
 from bank import exchange, sell, store, withdraw, bank
 from hilo_game import hilo, hilo_click, hilo_cashout
 from cards import gacha, gacha, my_collection,view_card, card_pull
-from mines_game import Mines, mines_click, mines_cashout
+from mines_game import Mines, Mines_click, Mines_cashout
 OWNER_ID = 5667016949
 muted_users = set()
 last_interaction_time = {}
