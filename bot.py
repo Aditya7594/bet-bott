@@ -21,6 +21,7 @@ from claim import daily, random_claim, claim_credits, send_random_claim
 from bank import exchange, sell, store, withdraw, bank
 from hilo_game import start_hilo, hilo_click, hilo_cashout
 from cards import gacha, gacha, my_collection,view_card, card_pull
+from mines_game import mines, mines_click, mines_cashout
 OWNER_ID = 5667016949
 muted_users = set()
 last_interaction_time = {}
@@ -549,6 +550,10 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
     application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
     application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
+
+    application.add_handler(CommandHandler("Mines", check_started(Mines)))  # Mines command
+    application.add_handler(CallbackQueryHandler(Mines_click, pattern="^[0-9]+$"))  # Tile clicks
+    application.add_handler(CallbackQueryHandler(Mines_CashOut, pattern="^MinesCashOut$"))
 
     application.job_queue.run_repeating(keep_alive, interval=600, first=0)
 
