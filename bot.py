@@ -19,7 +19,7 @@ from minigame import dart, basketball, flip, dice, credits_leaderboard,football
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from bank import exchange, sell, store, withdraw, bank
-from hilo_game import start_hilo, hilo_click, hilo_cashout
+from hilo_game import HiLo, HiLo_click, HiLo_CashOut
 from cards import gacha, gacha, my_collection,view_card, card_pull
 from mines_game import mines, mines_click, mines_cashout
 OWNER_ID = 5667016949
