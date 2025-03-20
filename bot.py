@@ -130,7 +130,12 @@ async def start(update: Update, context: CallbackContext):
             f"Welcome back, {first_name}! Use /profile to view your details."
         )
 
-
+async def keep_alive(context: CallbackContext):
+    channel_id = -1002192932215 
+    try:
+        await context.bot.send_message(chat_id=channel_id, text="🤖 Bot is alive and running!")
+    except Exception as e:
+        logger.error(f"Failed to send keep-alive message: {e}"
 
 async def reffer(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
@@ -382,7 +387,7 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
 
     # Fetch all users and groups from the database
     users = users_collection.find({}, {"user_id": 1})
-    groups = []  # Add logic to fetch groups if you store them in the database
+    groups = []  
 
     # Counters for tracking
     successful_users = 0
@@ -533,21 +538,29 @@ def main() -> None:
     application.add_handler(CommandHandler("reset", reset))  
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))  
 
-    # Artifact-related handlers
+  
     application.add_handler(CommandHandler("set", set_threshold)) 
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))# Admin command to set artifact reward threshold
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(handle_artifact_button, pattern="^artifact_")) 
     
-    application.add_handler(CommandHandler("broadcast", broadcast))# Handle artifact claim button
+    application.add_handler(CommandHandler("broadcast", broadcast))
+    
+    application.add_handler(CommandHandler("chatcricket", chat_cricket))
+    application.add_handler(CommandHandler("join", join_cricket))
+    application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
+    application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
+    application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
 
-    # Message handlers
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))  # Reward primos for messages
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))  # Handle general messages
+    application.job_queue.run_repeating(keep_alive, interval=600, first=0)
 
-    # Job queue
+
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))  
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+
     application.job_queue.run_once(timeout_task, 0)
 
-    # Callback query handler for buttons
+  
     application.add_handler(CallbackQueryHandler(button))
 
     # Run the bot
