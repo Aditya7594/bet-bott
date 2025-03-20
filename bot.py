@@ -18,7 +18,7 @@ from minigame import dart, basketball, flip, dice, credits_leaderboard,football
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from bank import exchange, sell, store, withdraw, bank
-#from hilo_game import start_hilo, hilo_click, hilo_cashout
+from hilo_game import start_hilo, hilo_click, hilo_cashout
 from cards import gacha, gacha, my_collection,view_card, card_pull
 # Global variables
 OWNER_ID = 5667016949
@@ -523,10 +523,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
 
-    # HiLo game handlers (commented out)
-    # application.add_handler(CommandHandler("hilo", start_hilo))
-    # application.add_handler(CallbackQueryHandler(hilo_click, pattern="hilo_(high|low)"))
-    # application.add_handler(CallbackQueryHandler(hilo_cashout, pattern="hilo_cashout"))
+    application.add_handler(CommandHandler("hilo", start_hilo))
+    application.add_handler(CallbackQueryHandler(hilo_click, pattern="hilo_(high|low)"))
+    application.add_handler(CallbackQueryHandler(hilo_cashout, pattern="hilo_cashout"))
 
     application.add_handler(CommandHandler("give", check_started(give)))
 
