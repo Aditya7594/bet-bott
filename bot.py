@@ -134,7 +134,7 @@ async def keep_alive(context: CallbackContext):
     try:
         await context.bot.send_message(chat_id=channel_id, text="🤖 Bot is alive and running!")
     except Exception as e:
-        logger.error(f"Failed to send keep-alive message: {e}"
+        logger.error(f"Failed to send keep-alive message: {e}")
 
 async def reffer(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
