@@ -517,11 +517,12 @@ async def message_router(update: Update, context: CallbackContext):
 
     # If not in a cricket game, process for primos
     await reward_primos(update, context)
+))
 
 def main() -> None:
     application = Application.builder().token(token).build()
 
-    # Add all handlers inside the main function
+    # Add all handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("profile", check_started(profile)))
     application.add_handler(CommandHandler("flip", check_started(flip)))
@@ -529,13 +530,13 @@ def main() -> None:
     application.add_handler(CommandHandler("basketball", check_started(basketball)))
     application.add_handler(CommandHandler("football", check_started(football)))
     application.add_handler(CommandHandler("dice", check_started(dice)))
-    application.add_handler(CommandHandler("pull", check_started(pull)))  # Pull command
-    application.add_handler(CommandHandler("bag", check_started(bag)))  # Bag command
-    application.add_handler(CommandHandler('add_primos', check_started(add_primos)))  # Add primos (admin)
-    application.add_handler(CommandHandler("Primos_leaderboard", check_started(leaderboard)))  # Primos leaderboard
-    application.add_handler(CommandHandler('drop_primos', check_started(drop_primos)))  # Drop primos (admin)
+    application.add_handler(CommandHandler("pull", check_started(pull)))
+    application.add_handler(CommandHandler("bag", check_started(bag)))
+    application.add_handler(CommandHandler('add_primos', check_started(add_primos)))
+    application.add_handler(CommandHandler("Primos_leaderboard", check_started(leaderboard)))
+    application.add_handler(CommandHandler('drop_primos', check_started(drop_primos)))
     application.add_handler(CommandHandler("addcredits", check_started(add_credits)))
-    application.add_handler(CommandHandler("reset_bag_data", check_started(reset_bag_data)))  # Reset bag data (admin)
+    application.add_handler(CommandHandler("reset_bag_data", check_started(reset_bag_data)))
     application.add_handler(CommandHandler("leaderboard", check_started(credits_leaderboard)))
     application.add_handler(CommandHandler("exchange", check_started(exchange)))  
     application.add_handler(CommandHandler("sell", check_started(sell)))  
@@ -544,34 +545,22 @@ def main() -> None:
     application.add_handler(CommandHandler("bank", bank))
     application.add_handler(CommandHandler("reach", reach))
     application.add_handler(CommandHandler("reffer", reffer))
-
     application.add_handler(CommandHandler("bdice", check_started(bdice)))
-
     application.add_handler(CommandHandler("daily", check_started(daily)))
     application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
     application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
-
     application.add_handler(CommandHandler("hilo", start_hilo))
     application.add_handler(CallbackQueryHandler(hilo_click, pattern="hilo_(high|low)"))
     application.add_handler(CallbackQueryHandler(hilo_cashout, pattern="hilo_cashout"))
-
     application.add_handler(CommandHandler("give", check_started(give)))
-
     application.add_handler(CommandHandler("gacha", gacha))
     application.add_handler(CommandHandler("mycollection", my_collection))
     application.add_handler(CommandHandler("view", view_card))
     application.add_handler(CallbackQueryHandler(card_pull, pattern="^(normal|special)$"))
-
     application.add_handler(CommandHandler("reset", reset))  
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))  
-
-  
     application.add_handler(CommandHandler("set", set_threshold)) 
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(handle_artifact_button, pattern="^artifact_")) 
-    
     application.add_handler(CommandHandler("broadcast", broadcast))
-    
     application.add_handler(CommandHandler("chatcricket", chat_cricket))
     application.add_handler(CommandHandler("join", join_cricket))
     application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
@@ -579,22 +568,15 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
     application.add_handler(CallbackQueryHandler(handle_wicket, pattern="^wicket_"))
     application.add_handler(CallbackQueryHandler(end_innings, pattern="^end_innings_"))
-    
-
-    application.add_handler(CommandHandler("Mines", check_started(Mines)))  # Mines command
-    application.add_handler(CallbackQueryHandler(Mines_click, pattern="^[0-9]+$"))  # Tile clicks
+    application.add_handler(CommandHandler("Mines", check_started(Mines)))
+    application.add_handler(CallbackQueryHandler(Mines_click, pattern="^[0-9]+$"))
     application.add_handler(CallbackQueryHandler(Mines_CashOut, pattern="^MinesCashOut$"))
 
-    application.job_queue.run_repeating(keep_alive, interval=600, first=0)
-
-
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))  
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # Add the message router handler
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
         message_router
     ))
-
 
     application.job_queue.run_once(timeout_task, 0)
 
