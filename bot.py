@@ -2,6 +2,9 @@ from pymongo import MongoClient
 import asyncio
 import os
 import secrets
+from flask import Flask
+from threading import Thread
+import requests
 import logging
 from telegram import Update, ChatPermissions
 from telegram.ext import filters, ContextTypes
@@ -131,12 +134,25 @@ async def start(update: Update, context: CallbackContext):
             f"Welcome back, {first_name}! Use /profile to view your details."
         )
 
+app = Flask(__name__)
+
+@app.route('/')
+def hello_world():
+    return 'Shadow'
+
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
+
+Thread(target=run_flask).start()
+
 async def keep_alive(context: CallbackContext):
     channel_id = -1002192932215 
     try:
+        requests.get("https://your-app-name.herokuapp.com/")  # Replace with your URL
         await context.bot.send_message(chat_id=channel_id, text="🤖 Bot is alive and running!")
     except Exception as e:
         logger.error(f"Failed to send keep-alive message: {e}")
+
 
 async def reffer(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
