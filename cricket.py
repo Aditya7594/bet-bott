@@ -340,13 +340,13 @@ async def handle_message(update: Update, context: CallbackContext) -> None:
     if update.message.chat.type != "private":
         return
 
-    user = update.effective_user
+    user_id = update.effective_user.id
     message = update.message
 
     # Find active game for user
     active_game = None
     for code, game in cricket_games.items():
-        if user.id in [game["player1"], game["player2"]] and game["status"] == "active":
+        if user_id in [game["player1"], game["player2"]] and game["status"] == "active":
             active_game = game
             break
 
@@ -354,25 +354,26 @@ async def handle_message(update: Update, context: CallbackContext) -> None:
         return
 
     # Forward message to opponent
-    receiver_id = active_game["player2"] if user.id == active_game["player1"] else active_game["player1"]
-    
+    receiver_id = active_game["player2"] if user_id == active_game["player1"] else active_game["player1"]
+    sender_name = update.effective_user.first_name
+
     try:
         if message.text:
             await context.bot.send_message(
                 chat_id=receiver_id,
-                text=f"{message.text}"
+                text=f"💬 From {sender_name}:\n{message.text}"
             )
         elif message.sticker:
             await context.bot.send_message(
                 chat_id=receiver_id,
-                text=""
+                text=f"🎴 {sender_name} sent a sticker:"
             )
             await context.bot.send_sticker(
                 chat_id=receiver_id,
                 sticker=message.sticker.file_id
             )
     except Exception as e:
-        print(f"Message forwarding error: {e}")
+        print(f"Error forwarding message: {e}")
 
 async def declare_winner(game_code: str, context: CallbackContext):
     game = cricket_games[game_code]
