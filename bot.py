@@ -137,21 +137,22 @@ async def start(update: Update, context: CallbackContext):
 app = Flask(__name__)
 
 @app.route('/')
-def hello_world():
-    return 'Shadow'
+def home():
+    return "Bot is alive!"
 
 def run_flask():
     app.run(host='0.0.0.0', port=8080)
 
+# Start Flask in a background thread
 Thread(target=run_flask).start()
 
+# Keep-alive function
 async def keep_alive(context: CallbackContext):
-    channel_id = -1002192932215 
     try:
-        requests.get("https://your-app-name.herokuapp.com/")  # Replace with your URL
-        await context.bot.send_message(chat_id=channel_id, text="🤖 Bot is alive and running!")
+        requests.get("https://your-app-name.koyeb.app/")  # Ping your Koyeb app
+        await context.bot.send_message(chat_id=CHANNEL_ID, text="🤖 Bot is alive!")
     except Exception as e:
-        logger.error(f"Failed to send keep-alive message: {e}")
+        logging.error(f"Keep-alive failed: {e}")
 
 
 async def reffer(update: Update, context: CallbackContext) -> None:
