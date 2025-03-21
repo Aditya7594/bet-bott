@@ -567,6 +567,12 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
     application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
     application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
+    application.add_handler(CallbackQueryHandler(handle_wicket, pattern="^wicket_"))
+    application.add_handler(CallbackQueryHandler(end_innings, pattern="^end_innings_"))
+    application.add_handler(MessageHandler(
+    filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+    handle_message
+    ))
 
     application.add_handler(CommandHandler("Mines", check_started(Mines)))  # Mines command
     application.add_handler(CallbackQueryHandler(Mines_click, pattern="^[0-9]+$"))  # Tile clicks
