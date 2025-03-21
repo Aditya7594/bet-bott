@@ -1,20 +1,54 @@
 import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext, MessageHandler, filters
+from pymongo import MongoClient
 
+# MongoDB setup
+client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
+db = client['telegram_bot']
+user_collection = db["users"]
+
+BOT_TOKEN = "8104505314:AAHeleqAEIJPuGmxPw80c_BsCU6gsRKhYlo"
 cricket_games = {}
 
 def generate_game_code():
     return str(random.randint(100, 999))
 
 async def chat_cricket(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    
+    # Check if user exists in database
+    user_data = user_collection.find_one({"user_id": str(user.id)})
+    if not user_data:
+        bot_username = (await context.bot.get_me()).username
+        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/{bot_username}?start=start")]]
+        await update.message.reply_text(
+            "⚠️ You need to start the bot first to create a match!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
     game_code = generate_game_code()
     while game_code in cricket_games:
         game_code = generate_game_code()
 
+    try:
+        # Create pinned message with proper mention
+        msg = await update.message.reply_text(
+            f"🏏 *New Cricket Match Started!*\n"
+            f"Game Code: `{game_code}`\n"
+            f"Started by: {user.mention_markdown()}\n"
+            f"Use `/join {game_code}` to play!",
+            parse_mode="Markdown"
+        )
+        await context.bot.pin_chat_message(chat_id, msg.message_id)
+    except Exception as e:
+        print(f"Error pinning message: {e}")
+        msg = await update.message.reply_text(f"Game Code: `{game_code}`", parse_mode="Markdown")
+
     cricket_games[game_code] = {
-        "player1": user_id,
+        "player1": user.id,
         "player2": None,
         "score1": 0,
         "score2": 0,
@@ -28,43 +62,82 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "current_players": {},
         "batter_choice": None,
         "bowler_choice": None,
-        "target": None  # Target score for the second innings
+        "target": None,
+        "group_chat_id": chat_id,
+        "pinned_message_id": msg.message_id,
+        "status": "waiting"
     }
-
-    await context.bot.send_message(
-        chat_id=user_id,
-        text=f"🎮 *Game Started!*\nCode: `{game_code}`",
-        parse_mode="Markdown"
-    )
 
 async def join_cricket(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
-    game_code = context.args[0] if context.args else None
+    game_code = context.args[0].upper() if context.args else None
 
     if not game_code or game_code not in cricket_games:
         await update.message.reply_text("Invalid code!")
         return
 
     game = cricket_games[game_code]
+    
+    if user_id == game["player1"]:
+        await update.message.reply_text("You can't join your own game!")
+        return
+
     if game["player2"]:
         await update.message.reply_text("Game full!")
         return
 
     game["player2"] = user_id
-    p1_name = (await context.bot.get_chat(game["player1"])).first_name
 
-    keyboard = [[
-        InlineKeyboardButton("Heads", callback_data=f"toss_{game_code}_heads"),
-        InlineKeyboardButton("Tails", callback_data=f"toss_{game_code}_tails")
-    ]]
-
+    # Send and pin interface for both players
     for player_id in [game["player1"], game["player2"]]:
-        msg = await context.bot.send_message(
-            chat_id=player_id,
-            text=f"⚡ Toss Time!",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        game["message_id"][player_id] = msg.message_id
+        try:
+            msg = await context.bot.send_message(
+                chat_id=player_id,
+                text="⚡ Toss Time!",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("Heads", callback_data=f"toss_{game_code}_heads"),
+                    InlineKeyboardButton("Tails", callback_data=f"toss_{game_code}_tails")
+                ]])
+            )
+            game["message_id"][player_id] = msg.message_id
+            await context.bot.pin_chat_message(player_id, msg.message_id)  # Pin in DM
+        except Exception as e:
+            print(f"Error initializing game: {e}")
+
+async def end_innings(game_code: str, context: CallbackContext):
+    game = cricket_games[game_code]
+    if game["innings"] == 1:
+        # Swap roles completely
+        new_batter = game["player2"]
+        new_bowler = game["player1"]
+        
+        game.update({
+            "innings": 2,
+            "target": game["score1"] + 1,
+            "batter": new_batter,
+            "bowler": new_bowler,
+            "current_players": {"batter": new_batter, "bowler": new_bowler},
+            "score2": 0,
+            "over": 0,
+            "ball": 0,
+            "batter_choice": None,
+            "bowler_choice": None
+        })
+        
+        # Reset interface for both players
+        await update_game_interface(game_code, context)
+    else:
+        await declare_winner(game_code, context)
+
+async def declare_winner(game_code: str, context: CallbackContext):
+    game = cricket_games[game_code]
+    
+    # Unpin messages for both players
+    for player_id in [game["player1"], game["player2"]]:
+        try:
+            await context.bot.unpin_chat_message(player_id)
+        except Exception as e:
+            print(f"Error unpinning message: {e}")
 
 async def toss_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -262,29 +335,91 @@ async def end_innings(game_code: str, context: CallbackContext):
     else:
         await declare_winner(game_code, context)
 
-async def declare_winner(game_code: str, context: CallbackContext):
-    if game_code not in cricket_games:
+
+async def handle_message(update: Update, context: CallbackContext) -> None:
+    if update.message.chat.type != "private":
         return
 
-    game = cricket_games[game_code]
-    p1 = (await context.bot.get_chat(game["player1"])).first_name
-    p2 = (await context.bot.get_chat(game["player2"])).first_name
+    user = update.effective_user
+    message = update.message
 
-    result = f"🏆 GAME OVER!\n{p1}: {game['score1']}\n{p2}: {game['score2']}\n"
+    # Find active game for user
+    active_game = None
+    for code, game in cricket_games.items():
+        if user.id in [game["player1"], game["player2"]] and game["status"] == "active":
+            active_game = game
+            break
+
+    if not active_game:
+        return
+
+    # Forward message to opponent
+    receiver_id = active_game["player2"] if user.id == active_game["player1"] else active_game["player1"]
+    
+    try:
+        if message.text:
+            await context.bot.send_message(
+                chat_id=receiver_id,
+                text=f"{message.text}"
+            )
+        elif message.sticker:
+            await context.bot.send_message(
+                chat_id=receiver_id,
+                text=""
+            )
+            await context.bot.send_sticker(
+                chat_id=receiver_id,
+                sticker=message.sticker.file_id
+            )
+    except Exception as e:
+        print(f"Message forwarding error: {e}")
+
+async def declare_winner(game_code: str, context: CallbackContext):
+    game = cricket_games[game_code]
+    game["status"] = "ended"
+    
+    # Unpin original message
+    try:
+        await context.bot.unpin_chat_message(game["group_chat_id"], game["pinned_message_id"])
+    except Exception as e:
+        print(f"Error unpinning message: {e}")
+
+    # Get player names
+    p1 = await context.bot.get_chat(game["player1"])
+    p2 = await context.bot.get_chat(game["player2"])
+
+    # Build result message
+    result = (
+        f"🏆 *MATCH RESULTS*\n\n"
+        f"👤 {p1.first_name}: {game['score1']}\n"
+        f"👤 {p2.first_name}: {game['score2']}\n\n"
+    )
+
     if game["innings"] == 2:
         if game["score2"] >= game["target"]:
-            result += f"🏅 Winner: {p2} (Chased {game['target']})"
+            result += f"🏅 Winner: {p2.first_name} (Chased target of {game['target']})"
         else:
-            result += f"🏅 Winner: {p1} (Defended {game['target'] - 1})"
+            result += f"🏅 Winner: {p1.first_name} (Defended target)"
     else:
-        result += f"🏅 Winner: {p1 if game['score1'] > game['score2'] else p2}" if game['score1'] != game['score2'] else "Tie!"
+        result += f"🏅 Winner: {p1.first_name if game['score1'] > game['score2'] else p2.first_name}"
 
+    # Send to group chat
+    await context.bot.send_message(
+        chat_id=game["group_chat_id"],
+        text=result,
+        parse_mode="Markdown"
+    )
+
+    # Update player interfaces
     for player_id in [game["player1"], game["player2"]]:
-        await context.bot.edit_message_text(
-            chat_id=player_id,
-            message_id=game["message_id"][player_id],
-            text=result,
-            parse_mode="Markdown"
-        )
-    del cricket_games[game_code]
+        try:
+            await context.bot.edit_message_text(
+                chat_id=player_id,
+                message_id=game["message_id"][player_id],
+                text=result,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"Error updating player interface: {e}")
 
+    del cricket_games[game_code]
