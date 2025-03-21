@@ -506,7 +506,17 @@ async def give(update: Update, context: CallbackContext) -> None:
         chat_id=receiver_id,
         text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
     )
+async def message_router(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
 
+    # Check if the user is in an active cricket game
+    for game_code, game in cricket_games.items():
+        if user_id in [game["player1"], game["player2"]] and game["status"] == "active":
+            await handle_message(update, context)
+            return
+
+    # If not in a cricket game, process for primos
+    await reward_primos(update, context)
 
 def main() -> None:
     application = Application.builder().token(token).build()
