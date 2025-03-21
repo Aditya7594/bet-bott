@@ -6,3 +6,4 @@ pymongo[srv]==3.12.3
 python-telegram-bot==21.2
 python-telegram-bot[job-queue]
 Pillow
+requests
