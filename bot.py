@@ -517,7 +517,7 @@ async def message_router(update: Update, context: CallbackContext):
 
     # If not in a cricket game, process for primos
     await reward_primos(update, context)
-))
+)
 
 def main() -> None:
     application = Application.builder().token(token).build()
