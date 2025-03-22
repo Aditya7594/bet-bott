@@ -7,8 +7,6 @@ from pymongo import MongoClient
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
 db = client['telegram_bot']
 user_collection = db["users"]
-
-BOT_TOKEN = "8104505314:AAHeleqAEIJPuGmxPw80c_BsCU6gsRKhYlo"
 cricket_games = {}
 
 def generate_game_code():
@@ -192,8 +190,7 @@ async def choose_button(update: Update, context: CallbackContext) -> None:
     game.update({
         "batter": batter,
         "bowler": bowler,
-        "current_players": {"batter": batter, "bowler": bowler},
-        "status": "active"  # Add this line
+        "current_players": {"batter": batter, "bowler": bowler}
     })
 
     await update_game_interface(game_code, context)
@@ -336,6 +333,44 @@ async def end_innings(game_code: str, context: CallbackContext):
     else:
         await declare_winner(game_code, context)
 
+
+async def handle_message(update: Update, context: CallbackContext) -> None:
+    if update.message.chat.type != "private":
+        return
+
+    user = update.effective_user
+    message = update.message
+
+    # Find active game for user
+    active_game = None
+    for code, game in cricket_games.items():
+        if user.id in [game["player1"], game["player2"]] and game["status"] == "active":
+            active_game = game
+            break
+
+    if not active_game:
+        return
+
+    # Forward message to opponent
+    receiver_id = active_game["player2"] if user.id == active_game["player1"] else active_game["player1"]
+    
+    try:
+        if message.text:
+            await context.bot.send_message(
+                chat_id=receiver_id,
+                text=f"{message.text}"
+            )
+        elif message.sticker:
+            await context.bot.send_message(
+                chat_id=receiver_id,
+                text=""
+            )
+            await context.bot.send_sticker(
+                chat_id=receiver_id,
+                sticker=message.sticker.file_id
+            )
+    except Exception as e:
+        print(f"Message forwarding error: {e}")
 
 async def declare_winner(game_code: str, context: CallbackContext):
     game = cricket_games[game_code]
