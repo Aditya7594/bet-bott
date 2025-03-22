@@ -145,26 +145,42 @@ async def start(update: Update, context: CallbackContext) -> None:
         logger.info(f"Genshin user {user_id} initialized.")
 
 
-async def reward_primos(update: Update, context: CallbackContext) -> None:
+async def reward_primos(update: Update, context: CallbackContext):
+    # Explicit group chat check
+    if update.message.chat.type not in ["group", "supergroup"]:
+        print(f"Ignoring non-group chat: {update.message.chat.type}")
+        return
+
+    print(f"\nGenshin handler triggered in {update.message.chat.type}")
+    print(f"User: {update.effective_user.full_name}")
+    print(f"Message: {update.message.text}")
+
     user_id = str(update.effective_user.id)
     user_data = get_genshin_user_by_id(user_id)
 
+    # Initialize new users with proper daily reset logic
     if not user_data:
-        # Initialize user data if it doesn't exist
+        print("New user detected, initializing data...")
         user_data = {
             "user_id": user_id,
             "primos": 16000,
             "bag": {},
             "daily_earned": 0,
             "last_reset": datetime.utcnow() + timedelta(hours=5, minutes=30),
+            "username": update.effective_user.full_name,
         }
         save_genshin_user(user_data)
+        print(f"New user created: {user_data}")
 
-    # Add 5 primogems for each message
+    # Daily reset check
+    reset_time = user_data["last_reset"]
+    if datetime.utcnow() > reset_time:
+        print("Resetting daily earnings...")
+        user_data["daily_earned"] = 0
+        user_data["last_reset"] = datetime.utcnow() + timedelta(days=1)
+
     user_data["primos"] += 5
     user_data["daily_earned"] += 5
-
-    # Save the updated user data
     save_genshin_user(user_data)
     
 async def handle_message(update: Update, context: CallbackContext) -> None:
