@@ -17,7 +17,7 @@ from token_1 import token
 
 
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button,send_artifact_reward
-from cricket import chat_cricket, join_cricket, toss_button, choose_button, play_button, update_game_interface, handle_wicket, end_innings, declare_winner, cricket_games
+from cricket import chat_cricket, join_cricket, toss_button, choose_button, play_button, update_game_interface, handle_wicket, end_innings, declare_winner
 from minigame import dart, basketball, flip, dice, credits_leaderboard,football
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
@@ -506,40 +506,8 @@ async def give(update: Update, context: CallbackContext) -> None:
         chat_id=receiver_id,
         text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
     )
-async def message_router(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
 
-    # Check if the user is in an active cricket game
-    active_game = None
-    for game_code, game in cricket_games.items():
-        if user_id in [game["player1"], game["player2"]] and game["status"] == "active":
-            active_game = game
-            break
 
-    if not active_game:
-        # Not in a game, process for primos
-        await reward_primos(update, context)
-        return
-
-    # Forward message to opponent
-    receiver_id = active_game["player2"] if user_id == active_game["player1"] else active_game["player1"]
-    try:
-        if update.message.text:
-            await context.bot.send_message(
-                chat_id=receiver_id,
-                text=f"💬 From {update.effective_user.first_name}:\n{update.message.text}"
-            )
-        elif update.message.sticker:
-            await context.bot.send_message(
-                chat_id=receiver_id,
-                text=f"🎴 {update.effective_user.first_name} sent a sticker:"
-            )
-            await context.bot.send_sticker(
-                chat_id=receiver_id,
-                sticker=update.message.sticker.file_id
-            )
-    except Exception as e:
-        print(f"Error forwarding message: {e}") 
 def main() -> None:
     application = Application.builder().token(token).build()
 
@@ -587,6 +555,7 @@ def main() -> None:
     application.add_handler(CommandHandler("reset", reset))  
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))  
 
+  
     application.add_handler(CommandHandler("set", set_threshold)) 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(handle_artifact_button, pattern="^artifact_")) 
@@ -598,23 +567,21 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
     application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
     application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
-    application.add_handler(CallbackQueryHandler(handle_wicket, pattern="^wicket_"))
-    application.add_handler(CallbackQueryHandler(end_innings, pattern="^end_innings_"))
-    
+
     application.add_handler(CommandHandler("Mines", check_started(Mines)))  # Mines command
     application.add_handler(CallbackQueryHandler(Mines_click, pattern="^[0-9]+$"))  # Tile clicks
     application.add_handler(CallbackQueryHandler(Mines_CashOut, pattern="^MinesCashOut$"))
 
     application.job_queue.run_repeating(keep_alive, interval=600, first=0)
 
-    # Add the message router handler for private messages
-    application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
-        message_router
-    ))
+
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))  
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
 
     application.job_queue.run_once(timeout_task, 0)
 
+  
     application.add_handler(CallbackQueryHandler(button))
 
     # Run the bot
