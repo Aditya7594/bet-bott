@@ -513,12 +513,10 @@ async def message_router(update: Update, context: CallbackContext):
     for game_code, game in cricket_games.items():
         if user_id in [game["player1"], game["player2"]] and game["status"] == "active":
             await handle_message(update, context)
-            return
+            return  # Exit the function after handling the message
 
     # If not in a cricket game, process for primos
     await reward_primos(update, context)
-)
-
 def main() -> None:
     application = Application.builder().token(token).build()
 
