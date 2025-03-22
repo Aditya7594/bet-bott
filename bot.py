@@ -2,9 +2,6 @@ from pymongo import MongoClient
 import asyncio
 import os
 import secrets
-from flask import Flask
-from threading import Thread
-import requests
 import logging
 from telegram import Update, ChatPermissions
 from telegram.ext import filters, ContextTypes
@@ -24,7 +21,6 @@ from claim import daily, random_claim, claim_credits, send_random_claim
 from bank import exchange, sell, store, withdraw, bank
 from hilo_game import start_hilo, hilo_click, hilo_cashout
 from cards import gacha, gacha, my_collection,view_card, card_pull
-from mines_game import Mines, Mines_click, Mines_CashOut
 OWNER_ID = 5667016949
 muted_users = set()
 last_interaction_time = {}
@@ -134,26 +130,12 @@ async def start(update: Update, context: CallbackContext):
             f"Welcome back, {first_name}! Use /profile to view your details."
         )
 
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is alive!"
-
-def run_flask():
-    app.run(host='0.0.0.0', port=8080)
-
-# Start Flask in a background thread
-Thread(target=run_flask).start()
-
-# Keep-alive function
 async def keep_alive(context: CallbackContext):
+    channel_id = -1002192932215 
     try:
-        requests.get("https://your-app-name.koyeb.app/")  # Ping your Koyeb app
-        await context.bot.send_message(chat_id=CHANNEL_ID, text="🤖 Bot is alive!")
+        await context.bot.send_message(chat_id=channel_id, text="🤖 Bot is alive and running!")
     except Exception as e:
-        logging.error(f"Keep-alive failed: {e}")
-
+        logger.error(f"Failed to send keep-alive message: {e}")
 
 async def reffer(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
@@ -567,10 +549,6 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
     application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
     application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
-
-    application.add_handler(CommandHandler("Mines", check_started(Mines)))  # Mines command
-    application.add_handler(CallbackQueryHandler(Mines_click, pattern="^[0-9]+$"))  # Tile clicks
-    application.add_handler(CallbackQueryHandler(Mines_CashOut, pattern="^MinesCashOut$"))
 
     application.job_queue.run_repeating(keep_alive, interval=600, first=0)
 
