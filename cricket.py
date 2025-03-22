@@ -192,7 +192,8 @@ async def choose_button(update: Update, context: CallbackContext) -> None:
     game.update({
         "batter": batter,
         "bowler": bowler,
-        "current_players": {"batter": batter, "bowler": bowler}
+        "current_players": {"batter": batter, "bowler": bowler},
+        "status": "active"  # Add this line
     })
 
     await update_game_interface(game_code, context)
