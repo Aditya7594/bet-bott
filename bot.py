@@ -579,18 +579,15 @@ def main() -> None:
     application.job_queue.run_repeating(keep_alive, interval=600, first=0)
 
     application.add_handler(MessageHandler(
-        filters.ChatType.PRIVATE & (filters.TEXT | filters.Sticker.ALL),
-        handle_message  # From cricket.py
-    ))
-
-# Genshin primo rewards handler (groups only)
-    application.add_handler(MessageHandler(
         filters.ChatType.GROUPS & filters.TEXT & ~filters.COMMAND,
         reward_primos  # From genshin_game.py
     ))
+
+    application.add_handler(MessageHandler(
+        filters.ChatType.PRIVATE & (filters.TEXT | filters.Sticker.ALL),
+        handle_message  # From cricket.py
+    ))
     
-
-
     application.job_queue.run_once(timeout_task, 0)
 
   
