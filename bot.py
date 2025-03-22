@@ -578,9 +578,16 @@ def main() -> None:
 
     application.job_queue.run_repeating(keep_alive, interval=600, first=0)
 
-
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))  
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))
+    application.add_handler(MessageHandler(
+    (filters.TEXT | filters.Sticker.ALL) & filters.ChatType.PRIVATE,
+    handle_message  # Cricket handler
+    ))
+   application.add_handler(MessageHandler(
+    filters.TEXT & ~filters.COMMAND,
+    reward_primos  # Genshin handler
+   ))
+    
+    
 
 
     application.job_queue.run_once(timeout_task, 0)
