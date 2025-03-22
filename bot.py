@@ -17,11 +17,7 @@ from token_1 import token
 
 
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button,send_artifact_reward
-from cricket import (
-    chat_cricket, join_cricket, toss_button, choose_button, play_button,
-    update_game_interface, handle_wicket, end_innings, declare_winner,
-    handle_message
-)
+from cricket import chat_cricket, join_cricket, toss_button, choose_button, play_button, update_game_interface, handle_wicket, end_innings, declare_winner
 from minigame import dart, basketball, flip, dice, credits_leaderboard,football
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
@@ -578,16 +574,11 @@ def main() -> None:
 
     application.job_queue.run_repeating(keep_alive, interval=600, first=0)
 
-    application.add_handler(MessageHandler(
-        filters.ChatType.GROUPS & filters.TEXT & ~filters.COMMAND,
-        reward_primos  # From genshin_game.py
-    ))
 
-    application.add_handler(MessageHandler(
-        filters.ChatType.PRIVATE & (filters.TEXT | filters.Sticker.ALL),
-        handle_message  # From cricket.py
-    ))
-    
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))  
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+
     application.job_queue.run_once(timeout_task, 0)
 
   
