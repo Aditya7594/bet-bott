@@ -2,6 +2,9 @@ from pymongo import MongoClient
 import asyncio
 import os
 import secrets
+from flask import Flask
+from threading import Thread
+import requests
 import logging
 from telegram import Update, ChatPermissions
 from telegram.ext import filters, ContextTypes
@@ -14,13 +17,14 @@ from token_1 import token
 
 
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button,send_artifact_reward
-from cricket import chat_cricket, join_cricket, toss_button, choose_button, play_button, update_game_interface, handle_wicket, end_innings, declare_winner
+from cricket import chat_cricket, join_cricket, toss_button, choose_button, play_button, update_game_interface, handle_wicket, end_innings, declare_winner, handle_message
 from minigame import dart, basketball, flip, dice, credits_leaderboard,football
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from bank import exchange, sell, store, withdraw, bank
 from hilo_game import start_hilo, hilo_click, hilo_cashout
 from cards import gacha, gacha, my_collection,view_card, card_pull
+from mines_game import Mines, Mines_click, Mines_CashOut
 OWNER_ID = 5667016949
 muted_users = set()
 last_interaction_time = {}
@@ -130,12 +134,26 @@ async def start(update: Update, context: CallbackContext):
             f"Welcome back, {first_name}! Use /profile to view your details."
         )
 
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
+
+# Start Flask in a background thread
+Thread(target=run_flask).start()
+
+# Keep-alive function
 async def keep_alive(context: CallbackContext):
-    channel_id = -1002192932215 
     try:
-        await context.bot.send_message(chat_id=channel_id, text="🤖 Bot is alive and running!")
+        requests.get("https://your-app-name.koyeb.app/")  # Ping your Koyeb app
+        await context.bot.send_message(chat_id=CHANNEL_ID, text="🤖 Bot is alive!")
     except Exception as e:
-        logger.error(f"Failed to send keep-alive message: {e}")
+        logging.error(f"Keep-alive failed: {e}")
+
 
 async def reffer(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
@@ -488,7 +506,17 @@ async def give(update: Update, context: CallbackContext) -> None:
         chat_id=receiver_id,
         text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
     )
+async def message_router(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
 
+    # Check if the user is in an active cricket game
+    for game_code, game in cricket_games.items():
+        if user_id in [game["player1"], game["player2"]] and game["status"] == "active":
+            await handle_message(update, context)
+            return
+
+    # If not in a cricket game, process for primos
+    await reward_primos(update, context)
 
 def main() -> None:
     application = Application.builder().token(token).build()
@@ -549,12 +577,23 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
     application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
     application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
+    application.add_handler(CallbackQueryHandler(handle_wicket, pattern="^wicket_"))
+    application.add_handler(CallbackQueryHandler(end_innings, pattern="^end_innings_"))
+    
+
+    application.add_handler(CommandHandler("Mines", check_started(Mines)))  # Mines command
+    application.add_handler(CallbackQueryHandler(Mines_click, pattern="^[0-9]+$"))  # Tile clicks
+    application.add_handler(CallbackQueryHandler(Mines_CashOut, pattern="^MinesCashOut$"))
 
     application.job_queue.run_repeating(keep_alive, interval=600, first=0)
 
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))  
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+        message_router
+    ))
 
 
     application.job_queue.run_once(timeout_task, 0)
