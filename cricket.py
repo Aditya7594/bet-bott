@@ -336,52 +336,6 @@ async def end_innings(game_code: str, context: CallbackContext):
         await declare_winner(game_code, context)
 
 
-async def handle_message(update: Update, context: CallbackContext) -> None:
-    print("handle_message called")  # Debugging line
-    if update.message.chat.type != "private":
-        print("Message is not from a private chat. Ignoring.")  # Debugging line
-        return
-
-    user_id = update.effective_user.id
-    print(f"Processing message from user {user_id}")  # Debugging line
-
-    # Find active game for user
-    active_game = None
-    for code, game in cricket_games.items():
-        print(f"Checking game: {code}, Players: {game['player1']}, {game['player2']}, Status: {game['status']}")  # Debugging line
-        if user_id in [game["player1"], game["player2"]] and game["status"] == "active":
-            active_game = game
-            print(f"Active game found: {code}")  # Debugging line
-            break
-
-    if not active_game:
-        print("No active game found for the user.")  # Debugging line
-        return
-
-    # Forward message to opponent
-    receiver_id = active_game["player2"] if user_id == active_game["player1"] else active_game["player1"]
-    sender_name = update.effective_user.first_name
-
-    try:
-        if update.message.text:
-            print(f"Forwarding text message to {receiver_id}")  # Debugging line
-            await context.bot.send_message(
-                chat_id=receiver_id,
-                text=f"💬 From {sender_name}:\n{update.message.text}"
-            )
-        elif update.message.sticker:
-            print(f"Forwarding sticker to {receiver_id}")  # Debugging line
-            await context.bot.send_message(
-                chat_id=receiver_id,
-                text=f"🎴 {sender_name} sent a sticker:"
-            )
-            await context.bot.send_sticker(
-                chat_id=receiver_id,
-                sticker=update.message.sticker.file_id
-            )
-    except Exception as e:
-        print(f"Error forwarding message: {e}")  # Debugging line
-
 async def declare_winner(game_code: str, context: CallbackContext):
     game = cricket_games[game_code]
     game["status"] = "ended"
