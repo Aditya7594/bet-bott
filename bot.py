@@ -576,9 +576,6 @@ def main() -> None:
 
     application.job_queue.run_repeating(keep_alive, interval=600, first=0)
 
-
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, reward_primos))  
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
         message_router
