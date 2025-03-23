@@ -374,7 +374,7 @@ async def end_innings(game_code: str, context: CallbackContext):
         game["ball"] = 0  
     await update_game_interface(game_code, context)
 
-async def Chat_message(update: Update, context: CallbackContext) -> None:
+async def chat_message(update: Update, context: CallbackContext) -> None:
     if update.message is None:
         return
 
