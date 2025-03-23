@@ -150,7 +150,6 @@ async def reward_primos(update: Update, context: CallbackContext):
     user_data = get_genshin_user_by_id(user_id)
 
     if not user_data:
-        # Initialize user data if it doesn't exist
         user_data = {
             "user_id": user_id,
             "primos": 16000,
@@ -160,11 +159,9 @@ async def reward_primos(update: Update, context: CallbackContext):
         }
         save_genshin_user(user_data)
 
-    # Add 5 primogems for each message
     user_data["primos"] += 5
     user_data["daily_earned"] += 5
 
-    # Save the updated user data
     save_genshin_user(user_data)
     
 async def handle_message(update: Update, context: CallbackContext) -> None:
