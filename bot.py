@@ -17,7 +17,7 @@ from token_1 import token
 
 
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button,send_artifact_reward
-from cricket import chat_cricket, join_cricket, toss_button, choose_button, play_button, update_game_interface, handle_wicket, end_innings, declare_winner, handle_message
+from cricket import chat_cricket, join_cricket, toss_button, choose_button, play_button, update_game_interface, handle_wicket, end_innings, declare_winner, chat_message, watch_game
 from minigame import dart, basketball, flip, dice, credits_leaderboard,football
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
@@ -507,6 +507,22 @@ async def give(update: Update, context: CallbackContext) -> None:
         text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
     )
 
+async def universal_handler(update: Update, context: CallbackContext):
+    if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+        user_id = str(update.effective_user.id)
+        user_data = get_genshin_user_by_id(user_id) or {"user_id": user_id, "primos": 0, "bag": {}}
+        user_data["primos"] += 5
+        save_genshin_user(user_data)
+    
+    elif update.effective_chat.type == ChatType.PRIVATE:
+        await handle_message(update, context)
+
+# Add single handler configuration
+application.add_handler(MessageHandler(
+    (filters.TEXT | filters.Sticker.ALL) & ~filters.COMMAND,
+    universal_handler
+))
+
 def main() -> None:
     application = Application.builder().token(token).build()
 
@@ -563,6 +579,7 @@ def main() -> None:
     
     application.add_handler(CommandHandler("chatcricket", chat_cricket))
     application.add_handler(CommandHandler("join", join_cricket))
+    application.add_handler(CommandHandler("watch", watch_game))
     application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
     application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
     application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
@@ -577,8 +594,8 @@ def main() -> None:
     application.job_queue.run_repeating(keep_alive, interval=600, first=0)
 
     application.add_handler(MessageHandler(
-        filters.TEXT | filters.Sticker.ALL & filters.ChatType.PRIVATE,
-        handle_message
+        (filters.TEXT | filters.Sticker.ALL) & ~filters.COMMAND,
+        universal_handler
     ))
 
 
