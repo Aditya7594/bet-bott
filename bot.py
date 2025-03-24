@@ -517,12 +517,6 @@ async def universal_handler(update: Update, context: CallbackContext):
     elif update.effective_chat.type == ChatType.PRIVATE:
         await handle_message(update, context)
 
-# Add single handler configuration
-application.add_handler(MessageHandler(
-    (filters.TEXT | filters.Sticker.ALL) & ~filters.COMMAND,
-    universal_handler
-))
-
 def main() -> None:
     application = Application.builder().token(token).build()
 
