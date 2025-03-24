@@ -634,7 +634,7 @@ def main() -> None:
 
     application.job_queue.run_repeating(keep_alive, interval=600, first=0)
 
-      application.add_handler(MessageHandler(
+    application.add_handler(MessageHandler(
         filters.Regex(r"^/start join_([0-9]{3})$") & filters.ChatType.PRIVATE,
         lambda update, ctx: join_cricket(update, ctx)
     ))
