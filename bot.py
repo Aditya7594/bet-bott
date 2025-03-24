@@ -510,38 +510,37 @@ async def give(update: Update, context: CallbackContext) -> None:
 
 async def universal_handler(update: Update, context: CallbackContext):
     try:
-        # Check if the message matches the regex patterns first
-        if update.message and update.message.text:
-            message_text = update.message.text
-            
-            # Check for join_cricket pattern
-            join_match = re.match(r"^/start join_([0-9]{3})$", message_text)
-            if join_match:
-                game_code = join_match.group(1)
-                context.args = [game_code]  # Set args for the handler function
-                return await join_cricket(update, context)
-                
-            # Check for watch_cricket pattern
-            watch_match = re.match(r"^/start watch_([0-9]{3})$", message_text)
-            if watch_match:
-                game_code = watch_match.group(1)
-                context.args = [game_code]  # Set args for the handler function
-                return await watch_cricket(update, context)
+        if not update.message or not update.message.text:
+            return  # Skip if no message or text content
+
+        message_text = update.message.text.strip()
         
-        # Only add primos for stickers in group chats
-        if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP) and update.message and update.message.sticker:
+        # Handle cricket game join/watch commands first
+        if message_text.startswith('/start'):
+            if match := re.match(r"^/start join_([0-9]{3})$", message_text):
+                context.args = [match.group(1)]  # Set args for join_cricket
+                return await join_cricket(update, context)
+            elif match := re.match(r"^/start watch_([0-9]{3})$", message_text):
+                context.args = [match.group(1)]  # Set args for watch_cricket
+                return await watch_game(update, context)
+        
+        # Handle other message types
+        if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
             user_id = str(update.effective_user.id)
-            user_data = get_genshin_user_by_id(user_id) or {"user_id": user_id, "primos": 0, "bag": {}}
+            user_data = get_genshin_user_by_id(user_id) or {
+                "user_id": user_id,
+                "primos": 0,
+                "bag": {}
+            }
             user_data["primos"] += 5
             save_genshin_user(user_data)
         
-        # Handle private chat messages
         elif update.effective_chat.type == ChatType.PRIVATE:
             await chat_message(update, context)
             
     except Exception as e:
-        logger.error(f"Universal handler error: {str(e)}")
-        if update.effective_chat.type == ChatType.PRIVATE:
+        logger.error(f"Universal handler error: {str(e)}", exc_info=True)
+        if update.effective_chat.type == ChatType.PRIVATE and update.message:
             await update.message.reply_text("❌ An error occurred while processing your message.")
 
 def main() -> None:
