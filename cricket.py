@@ -53,7 +53,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "max_overs": 20  # Added to define maximum overs per innings
     }
 
-    join_button = InlineKeyboardButton("Join Game", url=f"https://t.me/{(await context.bot.get_me()).Joyfunbot}?start={game_code}")
+    join_button = InlineKeyboardButton("Join Game", url=f"https://t.me/{(await context.bot.get_me()).username}?start={game_code}")
     keyboard = InlineKeyboardMarkup([[join_button]])
     sent_message = await context.bot.send_message(
         chat_id=chat_id,
