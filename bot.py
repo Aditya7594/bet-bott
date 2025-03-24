@@ -517,7 +517,7 @@ async def universal_handler(update: Update, context: CallbackContext):
             save_genshin_user(user_data)
         
         elif update.effective_chat.type == ChatType.PRIVATE:
-            await dm_forwarder(update, context)
+            await chat_message(update, context)
             
     except Exception as e:
         logger.error(f"Universal handler error: {str(e)}")
