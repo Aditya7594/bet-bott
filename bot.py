@@ -5,6 +5,7 @@ import secrets
 from flask import Flask
 from threading import Thread
 import requests
+import re 
 import logging
 from telegram import Update, ChatPermissions
 from telegram.ext import filters, ContextTypes
@@ -632,15 +633,15 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(Mines_click, pattern="^[0-9]+$"))  # Tile clicks
     application.add_handler(CallbackQueryHandler(Mines_CashOut, pattern="^MinesCashOut$"))
 
-    application.job_queue.run_repeating(keep_alive, interval=600, first=0)
 
+    # Change these lines
     application.add_handler(MessageHandler(
         filters.Regex(r"^/start join_([0-9]{3})$") & filters.ChatType.PRIVATE,
-        lambda update, ctx: join_cricket(update, ctx)
+        lambda update, context: join_cricket(update, context)
     ))
     application.add_handler(MessageHandler(
         filters.Regex(r"^/start watch_([0-9]{3})$") & filters.ChatType.PRIVATE,
-        lambda update, ctx: watch_game(update, ctx)
+        lambda update, context: watch_game(update, context)
     ))
 
     # Universal handler comes LAST
@@ -649,8 +650,9 @@ def main() -> None:
         universal_handler
     ))
 
-
     application.job_queue.run_once(timeout_task, 0)
+
+    application.job_queue.run_repeating(timeout_task, interval=60, first=10)
 
   
     application.add_handler(CallbackQueryHandler(button))
