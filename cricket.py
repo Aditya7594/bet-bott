@@ -292,12 +292,14 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         return
 
     game = cricket_games[game_code]
+    
+    # Validate player turn
     if user_id == game["current_players"]["batter"] and game["batter_choice"] is None:
         game["batter_choice"] = number
-        await query.answer(f"You chose {number}. Waiting for bowler...")
+        await query.answer(f"Your choice: {number}")
     elif user_id == game["current_players"]["bowler"] and game["bowler_choice"] is None:
         game["bowler_choice"] = number
-        await query.answer(f"You chose {number}. Processing result...")
+        await query.answer(f"Your choice: {number}")
     else:
         await query.answer("Not your turn!")
         return
@@ -308,40 +310,43 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         game["batter_choice"] = None
         game["bowler_choice"] = None
 
+        # Handle wicket logic
         if batter_choice == bowler_choice:
-            # Log wicket
-            game["match_details"].append((game["over"], game["ball"], 0, True))
+            # Batter is out
             game["wickets"] += 1
+            game["match_details"].append((game["over"], game["ball"], 0, True))
+            
+            # End innings if wicket falls
             await handle_wicket(game_code, context)
         else:
-            # Log runs
-            game["match_details"].append((game["over"], game["ball"], batter_choice, False))
+            # Add runs to current innings
+            runs = batter_choice
             if game["innings"] == 1:
-                game["score1"] += batter_choice
+                game["score1"] += runs
             else:
-                game["score2"] += batter_choice
-
+                game["score2"] += runs
+                
+            game["match_details"].append((game["over"], game["ball"], runs, False))
             game["ball"] += 1
+            
+            # Handle over completion
             if game["ball"] == 6:
                 game["over"] += 1
                 game["ball"] = 0
 
-            # Check if target is reached in the second innings
+            # Check target in second innings
             if game["innings"] == 2 and game["score2"] >= game["target"]:
                 await declare_winner(game_code, context)
                 return
 
-    await update_game_interface(game_code, context)
+        await update_game_interface(game_code, context)
 
 async def handle_wicket(game_code: str, context: CallbackContext):
     game = cricket_games[game_code]
     batter_name = (await context.bot.get_chat(game["current_players"]["batter"])).first_name
     bowler_name = (await context.bot.get_chat(game["current_players"]["bowler"])).first_name
 
-    # Reset over and ball count when a wicket falls
-    game["over"] = 0
-    game["ball"] = 0
-
+    # Notify players of wicket
     for player_id in [game["player1"], game["player2"]]:
         await context.bot.edit_message_text(
             chat_id=player_id,
@@ -360,7 +365,7 @@ async def end_innings(game_code: str, context: CallbackContext):
 
     game = cricket_games[game_code]
     if game["innings"] == 1:
-        # Properly reset bowling/batting roles
+        # Switch to second innings with proper reset
         game["innings"] = 2
         game["target"] = game["score1"] + 1
         game["current_players"] = {
@@ -369,9 +374,14 @@ async def end_innings(game_code: str, context: CallbackContext):
         }
         game["batter"] = game["player2"]
         game["bowler"] = game["player1"]
-        game["wickets"] = 0  
-        game["over"] = 0  
-        game["ball"] = 0  
+        # Reset counters for new innings
+        game["wickets"] = 0
+        game["over"] = 0
+        game["ball"] = 0
+        game["score2"] = 0  # Reset second innings score
+    else:
+        # Both innings completed
+        await declare_winner(game_code, context)
     await update_game_interface(game_code, context)
 
 async def chat_message(update: Update, context: CallbackContext) -> None:
@@ -422,66 +432,43 @@ async def declare_winner(game_code: str, context: CallbackContext):
     p1 = (await context.bot.get_chat(game["player1"])).first_name
     p2 = (await context.bot.get_chat(game["player2"])).first_name
 
-    # Build match details
-    match_summary = []
-    for ball in game.get("match_details", []):
-        over, ball_number, runs, wicket = ball
-        ball_summary = f"Over {over}.{ball_number}: {runs} run(s)"
-        if wicket:
-            ball_summary += " 🎯 WICKET!"
-        match_summary.append(ball_summary)
-
-    # Format match summary
-    match_summary_text = "\n".join(match_summary) if match_summary else "No balls played."
-
-    # Determine who batted first and second
-    if game["innings"] == 1:
-        first_batter = p1 if game["batter"] == game["player1"] else p2
-        second_batter = p2 if first_batter == p1 else p1
-        first_score = game["score1"]
-        second_score = game["score2"]
-    else:
-        first_batter = p2 if game["batter"] == game["player2"] else p1
-        second_batter = p1 if first_batter == p2 else p2
-        first_score = game["score2"]
-        second_score = game["score1"]
-
-    # Build result
-    result = (
-        f"🏆 *GAME OVER!*\n\n"
-        f"📜 *Match Summary:*\n"
-        f"{match_summary_text}\n\n"
-        f"🧑 {first_batter} scored: {first_score} runs\n"
-        f"🧑 {second_batter} scored: {second_score} runs\n\n"
-    )
-
+    # Determine match outcome
     if game["innings"] == 2:
-        if second_score >= game["target"]:
-            result += f"🏅 {second_batter} won by {10 - game['wickets']} wickets!"
+        # Second innings completed
+        if game["score2"] >= game["target"]:
+            result = f"🏅 {p2} won by chasing the target!"
         else:
-            result += f"🏅 {first_batter} won by {game['target'] - second_score - 1} runs!"
+            runs_diff = game["target"] - game["score2"] - 1
+            result = f"🏅 {p1} won by {runs_diff} runs!"
     else:
-        if first_score > second_score:
-            result += f"🏅 {first_batter} won by {first_score - second_score} runs!"
-        elif first_score < second_score:
-            result += f"🏅 {second_batter} won by {10 - game['wickets']} wickets!"
+        # Single innings comparison
+        if game["score1"] > game["score2"]:
+            runs_diff = game["score1"] - game["score2"]
+            result = f"🏅 {p1} won by {runs_diff} runs!"
+        elif game["score1"] < game["score2"]:
+            runs_diff = game["score2"] - game["score1"]
+            result = f"🏅 {p2} won by {runs_diff} runs!"
         else:
-            result += "🤝 It's a tie!"
+            result = "🤝 It's a draw!"
 
-    # Send to original chat
-    await context.bot.send_message(
-        chat_id=game["group_chat_id"],
-        text=result,
-        parse_mode="Markdown"
+    # Build result message
+    result_text = (
+        f"🏆 *MATCH RESULT*\n\n"
+        f"🧑 {p1}: {game['score1']} runs\n"
+        f"🧑 {p2}: {game['score2']} runs\n\n"
+        f"{result}"
     )
 
-    # Send to players
-    for player_id in [game["player1"], game["player2"]]:
-        await context.bot.edit_message_text(
-            chat_id=player_id,
-            message_id=game["message_id"][player_id],
-            text=result,
-            parse_mode="Markdown"
-        )
+    # Notify all participants
+    all_players = [game["player1"], game["player2"]] + list(game["spectators"])
+    for player_id in all_players:
+        try:
+            await context.bot.send_message(
+                chat_id=player_id,
+                text=result_text,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"Error sending result: {e}")
 
     del cricket_games[game_code]
