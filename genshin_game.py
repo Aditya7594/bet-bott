@@ -147,15 +147,12 @@ async def start(update: Update, context: CallbackContext) -> None:
 
 async def reward_primos(update: Update, context: CallbackContext):
     user_id = str(update.effective_user.id)
-    
-    # Get or create user data in one step
     user_data = get_genshin_user_by_id(user_id) or {
         "user_id": user_id,
         "primos": 0,
         "bag": {}
     }
     
-    # Silent reward system
     user_data["primos"] += 5
     save_genshin_user(user_data)
     
