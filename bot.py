@@ -510,6 +510,20 @@ async def give(update: Update, context: CallbackContext) -> None:
 
 async def universal_handler(update: Update, context: CallbackContext):
     try:
+        # Check if the message matches the regex patterns first
+        message_text = update.message.text if update.message and update.message.text else ""
+        
+        # Check for join_cricket pattern
+        join_match = re.match(r"^/start join_([0-9]{3})$", message_text)
+        if join_match:
+            return await join_cricket(update, context)
+            
+        # Check for watch_cricket pattern
+        watch_match = re.match(r"^/start watch_([0-9]{3})$", message_text)
+        if watch_match:
+            return await watch_cricket(update, context)
+        
+        # Continue with the rest of your universal handler logic
         if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
             user_id = str(update.effective_user.id)
             user_data = get_genshin_user_by_id(user_id) or {"user_id": user_id, "primos": 0, "bag": {}}
