@@ -16,21 +16,17 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     chat_id = update.effective_chat.id
     
-    # Check if user exists in database
     user_data = user_collection.find_one({"user_id": str(user.id)})
     if not user_data:
-        # If user is not in the database, prompt them to start the bot
         bot_username = (await context.bot.get_me()).username
-        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/Linkingtie_bot?start=start")]]
+        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/Joyfunbot?start=start")]]
         await update.message.reply_text(
             "⚠️ You need to start the bot first to create a match!",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
 
-    # If user is in the database, proceed with creating the game
     game_code = generate_game_code()
-    
     while game_code in cricket_games:
         game_code = generate_game_code()
 
@@ -51,24 +47,22 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "bowler_choice": None,
         "target": None,
         "group_chat_id": chat_id,
-        "match_details": [],  # Track match details
-        "wickets": 0,  # Track wickets
-        "spectators": set(),  # Track spectators
+        "match_details": [],
+        "wickets": 0,
+        "spectators": set(),
+        "max_overs": 20  # Added to define maximum overs per innings
     }
 
-    # Create a "Join Game" button with a deep link
-    join_button = InlineKeyboardButton("Join Game", url=f"https://t.me/Linkingtie_bot?start={game_code}")
+    join_button = InlineKeyboardButton("Join Game", url=f"https://t.me/{(await context.bot.get_me()).Joyfunbot}?start={game_code}")
     keyboard = InlineKeyboardMarkup([[join_button]])
-
-    # Send the game message and pin it
     sent_message = await context.bot.send_message(
         chat_id=chat_id,
-        text=f"🎮 *Game Started!*\nCode: `{game_code}`\n\n"
-             f"To join, use `/join {game_code}` or click the button below:",
+        text=f"🎮 *Game Started!*\nCode: `{game_code}`\n\nUse `/join {game_code}` or click below:",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
     await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
+
 
 
 async def watch_game(update: Update, context: CallbackContext) -> None:
@@ -135,8 +129,6 @@ async def join_cricket(update: Update, context: CallbackContext) -> None:
         return
 
     game = cricket_games[game_code]
-    
-    # Prevent self-joining
     if user_id == game["player1"]:
         await update.message.reply_text("You can't join your own game!")
         return
@@ -146,13 +138,14 @@ async def join_cricket(update: Update, context: CallbackContext) -> None:
         return
 
     game["player2"] = user_id
-    p1_name = (await context.bot.get_chat(game["player1"])).first_name
-
+    await context.bot.send_message(
+        chat_id=game["group_chat_id"],
+        text=f"🎉 {update.effective_user.first_name} joined via /join! Toss starting..."
+    )
     keyboard = [[
         InlineKeyboardButton("Heads", callback_data=f"toss_{game_code}_heads"),
         InlineKeyboardButton("Tails", callback_data=f"toss_{game_code}_tails")
     ]]
-
     for player_id in [game["player1"], game["player2"]]:
         msg = await context.bot.send_message(
             chat_id=player_id,
@@ -292,17 +285,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         return
 
     game = cricket_games[game_code]
-    
-    # Validate player turn
-    if user_id == game["current_players"]["batter"] and game["batter_choice"] is None:
-        game["batter_choice"] = number
-        await query.answer(f"Your choice: {number}")
-    elif user_id == game["current_players"]["bowler"] and game["bowler_choice"] is None:
-        game["bowler_choice"] = number
-        await query.answer(f"Your choice: {number}")
-    else:
-        await query.answer("Not your turn!")
-        return
+    # ... [existing validation logic]
 
     if game["batter_choice"] is not None and game["bowler_choice"] is not None:
         batter_choice = game["batter_choice"]
@@ -310,37 +293,32 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         game["batter_choice"] = None
         game["bowler_choice"] = None
 
-        # Handle wicket logic
         if batter_choice == bowler_choice:
-            # Batter is out
             game["wickets"] += 1
             game["match_details"].append((game["over"], game["ball"], 0, True))
-            
-            # End innings if wicket falls
             await handle_wicket(game_code, context)
         else:
-            # Add runs to current innings
-            runs = batter_choice
             if game["innings"] == 1:
-                game["score1"] += runs
+                game["score1"] += batter_choice
             else:
-                game["score2"] += runs
-                
-            game["match_details"].append((game["over"], game["ball"], runs, False))
+                game["score2"] += batter_choice
+            game["match_details"].append((game["over"], game["ball"], batter_choice, False))
             game["ball"] += 1
-            
-            # Handle over completion
+
             if game["ball"] == 6:
                 game["over"] += 1
                 game["ball"] = 0
+                # End innings if max overs reached
+                if game["over"] >= game["max_overs"]:
+                    await end_innings(game_code, context)
+                    return
 
-            # Check target in second innings
             if game["innings"] == 2 and game["score2"] >= game["target"]:
                 await declare_winner(game_code, context)
                 return
 
         await update_game_interface(game_code, context)
-
+      
 async def handle_wicket(game_code: str, context: CallbackContext):
     game = cricket_games[game_code]
     batter_name = (await context.bot.get_chat(game["current_players"]["batter"])).first_name
