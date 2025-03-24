@@ -762,7 +762,7 @@ async def end_innings(game_code: str, context: CallbackContext):
         # Game over - declare winner
         await declare_winner(game_code, context)
 
-async def watch_cricket(update: Update, context: CallbackContext) -> None:
+async def watch_game(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     
     # Check if command used with code or from deep link
