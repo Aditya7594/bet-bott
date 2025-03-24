@@ -510,60 +510,21 @@ async def give(update: Update, context: CallbackContext) -> None:
     )
 
 async def universal_handler(update: Update, context: CallbackContext):
-    try:
-        # Handle group messages first (primos rewards)
-        if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
-            user_id = str(update.effective_user.id)
-            user_data = get_genshin_user_by_id(user_id) or {
-                "user_id": user_id,
-                "primos": 0,
-                "bag": {}
-            }
-            user_data["primos"] += 5
-            save_genshin_user(user_data)
-            return
-
-        # Private chat handling
-        if update.effective_chat.type == ChatType.PRIVATE:
-            if update.message and update.message.text:
-                message_text = update.message.text.strip()
-                
-                # Handle inline join/watch buttons
-                if message_text.startswith('/start'):
-                    if match := re.match(r"^/start join_([0-9]{3})$", message_text):
-                        context.args = [match.group(1)]
-                        return await join_cricket(update, context)
-                    elif match := re.match(r"^/start watch_([0-9]{3})$", message_text):
-                        context.args = [match.group(1)]
-                        return await watch_game(update, context)
-            
-            # Forward messages during active games
-            for game_code in list(cricket_games.keys()):
-                game = cricket_games.get(game_code)
-                if not game:
-                    continue
-
-                if update.effective_user.id in [game["player1"], game["player2"]]:
-                    other_player_id = game["player2"] if update.effective_user.id == game["player1"] else game["player1"]
-                    try:
-                        if update.message.text:
-                            await context.bot.send_message(
-                                chat_id=other_player_id,
-                                text=update.message.text
-                            )
-                        elif update.message.sticker:
-                            await context.bot.send_sticker(
-                                chat_id=other_player_id,
-                                sticker=update.message.sticker.file_id
-                            )
-                    except Exception as e:
-                        print(f"Error forwarding message: {e}")
-                    return
-            
-    except Exception as e:
-        logger.error(f"Universal handler error: {str(e)}", exc_info=True)
-        if update.effective_chat.type == ChatType.PRIVATE and update.message:
-            await update.message.reply_text("❌ An error occurred while processing your message.")
+     try:
+         if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+             user_id = str(update.effective_user.id)
+             user_data = get_genshin_user_by_id(user_id) or {"user_id": user_id, "primos": 0, "bag": {}}
+             user_data["primos"] += 5
+             save_genshin_user(user_data)
+ 
+         elif update.effective_chat.type == ChatType.PRIVATE:
+             await dm_forwarder(update, context)
+             await chat_message(update, context)
+ 
+     except Exception as e:
+         logger.error(f"Universal handler error: {str(e)}")
+         if update.effective_chat.type == ChatType.PRIVATE:
+             await update.message.reply_text("❌ An error occurred while processing your message.")
 
 def main() -> None:
     application = Application.builder().token(token).build()
@@ -633,16 +594,6 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(Mines_click, pattern="^[0-9]+$"))  # Tile clicks
     application.add_handler(CallbackQueryHandler(Mines_CashOut, pattern="^MinesCashOut$"))
 
-
-    # Change these lines
-    application.add_handler(MessageHandler(
-        filters.Regex(r"^/start join_([0-9]{3})$") & filters.ChatType.PRIVATE,
-        lambda update, context: join_cricket(update, context)
-    ))
-    application.add_handler(MessageHandler(
-        filters.Regex(r"^/start watch_([0-9]{3})$") & filters.ChatType.PRIVATE,
-        lambda update, context: watch_game(update, context)
-    ))
 
     # Universal handler comes LAST
     application.add_handler(MessageHandler(
