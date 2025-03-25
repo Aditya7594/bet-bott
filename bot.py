@@ -510,21 +510,19 @@ async def give(update: Update, context: CallbackContext) -> None:
     )
 
 async def universal_handler(update: Update, context: CallbackContext):
-     try:
-         if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
-             user_id = str(update.effective_user.id)
-             user_data = get_genshin_user_by_id(user_id) or {"user_id": user_id, "primos": 0, "bag": {}}
-             user_data["primos"] += 5
-             save_genshin_user(user_data)
- 
-         elif update.effective_chat.type == ChatType.PRIVATE:
-             await dm_forwarder(update, context)
-             await chat_message(update, context)
- 
-     except Exception as e:
-         logger.error(f"Universal handler error: {str(e)}")
-         if update.effective_chat.type == ChatType.PRIVATE:
-             await update.message.reply_text("❌ An error occurred while processing your message.")
+    try:
+        if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+            user_id = str(update.effective_user.id)
+            user_data = get_genshin_user_by_id(user_id) or {"user_id": user_id, "primos": 0, "bag": {}}
+            user_data["primos"] += 5
+            save_genshin_user(user_data)
+        elif update.effective_chat.type == ChatType.PRIVATE:
+            await dm_forwarder(update, context)
+            await chat_message(update, context)
+    except Exception as e:
+        logger.error(f"Universal handler error: {str(e)}")
+        if update.effective_chat.type == ChatType.PRIVATE:
+            await update.message.reply_text("❌ An error occurred while processing your message.")
 
 def main() -> None:
     application = Application.builder().token(token).build()
