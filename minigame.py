@@ -50,19 +50,34 @@ async def flip(update: Update, context: CallbackContext) -> None:
     message = f"『 {user_link} 』flipped a coin! 🪙\n\n" if update.message.reply_to_message else f"Flipped a coin! 🪙\n\n"
     message += f"It's <b>{result}</b>!\n🕰️ Timestamp (IST): {ist_timestamp}"
 
+    keyboard = [[InlineKeyboardButton("Flip again", callback_data="flip_again")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     if update.message.reply_to_message:
         original_msg_id = update.message.reply_to_message.message_id
         await context.bot.send_message(
             chat_id=chat_id,
             text=message,
             parse_mode='HTML',
-            reply_to_message_id=original_msg_id
+            reply_to_message_id=original_msg_id,
+            reply_markup=reply_markup
         )
     else:
-        await update.message.reply_text(message, parse_mode='HTML')
+        await update.message.reply_text(message, parse_mode='HTML', reply_markup=reply_markup)
 
     user_id = str(user.id)
     update_user_credits(user_id, 1)
+async def handle_flip_again(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+
+    result = secrets.choice(["heads", "tails"])
+    new_message = f"It's <b>{result}</b>!"
+
+    keyboard = [[InlineKeyboardButton("Flip again", callback_data="flip_again")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_message_text(text=new_message, parse_mode='HTML', reply_markup=reply_markup)
 
 async def dice(update: Update, context: CallbackContext) -> None:
     chat_type = update.effective_chat.type
