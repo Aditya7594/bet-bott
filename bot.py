@@ -20,7 +20,7 @@ from token_1 import token
 
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button,send_artifact_reward
 from cricket import chat_cricket, join_cricket, toss_button, choose_button, play_button, update_game_interface, handle_wicket, end_innings, declare_winner, chat_message, watch_game
-from minigame import dart, basketball, flip, dice, credits_leaderboard,football
+from minigame import dart, basketball, flip, dice, credits_leaderboard,football,help_command, start_command, roll
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from bank import exchange, sell, store, withdraw, bank
@@ -537,6 +537,9 @@ def main() -> None:
     application.add_handler(CommandHandler("basketball", check_started(basketball)))
     application.add_handler(CommandHandler("football", check_started(football)))
     application.add_handler(CommandHandler("dice", check_started(dice)))
+    application.add_handler(CommandHandler("help", check_started(help_command)))
+    application.add_handler(CommandHandler("minigame", check_started(start_command)))
+    application.add_handler(CommandHandler("roll", check_started(roll)))
     application.add_handler(CommandHandler("pull", check_started(pull)))  # Pull command
     application.add_handler(CommandHandler("bag", check_started(bag)))  # Bag command
     application.add_handler(CommandHandler('add_primos', check_started(add_primos)))  # Add primos (admin)
