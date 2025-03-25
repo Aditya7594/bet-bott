@@ -1,6 +1,6 @@
 import random
-from telegram import Update
-from telegram.ext import CallbackContext
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, CallbackQuery
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters
 from pymongo import MongoClient
 import logging
 import secrets
