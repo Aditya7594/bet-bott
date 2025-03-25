@@ -1,6 +1,6 @@
 import random
-from telegrambot import Update
-from telegrambot.ext import CallbackContext
+from telegram import Update
+from telegram.ext import CallbackContext
 from pymongo import MongoClient
 import logging
 import secrets
