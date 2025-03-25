@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from html import escape
 
 # MongoDB setup
-client = MongoClient('mongo+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
+client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot') 
 db = client['telegram_bot']
 users_collection = db['users']
 
