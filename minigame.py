@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from html import escape
 
 # MongoDB setup
-client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
+client = MongoClient('mongo+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
 db = client['telegram_bot']
 users_collection = db['users']
 
@@ -137,6 +137,8 @@ async def credits_leaderboard(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"Error generating credits leaderboard: {e}")
         await update.message.reply_text("An error occurred while generating the leaderboard.")
+
+# New functions
 async def help_command(update: Update, context: CallbackContext):
     help_message = """
     Available commands:
