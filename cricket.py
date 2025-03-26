@@ -172,33 +172,61 @@ async def handle_join_game(query, game_code, user_id):
         await query.answer("You cannot join your own game!")
         return
 
-    # Update game with player2
-    cricket_collection.update_one(
-        {"game_code": game_code},
-        {"$set": {"player2": user_id, "last_move": datetime.utcnow()}}
-    )
+    try:
+        # Update game with player2
+        cricket_collection.update_one(
+            {"game_code": game_code},
+            {"$set": {"player2": user_id, "last_move": datetime.utcnow()}}
+        )
 
-    # Update memory cache
-    cricket_games[game_code]["player2"] = user_id
-    cricket_games[game_code]["last_move"] = datetime.utcnow()
+        # Update memory cache
+        cricket_games[game_code]["player2"] = user_id
+        cricket_games[game_code]["last_move"] = datetime.utcnow()
 
-    # Prepare players information
-    player1 = await query.bot.get_chat(int(game["player1"]))
-    player2 = query.from_user
+        # Prepare players information
+        player1 = await query.bot.get_chat(int(game["player1"]))
+        player2 = query.from_user
 
-    # Update game message in group chat
-    await query.edit_message_text(
-        f"🎮 *Cricket Game Started!*\n\n"
-        f"Game Code: `{game_code}`\n"
-        f"Player 1: {player1.mention_html()}\n"
-        f"Player 2: {player2.mention_html()}\n\n"
-        f"Starting toss...",
-        parse_mode="HTML"
-    )
+        # Send game message to both players in their DMs
+        game_message = (
+            f"🎮 *Cricket Game Started!*\n\n"
+            f"Game Code: `{game_code}`\n"
+            f"Player 1: {player1.mention_html()}\n"
+            f"Player 2: {player2.mention_html()}\n\n"
+            f"Starting toss..."
+        )
 
-    # Delay and start toss
-    await asyncio.sleep(1)
-    await start_toss(query, game_code)
+        # Send to player 1
+        await query.bot.send_message(
+            chat_id=int(game["player1"]),
+            text=game_message,
+            parse_mode="HTML"
+        )
+
+        # Send to player 2
+        await query.bot.send_message(
+            chat_id=int(user_id),
+            text=game_message,
+            parse_mode="HTML"
+        )
+
+        # Update game message in group chat
+        await query.edit_message_text(
+            f"🎮 *Cricket Game Started!*\n\n"
+            f"Game Code: `{game_code}`\n"
+            f"Player 1: {player1.mention_html()}\n"
+            f"Player 2: {player2.mention_html()}\n\n"
+            f"Starting toss...",
+            parse_mode="HTML"
+        )
+
+        # Delay and start toss
+        await asyncio.sleep(1)
+        await start_toss(query, game_code)
+
+    except Exception as e:
+        logger.error(f"Error in handle_join_game: {e}")
+        await query.edit_message_text("❌ An error occurred while joining the game. Please try again.")
 
 async def handle_watch_game(query, game_code, user_id):
     """Handle when a user watches a game."""
