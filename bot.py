@@ -18,15 +18,15 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from token_1 import token
 
 
-from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button,send_artifact_reward
-from cricket import chat_cricket, handle_cricket_callback, handle_join_game, handle_watch_game, handle_toss, handle_choose, handle_play, handle_wicket, handle_end_innings, declare_winner, handle_cricket_message
-from minigame import dart, basketball, flip, dice, credits_leaderboard,football,help_command, start_command, roll,handle_flip_again
+from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button, send_artifact_reward, get_genshin_handlers
+from cricket import chat_cricket, handle_cricket_callback, handle_join_game, handle_watch_game, handle_toss, handle_choose, handle_play, handle_wicket, handle_end_innings, declare_winner, handle_cricket_message, get_cricket_handlers
+from minigame import dart, basketball, flip, dice, credits_leaderboard, football, help_command, start_command, roll, handle_flip_again, get_minigame_handlers
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
-from bank import exchange, sell, store, withdraw, bank
-from hilo_game import start_hilo, hilo_click, hilo_cashout
-from cards import gacha, gacha, my_collection,view_card, card_pull
-from mines_game import Mines, Mines_click, Mines_CashOut
+from bank import exchange, sell, store, withdraw, bank, get_bank_handlers
+from hilo_game import start_hilo, hilo_click, hilo_cashout, get_hilo_handlers
+from cards import gacha, my_collection, view_card, card_pull
+from mines_game import Mines, Mines_click, Mines_CashOut, get_mines_handlers
 from xox_game import get_xox_handlers
 OWNER_ID = 5667016949
 muted_users = set()
