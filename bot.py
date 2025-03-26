@@ -21,7 +21,8 @@ from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, hand
 from cricket import (
     chat_cricket, handle_cricket_callback, handle_join_game, handle_watch_game,
     handle_toss, handle_choose, handle_play, handle_wicket, handle_end_innings,
-    declare_winner, handle_cricket_message, get_cricket_handlers, cricket_games
+    declare_winner, handle_cricket_message, get_cricket_handlers, cricket_games,
+    join_cricket, watch_cricket, toss_button, choose_button, play_button
 )
 from minigame import dart, basketball, flip, dice, credits_leaderboard, football, help_command, start_command, roll, handle_flip_again, get_minigame_handlers
 from bdice import bdice
@@ -267,7 +268,8 @@ async def add_credits(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(f"Successfully added {credits_to_add} credits to user {target_user_id}. New balance: {new_credits} credits.")
 
 
-async def check_game_timeout():
+async def timeout_task(context: CallbackContext) -> None:
+    """Check for and handle game timeouts."""
     current_time = datetime.now()
     
     for user_id, last_time in last_interaction_time.items():
@@ -291,7 +293,7 @@ async def check_game_timeout():
 async def timeout_task():
     while True:
         await asyncio.sleep(60)  # Wait for 1 minute
-        await check_game_timeout()
+        await timeout_task()
 
 
 async def reset(update: Update, context: CallbackContext) -> None:
@@ -696,20 +698,37 @@ def main() -> None:
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("help", help_command))
 
-    # Add cricket game command handlers
     application.add_handler(CommandHandler("chatcricket", chat_cricket))
-    application.add_handler(CommandHandler("join", handle_join_game))
-    application.add_handler(CommandHandler("watch", handle_watch_game))
+    application.add_handler(CommandHandler("join", join_cricket))
+    application.add_handler(CommandHandler("watch", watch_cricket))
+
+    application.add_handler(MessageHandler(
+        filters.Regex(r"^/start ([0-9]{3})$"),
+        lambda update, context: join_cricket(update, context)
+    ))
+    application.add_handler(MessageHandler(
+        filters.Regex(r"^/start watch_([0-9]{3})$"),
+        lambda update, context: watch_cricket(update, context)
+    ))
+    
+    application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
+    application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
+    application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
     
     # Add cricket game deep link handlers
     application.add_handler(MessageHandler(
         filters.Regex(r"^/start ([0-9]{3})$"),
-        lambda update, context: handle_join_game(update, context)
+        lambda update, context: join_cricket(update, context)
     ))
     application.add_handler(MessageHandler(
         filters.Regex(r"^/start watch_([0-9]{3})$"),
-        lambda update, context: handle_watch_game(update, context)
+        lambda update, context: watch_cricket(update, context)
     ))
+    
+    # Add cricket game callback handlers
+    application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
+    application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
+    application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
 
     # Add game handlers
     for handler in get_xox_handlers():
