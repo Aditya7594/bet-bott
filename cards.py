@@ -115,6 +115,7 @@ async def card_pull(update: Update, context: CallbackContext) -> None:
         await update.callback_query.message.reply_text("Sorry, no cards available.")
 
     await update.callback_query.answer()
+
 async def my_collection(update: Update, context: CallbackContext) -> None:
     """
     Handle the /mycollection command where users can view their collected cards.
@@ -190,3 +191,11 @@ async def view_card(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"Error sending card image: {e}")
         await update.message.reply_text("An error occurred while retrieving the card image.")
+
+def get_cards_handlers():
+    return [
+        CommandHandler("gacha", gacha),
+        CommandHandler("mycollection", my_collection),
+        CommandHandler("view", view_card),
+        CallbackQueryHandler(card_pull, pattern=r"^(normal|special)$")
+    ]

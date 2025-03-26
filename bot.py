@@ -513,17 +513,171 @@ async def give(update: Update, context: CallbackContext) -> None:
 async def universal_handler(update: Update, context: CallbackContext):
     try:
         if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
-            user_id = str(update.effective_user.id)
-            user_data = get_genshin_user_by_id(user_id) or {"user_id": user_id, "primos": 0, "bag": {}}
-            user_data["primos"] += 5
-            save_genshin_user(user_data)
+            # Only reward primos for text messages
+            if update.message and update.message.text:
+                user_id = str(update.effective_user.id)
+                user_data = get_genshin_user_by_id(user_id)
+                
+                if not user_data:
+                    # Create new user data if it doesn't exist
+                    user_data = {
+                        "user_id": user_id,
+                        "primos": 0,
+                        "bag": {}
+                    }
+                
+                # Add 5 primos
+                user_data["primos"] += 5
+                save_genshin_user(user_data)
+                
+                # Log the reward (optional)
+                logger.info(f"User {user_id} received 5 primos for group chat message")
+                
         elif update.effective_chat.type == ChatType.PRIVATE:
             await dm_forwarder(update, context)
-            await chat_message(update, context)
+            await handle_message(update, context)
     except Exception as e:
         logger.error(f"Universal handler error: {str(e)}")
         if update.effective_chat.type == ChatType.PRIVATE:
             await update.message.reply_text("❌ An error occurred while processing your message.")
+
+async def handle_message(update: Update, context: CallbackContext) -> None:
+    """Handle all messages that are not commands."""
+    if not update.message or not update.message.text:
+        return
+
+    user_id = str(update.effective_user.id)
+    message = update.message.text.lower()
+    chat_id = update.effective_chat.id
+
+    # Check if user is muted
+    if user_id in muted_users:
+        return
+
+    # Update last interaction time
+    last_interaction_time[user_id] = datetime.utcnow()
+
+    # Handle game-specific messages
+    if chat_id == update.effective_user.id:  # Private chat
+        # Check for active games
+        active_game = None
+        for game_type in ['xox', 'cricket', 'hilo', 'mines']:
+            game = db[f'{game_type}_games'].find_one({
+                "$or": [{"player1": user_id}, {"player2": user_id}],
+                "active": True
+            })
+            if game:
+                active_game = (game_type, game)
+                break
+
+        if active_game:
+            game_type, game = active_game
+            if game_type == 'xox':
+                await handle_xox_message(update, context, game)
+            elif game_type == 'cricket':
+                await handle_cricket_message(update, context, game)
+            elif game_type == 'hilo':
+                await handle_hilo_message(update, context, game)
+            elif game_type == 'mines':
+                await handle_mines_message(update, context, game)
+
+    # Handle general messages
+    if message.startswith('!') or message.startswith('/'):
+        return
+
+    # Add your message handling logic here
+    # For example, credit rewards, random events, etc.
+
+async def handle_cricket_message(update: Update, context: CallbackContext, game: dict) -> None:
+    """Handle messages during an active Cricket game."""
+    user_id = str(update.effective_user.id)
+    
+    # Check if the message is from a player in the game
+    if user_id not in [game["player1"], game["player2"]]:
+        return
+        
+    # Check for game timeout
+    if (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
+        await handle_timeout(update.callback_query, game)
+        return
+        
+    # Ignore messages during active games
+    await update.message.delete()
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="⚠️ Please use the game buttons to play!",
+        delete_after=3
+    )
+
+async def handle_hilo_message(update: Update, context: CallbackContext, game: dict) -> None:
+    """Handle messages during an active HiLo game."""
+    user_id = str(update.effective_user.id)
+    
+    # Check if the message is from a player in the game
+    if user_id != game["player_id"]:
+        return
+        
+    # Check for game timeout
+    if (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
+        await handle_timeout(update.callback_query, game)
+        return
+        
+    # Ignore messages during active games
+    await update.message.delete()
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="⚠️ Please use the game buttons to play!",
+        delete_after=3
+    )
+
+async def handle_mines_message(update: Update, context: CallbackContext, game: dict) -> None:
+    """Handle messages during an active Mines game."""
+    user_id = str(update.effective_user.id)
+    
+    # Check if the message is from a player in the game
+    if user_id != game["player_id"]:
+        return
+        
+    # Check for game timeout
+    if (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
+        await handle_timeout(update.callback_query, game)
+        return
+        
+    # Ignore messages during active games
+    await update.message.delete()
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="⚠️ Please use the game buttons to play!",
+        delete_after=3
+    )
+
+async def handle_timeout(query: CallbackQuery, game: dict) -> None:
+    """Handle game timeout for any game type."""
+    game_type = game.get("game_type", "unknown")
+    game_id = game.get("_id", game.get("game_code", "unknown"))
+    
+    # Update game status in database
+    db[f"{game_type}_games"].update_one(
+        {"_id": game_id},
+        {"$set": {"active": False}}
+    )
+    
+    # Send timeout message
+    await query.edit_message_text(
+        f"⏰ *Game Timed Out!* ⏰\n\n"
+        "The game has ended due to inactivity.\n"
+        "Your credits have been refunded.",
+        parse_mode="HTML"
+    )
+    
+    # Refund credits if applicable
+    if "bet" in game:
+        user_id = game.get("player_id") or game.get("player1")
+        if user_id:
+            user_data = get_user_by_id(user_id)
+            if user_data:
+                user_data["credits"] += game["bet"]
+                save_user(user_data)
 
 def main() -> None:
     application = Application.builder().token(token).build()
@@ -531,74 +685,27 @@ def main() -> None:
     # Add all handlers inside the main function
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("profile", check_started(profile)))
-    application.add_handler(CommandHandler("flip", check_started(flip)))
-    application.add_handler(CallbackQueryHandler(handle_flip_again, pattern="^flip_again$"))
-    application.add_handler(CommandHandler("dart", check_started(dart)))
-    application.add_handler(CommandHandler("basketball", check_started(basketball)))
-    application.add_handler(CommandHandler("football", check_started(football)))
-    application.add_handler(CommandHandler("dice", check_started(dice)))
-    application.add_handler(CommandHandler("help", check_started(help_command)))
-    application.add_handler(CommandHandler("minigame", check_started(start_command)))
-    application.add_handler(CommandHandler("roll", check_started(roll)))
-    application.add_handler(CommandHandler("pull", check_started(pull)))  # Pull command
-    application.add_handler(CommandHandler("bag", check_started(bag)))  # Bag command
-    application.add_handler(CommandHandler('add_primos', check_started(add_primos)))  # Add primos (admin)
-    application.add_handler(CommandHandler("Primos_leaderboard", check_started(leaderboard)))  # Primos leaderboard
-    application.add_handler(CommandHandler('drop_primos', check_started(drop_primos)))  # Drop primos (admin)
-    application.add_handler(CommandHandler("addcredits", check_started(add_credits)))
-    application.add_handler(CommandHandler("reset_bag_data", check_started(reset_bag_data)))  # Reset bag data (admin)
-    application.add_handler(CommandHandler("leaderboard", check_started(credits_leaderboard)))
-    application.add_handler(CommandHandler("exchange", check_started(exchange)))  
-    application.add_handler(CommandHandler("sell", check_started(sell)))  
-    application.add_handler(CommandHandler("store", check_started(store)))  
-    application.add_handler(CommandHandler("withdraw", check_started(withdraw))) 
-    application.add_handler(CommandHandler("bank", bank))
+    application.add_handler(CommandHandler("give", check_started(give)))
     application.add_handler(CommandHandler("reach", reach))
     application.add_handler(CommandHandler("reffer", reffer))
-
-    application.add_handler(CommandHandler("bdice", check_started(bdice)))
-
-    application.add_handler(CommandHandler("daily", check_started(daily)))
-    application.add_handler(CallbackQueryHandler(claim_credits, pattern="^claim_"))
-    application.add_handler(CallbackQueryHandler(random_claim, pattern="^random_claim$"))
-
-    application.add_handler(CommandHandler("hilo", start_hilo))
-    application.add_handler(CallbackQueryHandler(hilo_click, pattern="hilo_(high|low)"))
-    application.add_handler(CallbackQueryHandler(hilo_cashout, pattern="hilo_cashout"))
-
-    application.add_handler(CommandHandler("give", check_started(give)))
-
-    application.add_handler(CommandHandler("gacha", gacha))
-    application.add_handler(CommandHandler("mycollection", my_collection))
-    application.add_handler(CommandHandler("view", view_card))
-    application.add_handler(CallbackQueryHandler(card_pull, pattern="^(normal|special)$"))
-
-    application.add_handler(CommandHandler("reset", reset))  
-    application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))  
-
-  
-    application.add_handler(CommandHandler("set", set_threshold)) 
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(CallbackQueryHandler(handle_artifact_button, pattern="^artifact_")) 
-    
+    application.add_handler(CommandHandler("reset", reset))
+    application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
     application.add_handler(CommandHandler("broadcast", broadcast))
-    
-    application.add_handler(CommandHandler("chatcricket", chat_cricket))
-    application.add_handler(CommandHandler("join", join_cricket))
-    application.add_handler(CommandHandler("watch", watch_game))
-    application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
-    application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
-    application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
-    application.add_handler(CallbackQueryHandler(handle_wicket, pattern="^wicket_"))
-    application.add_handler(CallbackQueryHandler(end_innings, pattern="^end_innings_"))
-    
 
-    application.add_handler(CommandHandler("Mines", check_started(Mines)))  # Mines command
-    application.add_handler(CallbackQueryHandler(Mines_click, pattern="^[0-9]+$"))  # Tile clicks
-    application.add_handler(CallbackQueryHandler(Mines_CashOut, pattern="^MinesCashOut$"))
-
-    # Add XOX game handlers
+    # Add game handlers
     for handler in get_xox_handlers():
+        application.add_handler(handler)
+    for handler in get_cricket_handlers():
+        application.add_handler(handler)
+    for handler in get_hilo_handlers():
+        application.add_handler(handler)
+    for handler in get_mines_handlers():
+        application.add_handler(handler)
+    for handler in get_genshin_handlers():
+        application.add_handler(handler)
+    for handler in get_minigame_handlers():
+        application.add_handler(handler)
+    for handler in get_bank_handlers():
         application.add_handler(handler)
 
     # Universal handler comes LAST
@@ -607,12 +714,9 @@ def main() -> None:
         universal_handler
     ))
 
+    # Add timeout task
     application.job_queue.run_once(timeout_task, 0)
-
     application.job_queue.run_repeating(timeout_task, interval=60, first=10)
-
-  
-    application.add_handler(CallbackQueryHandler(button))
 
     # Run the bot
     application.run_polling()

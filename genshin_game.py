@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Tuple
 from telegram.ext import JobQueue
 import os
+from telegram.ext import CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 OWNER_ID = 5667016949
 logging.basicConfig(level=logging.INFO)
@@ -615,15 +616,15 @@ async def leaderboard(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(leaderboard_message, parse_mode='Markdown')
 
 async def reset_bag_data(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    if user_id != OWNER_ID:
+    user_id = str(update.effective_user.id)
+    if user_id != str(OWNER_ID):
         await update.message.reply_text("You do not have permission to use this command.")
         return
 
-    # Reset bag data for all users
-    genshin_collection.update_many({}, {"$set": {"bag": {}}})
-    logger.info("Bag data reset for all users.")
-    await update.message.reply_text("Bag data has been reset for all users.")
+    # Reset bag data only for the user who called the command
+    genshin_collection.update_one({"user_id": user_id}, {"$set": {"bag": {}}})
+    logger.info(f"Bag data reset for user {user_id}")
+    await update.message.reply_text("Your bag data has been reset.")
 
 async def drop_primos(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
@@ -647,4 +648,18 @@ async def drop_primos(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"Error dropping primos: {e}")
         await update.message.reply_text("❌ An error occurred while dropping primos.")
+
+def get_genshin_handlers():
+    """Return all Genshin game handlers."""
+    return [
+        CommandHandler("pull", pull),
+        CommandHandler("bag", bag),
+        CommandHandler("add_primos", add_primos),
+        CommandHandler("Primos_leaderboard", leaderboard),
+        CommandHandler("drop_primos", drop_primos),
+        CommandHandler("reset_bag_data", reset_bag_data),
+        CommandHandler("set", set_threshold),
+        CallbackQueryHandler(handle_artifact_button, pattern="^artifact_"),
+        CallbackQueryHandler(button)
+    ]
 

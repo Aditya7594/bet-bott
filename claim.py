@@ -1,6 +1,6 @@
 import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import CallbackQueryHandler, CallbackContext
+from telegram.ext import CallbackQueryHandler, CallbackContext, CommandHandler
 from datetime import datetime, timedelta
 from pymongo import MongoClient
 
@@ -75,3 +75,11 @@ async def daily(update: Update, context: CallbackContext) -> None:
 
     updated_user_data = users_collection.find_one({"user_id": user_id})
     await update.message.reply_text(f"🎉 You've claimed your daily reward of 1,000 credits! You now have {updated_user_data['credits']} credits.")
+
+def get_claim_handlers():
+    return [
+        CommandHandler("daily", daily),
+        CommandHandler("randomclaim", random_claim),
+        CallbackQueryHandler(claim_credits, pattern=r"^claim_\d+$"),
+        CallbackQueryHandler(claim_credits, pattern=r"^random_claim$")
+    ]

@@ -257,3 +257,11 @@ async def hilo_cashout(update: Update, context):
         parse_mode="HTML", 
         reply_markup=None
     )
+
+def get_hilo_handlers():
+    """Return all HiLo game handlers."""
+    return [
+        CommandHandler("hilo", start_hilo),
+        CallbackQueryHandler(hilo_click, pattern="hilo_(high|low)"),
+        CallbackQueryHandler(hilo_cashout, pattern="hilo_cashout")
+    ]

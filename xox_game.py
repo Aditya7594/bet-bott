@@ -265,9 +265,30 @@ async def xox_stats(update: Update, context: CallbackContext) -> None:
         parse_mode="HTML"
     )
 
+async def handle_xox_message(update: Update, context: CallbackContext, game: dict) -> None:
+    """Handle messages during an active XOX game."""
+    user_id = str(update.effective_user.id)
+    
+    # Check if the message is from a player in the game
+    if user_id not in [game["player1"], game["player2"]]:
+        return
+        
+    # Check for game timeout
+    if (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
+        await handle_timeout(update.callback_query, game)
+        return
+        
+    # Ignore messages during active games
+    await update.message.delete()
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="⚠️ Please use the game buttons to play!",
+        delete_after=3
+    )
+
 def get_xox_handlers():
     return [
         CommandHandler("xox", xox),
-        CommandHandler("xoxstats", xox_stats),
-        CallbackQueryHandler(handle_xox_click, pattern=r"^[^:]+:[^:]+$")
+        CallbackQueryHandler(handle_xox_click, pattern=r"^[0-9a-f-]+:[0-9_]+$"),
+        CommandHandler("xoxstats", xox_stats)
     ]

@@ -215,3 +215,11 @@ async def Mines_CashOut(update: Update, context: CallbackContext):
     text += f"<b>You cashed out and won: {winnings} 👾</b>"
 
     await query.edit_message_text(text, parse_mode=ParseMode.HTML)
+
+def get_mines_handlers():
+    """Return all Mines game handlers."""
+    return [
+        CommandHandler("Mines", Mines),
+        CallbackQueryHandler(Mines_click, pattern="^[0-9]+$"),
+        CallbackQueryHandler(Mines_CashOut, pattern="^MinesCashOut$")
+    ]

@@ -68,6 +68,7 @@ async def flip(update: Update, context: CallbackContext) -> None:
 
     user_id = str(user.id)
     update_user_credits(user_id, 1)
+
 async def handle_flip_again(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
@@ -186,3 +187,18 @@ async def roll(update: Update, context: CallbackContext):
     await update.message.reply_text(f"Rolled a {sides}-sided die. Result: {result}")
     user_id = str(update.effective_user.id)
     update_user_credits(user_id, 1)
+
+def get_minigame_handlers():
+    """Return all minigame handlers."""
+    return [
+        CommandHandler("flip", flip),
+        CommandHandler("dart", dart),
+        CommandHandler("basketball", basketball),
+        CommandHandler("football", football),
+        CommandHandler("dice", dice),
+        CommandHandler("help", help_command),
+        CommandHandler("minigame", start_command),
+        CommandHandler("roll", roll),
+        CommandHandler("leaderboard", credits_leaderboard),
+        CallbackQueryHandler(handle_flip_again, pattern="^flip_again$")
+    ]

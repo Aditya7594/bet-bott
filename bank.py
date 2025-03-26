@@ -223,3 +223,13 @@ async def bank(update: Update, context: CallbackContext) -> None:
 
     # Show the bank balance
     await update.message.reply_text(f"Your virtual bank balance is: {bank_balance} credits.")
+
+def get_bank_handlers():
+    """Return all bank handlers."""
+    return [
+        CommandHandler("exchange", exchange),
+        CommandHandler("sell", sell),
+        CommandHandler("store", store),
+        CommandHandler("withdraw", withdraw),
+        CommandHandler("bank", bank)
+    ]

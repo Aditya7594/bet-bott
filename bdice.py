@@ -1,5 +1,5 @@
 from telegram import Update
-from telegram.ext import CallbackContext
+from telegram.ext import CallbackContext, CommandHandler
 import random
 from pymongo import MongoClient
 import asyncio
@@ -102,3 +102,8 @@ async def process_dice_game(update: Update, user_data: dict, bet_amount: int, us
         f"🎮 Plays Today: *{user_data['bdice_daily']['plays']}/20*",
         parse_mode="Markdown"
     )
+
+def get_bdice_handlers():
+    return [
+        CommandHandler("bdice", bdice)
+    ]
