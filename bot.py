@@ -17,12 +17,11 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, Callbac
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters
 from token_1 import token
 
-
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button, send_artifact_reward, get_genshin_handlers
 from cricket import (
     chat_cricket, handle_cricket_callback, handle_join_game, handle_watch_game,
     handle_toss, handle_choose, handle_play, handle_wicket, handle_end_innings,
-    declare_winner, handle_cricket_message, get_cricket_handlers
+    declare_winner, handle_cricket_message, get_cricket_handlers, cricket_games
 )
 from minigame import dart, basketball, flip, dice, credits_leaderboard, football, help_command, start_command, roll, handle_flip_again, get_minigame_handlers
 from bdice import bdice
@@ -701,6 +700,16 @@ def main() -> None:
     application.add_handler(CommandHandler("chatcricket", chat_cricket))
     application.add_handler(CommandHandler("join", handle_join_game))
     application.add_handler(CommandHandler("watch", handle_watch_game))
+    
+    # Add cricket game deep link handlers
+    application.add_handler(MessageHandler(
+        filters.Regex(r"^/start ([0-9]{3})$"),
+        lambda update, context: handle_join_game(update, context)
+    ))
+    application.add_handler(MessageHandler(
+        filters.Regex(r"^/start watch_([0-9]{3})$"),
+        lambda update, context: handle_watch_game(update, context)
+    ))
 
     # Add game handlers
     for handler in get_xox_handlers():
