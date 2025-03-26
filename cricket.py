@@ -14,13 +14,20 @@ db = client['telegram_bot']
 user_collection = db["users"]
 cricket_collection = db["cricket_games"]
 
+# Configure logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Global dictionary to store active games in memory
 cricket_games = {}
 
 # Fetch user data from database
 def get_user_by_id(user_id):
+    """Fetch user data from database."""
     return db['users'].find_one({"user_id": user_id})
 
 def save_user(user_data):
+    """Save or update user data in database."""
     db['users'].update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
 
 def generate_game_code():
@@ -51,8 +58,10 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     # Create game data
     game_data = {
         "game_code": game_code,
+        "group_chat_id": update.effective_chat.id,
         "player1": user_id,
         "player2": None,
+        "spectators": [],
         "status": "waiting",
         "created_at": datetime.utcnow(),
         "last_move": datetime.utcnow(),
@@ -65,12 +74,16 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "max_overs": 5,
         "max_wickets": 10,
         "innings": 1,
-        "target": 0
+        "target": 0,
+        "toss_winner": None,
+        "batter": None,
+        "bowler": None
     }
     
     try:
-        # Insert game into database
+        # Insert game into database and memory
         cricket_collection.insert_one(game_data)
+        cricket_games[game_code] = game_data
         
         # Create join and watch buttons with callbacks
         keyboard = [
@@ -96,7 +109,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
             parse_mode="Markdown"
         )
     except Exception as e:
-        logging.error(f"Error creating cricket game: {e}")
+        logger.error(f"Error creating cricket game: {e}")
         await update.message.reply_text("❌ An error occurred while creating the game. Please try again.")
 
 async def handle_cricket_callback(update: Update, context: CallbackContext) -> None:
@@ -105,24 +118,44 @@ async def handle_cricket_callback(update: Update, context: CallbackContext) -> N
     await query.answer()
     
     # Parse callback data
-    _, action, game_code = query.data.split("_")
+    try:
+        _, action, game_code = query.data.split("_")
+    except ValueError:
+        await query.edit_message_text("❌ Invalid callback data.")
+        return
     
-    if action == "join":
-        await handle_join_game(query, game_code, str(query.from_user.id))
-    elif action == "watch":
-        await handle_watch_game(query, game_code, str(query.from_user.id))
-    elif action == "toss":
-        await handle_toss(query, game_code)
-    elif action == "bat":
-        await handle_choose(query, game_code, "bat")
-    elif action == "bowl":
-        await handle_choose(query, game_code, "bowl")
-    elif action == "play":
-        await handle_play(query, game_code)
-    elif action == "wicket":
-        await handle_wicket(query, game_code)
-    elif action == "end_innings":
-        await handle_end_innings(query, game_code)
+    # Ensure game exists in memory and database
+    game = cricket_collection.find_one({"game_code": game_code})
+    if not game:
+        await query.edit_message_text("❌ Game not found.")
+        return
+    
+    # Update memory cache if needed
+    if game_code not in cricket_games:
+        cricket_games[game_code] = game
+
+    user_id = str(query.from_user.id)
+    
+    try:
+        if action == "join":
+            await handle_join_game(query, game_code, user_id)
+        elif action == "watch":
+            await handle_watch_game(query, game_code, user_id)
+        elif action == "toss":
+            # Get toss choice from additional data
+            toss_choice = query.data.split("_")[-1] if len(query.data.split("_")) > 3 else None
+            await handle_toss(query, game_code, user_id, toss_choice)
+        elif action in ["bat", "bowl"]:
+            await handle_choose(query, game_code, action, user_id)
+        elif action == "play":
+            await handle_play(query, game_code, user_id)
+        elif action == "wicket":
+            await handle_wicket(query, game_code, user_id)
+        elif action == "end_innings":
+            await handle_end_innings(query, game_code, user_id)
+    except Exception as e:
+        logger.error(f"Error in handle_cricket_callback: {e}")
+        await query.edit_message_text("❌ An unexpected error occurred.")
 
 async def handle_join_game(query, game_code, user_id):
     """Handle when a user joins a game."""
@@ -145,46 +178,27 @@ async def handle_join_game(query, game_code, user_id):
         {"$set": {"player2": user_id, "last_move": datetime.utcnow()}}
     )
 
-    # Send game message to both players in their DMs
-    try:
-        # Send to player 1
-        await query.bot.send_message(
-            chat_id=int(game["player1"]),
-            text=f"🎮 *Cricket Game Started!*\n\n"
-                 f"Game Code: `{game_code}`\n"
-                 f"Player 1: {(await query.bot.get_chat(game['player1'])).mention_html()}\n"
-                 f"Player 2: {query.from_user.mention_html()}\n\n"
-                 f"Starting toss...",
-            parse_mode="HTML"
-        )
+    # Update memory cache
+    cricket_games[game_code]["player2"] = user_id
+    cricket_games[game_code]["last_move"] = datetime.utcnow()
 
-        # Send to player 2
-        await query.bot.send_message(
-            chat_id=int(user_id),
-            text=f"🎮 *Cricket Game Started!*\n\n"
-                 f"Game Code: `{game_code}`\n"
-                 f"Player 1: {(await query.bot.get_chat(game['player1'])).mention_html()}\n"
-                 f"Player 2: {query.from_user.mention_html()}\n\n"
-                 f"Starting toss...",
-            parse_mode="HTML"
-        )
+    # Prepare players information
+    player1 = await query.bot.get_chat(int(game["player1"]))
+    player2 = query.from_user
 
-        # Update the original message in the group
-        await query.edit_message_text(
-            f"🎮 *Cricket Game Started!*\n\n"
-            f"Game Code: `{game_code}`\n"
-            f"Player 1: {(await query.bot.get_chat(game['player1'])).mention_html()}\n"
-            f"Player 2: {query.from_user.mention_html()}\n\n"
-            f"Starting toss...",
-            parse_mode="HTML"
-        )
+    # Update game message in group chat
+    await query.edit_message_text(
+        f"🎮 *Cricket Game Started!*\n\n"
+        f"Game Code: `{game_code}`\n"
+        f"Player 1: {player1.mention_html()}\n"
+        f"Player 2: {player2.mention_html()}\n\n"
+        f"Starting toss...",
+        parse_mode="HTML"
+    )
 
-        # Start toss after a short delay
-        await asyncio.sleep(2)
-        await start_toss(query, game_code)
-    except Exception as e:
-        logging.error(f"Error sending game messages: {e}")
-        await query.edit_message_text("❌ An error occurred while starting the game. Please try again.")
+    # Delay and start toss
+    await asyncio.sleep(1)
+    await start_toss(query, game_code)
 
 async def handle_watch_game(query, game_code, user_id):
     """Handle when a user watches a game."""
@@ -214,45 +228,62 @@ async def start_toss(query, game_code):
         return
 
     keyboard = [
-        [InlineKeyboardButton("Heads", callback_data=f"cricket_toss_{game_code}_heads")],
-        [InlineKeyboardButton("Tails", callback_data=f"cricket_toss_{game_code}_tails")]
+        [
+            InlineKeyboardButton("Heads", callback_data=f"cricket_toss_{game_code}_heads"),
+            InlineKeyboardButton("Tails", callback_data=f"cricket_toss_{game_code}_tails")
+        ]
     ]
+
+    player1 = await query.bot.get_chat(int(game["player1"]))
+    player2 = await query.bot.get_chat(int(game["player2"]))
 
     await query.edit_message_text(
         f"🎲 *Toss Time!*\n\n"
-        f"{(await query.bot.get_chat(game['player1'])).mention_html()} vs {(await query.bot.get_chat(game['player2'])).mention_html()}\n"
+        f"{player1.mention_html()} vs {player2.mention_html()}\n"
         f"Choose Heads or Tails:",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
 
-async def handle_toss(query, game_code):
+async def handle_toss(query, game_code, user_id, toss_choice=None):
     """Handle the toss result."""
     game = cricket_collection.find_one({"game_code": game_code})
     if not game or not game.get("active"):
         await query.edit_message_text("❌ This game is no longer active or doesn't exist.")
         return
 
-    user_id = str(query.from_user.id)
-    if user_id not in [game["player1"], game["player2"]]:
-        await query.answer("You're not part of this game!")
+    # If no toss choice, it means the first toss stage
+    if not toss_choice:
+        if user_id not in [game["player1"], game["player2"]]:
+            await query.answer("You're not part of this game!")
+            return
+
+        keyboard = [
+            [
+                InlineKeyboardButton("Heads", callback_data=f"cricket_toss_{game_code}_heads"),
+                InlineKeyboardButton("Tails", callback_data=f"cricket_toss_{game_code}_tails")
+            ]
+        ]
+
+        await query.edit_message_text(
+            f"🎲 *Toss Time!*\n"
+            f"Choose Heads or Tails:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
         return
 
-    choice = query.data.split("_")[-1]
+    # Toss logic
     result = random.choice(["heads", "tails"])
-    
-    if choice == result:
-        winner_id = user_id
-        winner = query.from_user
-    else:
-        winner_id = game["player2"] if user_id == game["player1"] else game["player1"]
-        winner = await query.bot.get_chat(int(winner_id))
+    winner_id = user_id if toss_choice == result else (game["player2"] if user_id == game["player1"] else game["player1"])
+    winner = await query.bot.get_chat(int(winner_id))
 
     # Update game with toss winner
     cricket_collection.update_one(
         {"game_code": game_code},
         {"$set": {"toss_winner": winner_id, "last_move": datetime.utcnow()}}
     )
+    cricket_games[game_code]["toss_winner"] = winner_id
 
     keyboard = [
         [InlineKeyboardButton("Batting", callback_data=f"cricket_bat_{game_code}")],
@@ -267,57 +298,63 @@ async def handle_toss(query, game_code):
         parse_mode="HTML"
     )
 
-async def handle_choose(query, game_code, choice):
+async def handle_choose(query, game_code, choice, user_id):
     """Handle batting/bowling choice."""
     game = cricket_collection.find_one({"game_code": game_code})
     if not game or not game.get("active"):
         await query.edit_message_text("❌ This game is no longer active or doesn't exist.")
         return
 
-    user_id = str(query.from_user.id)
     if user_id != game["toss_winner"]:
         await query.answer("It's not your turn to choose!")
         return
 
+    # Determine batter and bowler based on toss winner's choice
+    if choice == "bat":
+        batter = int(user_id)
+        bowler = int(game["player2"] if user_id == game["player1"] else game["player1"])
+    else:
+        bowler = int(user_id)
+        batter = int(game["player2"] if user_id == game["player1"] else game["player1"])
+
     # Update game with choice
     update_data = {
         "batter_choice": choice,
+        "batter": batter,
+        "bowler": bowler,
         "last_move": datetime.utcnow()
     }
-
-    if choice == "bat":
-        update_data["batter"] = int(user_id)
-        update_data["bowler"] = int(game["player2"] if user_id == game["player1"] else game["player1"])
-    else:
-        update_data["bowler"] = int(user_id)
-        update_data["batter"] = int(game["player2"] if user_id == game["player1"] else game["player1"])
 
     cricket_collection.update_one(
         {"game_code": game_code},
         {"$set": update_data}
     )
+    cricket_games[game_code].update(update_data)
+
+    # Get player mentions
+    batter_mention = await query.bot.get_chat(batter)
+    bowler_mention = await query.bot.get_chat(bowler)
 
     keyboard = [
-        [InlineKeyboardButton("Start Over", callback_data=f"cricket_play_{game_code}")]
+        [InlineKeyboardButton("Start Game", callback_data=f"cricket_play_{game_code}")]
     ]
 
     await query.edit_message_text(
         f"🎮 *Game Setup Complete!*\n\n"
-        f"{(await query.bot.get_chat(update_data['batter'])).mention_html()} is batting\n"
-        f"{(await query.bot.get_chat(update_data['bowler'])).mention_html()} is bowling\n\n"
-        f"Click Start Over to begin:",
+        f"{batter_mention.mention_html()} is batting\n"
+        f"{bowler_mention.mention_html()} is bowling\n\n"
+        f"Click Start Game to begin:",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
 
-async def handle_play(query, game_code):
+async def handle_play(query, game_code, user_id):
     """Handle a ball being played."""
     game = cricket_collection.find_one({"game_code": game_code})
     if not game or not game.get("active"):
         await query.edit_message_text("❌ This game is no longer active or doesn't exist.")
         return
 
-    user_id = str(query.from_user.id)
     if user_id != str(game["bowler"]):
         await query.answer("It's not your turn to bowl!")
         return
@@ -333,7 +370,7 @@ async def handle_play(query, game_code):
     if outcome == "W":
         update_data["wickets"] = game["wickets"] + 1
         if update_data["wickets"] >= game["max_wickets"]:
-            await handle_end_innings(query, game_code)
+            await handle_end_innings(query, game_code, user_id)
             return
     else:
         runs = int(outcome)
@@ -350,13 +387,15 @@ async def handle_play(query, game_code):
         update_data["over"] = game["over"] + 1
         update_data["ball"] = 0
         if update_data["over"] >= game["max_overs"]:
-            await handle_end_innings(query, game_code)
+            await handle_end_innings(query, game_code, user_id)
             return
 
+    # Update both database and memory cache
     cricket_collection.update_one(
         {"game_code": game_code},
         {"$set": update_data}
     )
+    cricket_games[game_code].update(update_data)
 
     keyboard = [
         [InlineKeyboardButton("Next Ball", callback_data=f"cricket_play_{game_code}")]
@@ -386,7 +425,7 @@ async def handle_wicket(query, game_code, user_id):
 
     game["wickets"] += 1
     if game["wickets"] >= game["max_wickets"]:
-        await handle_end_innings(query, game_code)
+        await handle_end_innings(query, game_code, user_id)
         return
 
     game["last_move"] = datetime.utcnow()
@@ -412,37 +451,33 @@ async def handle_wicket(query, game_code, user_id):
         parse_mode="HTML"
     )
 
-async def handle_end_innings(query, game_code):
-    game = cricket_games.get(game_code)
+async def handle_end_innings(query, game_code, user_id):
+    """Handle end of innings."""
+    game = cricket_collection.find_one({"game_code": game_code})
     if not game or not game.get("active"):
         await query.edit_message_text("❌ This game is no longer active or doesn't exist.")
         return
 
     if game["innings"] == 1:
-        game["innings"] = 2
-        game["target"] = game["score1"] + 1
-        game["score2"] = 0
-        game["wickets"] = 0
-        game["over"] = 0
-        game["ball"] = 0
-        game["batter"], game["bowler"] = game["bowler"], game["batter"]
+        # Update game for second innings
+        update_data = {
+            "innings": 2,
+            "target": game["score1"] + 1,
+            "score2": 0,
+            "wickets": 0,
+            "over": 0,
+            "ball": 0,
+            "batter": game["bowler"],
+            "bowler": game["batter"],
+            "last_move": datetime.utcnow()
+        }
 
-        game["last_move"] = datetime.utcnow()
-        cricket_games[game_code] = game
+        # Update both database and memory cache
         cricket_collection.update_one(
             {"game_code": game_code},
-            {"$set": {
-                "innings": 2,
-                "target": game["target"],
-                "score2": 0,
-                "wickets": 0,
-                "over": 0,
-                "ball": 0,
-                "batter": game["batter"],
-                "bowler": game["bowler"],
-                "last_move": datetime.utcnow()
-            }}
+            {"$set": update_data}
         )
+        cricket_games[game_code].update(update_data)
 
         keyboard = [
             [InlineKeyboardButton("Start Second Innings", callback_data=f"cricket_play_{game_code}")]
@@ -451,27 +486,30 @@ async def handle_end_innings(query, game_code):
         await query.edit_message_text(
             f"🎮 *First Innings Complete!*\n\n"
             f"Score: {game['score1']}/{game['max_wickets']}\n"
-            f"Target: {game['target']}\n\n"
-            f"{(await query.bot.get_chat(game['batter'])).mention_html()} is batting\n"
-            f"{(await query.bot.get_chat(game['bowler'])).mention_html()} is bowling",
+            f"Target: {update_data['target']}\n\n"
+            f"{(await query.bot.get_chat(update_data['batter'])).mention_html()} is batting\n"
+            f"{(await query.bot.get_chat(update_data['bowler'])).mention_html()} is bowling",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="HTML"
         )
     else:
-        await declare_winner(game_code, query)
+        await declare_winner(query, game_code)
 
-async def declare_winner(game_code, query):
-    game = cricket_games.get(game_code)
+async def declare_winner(query, game_code):
+    """Declare the winner of the game."""
+    game = cricket_collection.find_one({"game_code": game_code})
     if not game:
         return
 
-    game["active"] = False
-    cricket_games[game_code] = game
+    # Update game status
+    update_data = {"active": False, "last_move": datetime.utcnow()}
     cricket_collection.update_one(
         {"game_code": game_code},
-        {"$set": {"active": False}}
+        {"$set": update_data}
     )
+    cricket_games[game_code].update(update_data)
 
+    # Determine winner
     if game["score2"] > game["score1"]:
         winner = await query.bot.get_chat(game["batter"])
         margin = game["score2"] - game["score1"]
@@ -522,7 +560,7 @@ async def handle_cricket_message(update: Update, context: CallbackContext) -> No
             delete_after=3
         )
     except Exception as e:
-        logging.error(f"Error handling cricket message: {e}")
+        logger.error(f"Error handling cricket message: {e}")
 
 async def handle_timeout(update, game):
     """Handle game timeout."""
@@ -533,19 +571,26 @@ async def handle_timeout(update, game):
             {"$set": {"active": False, "status": "timeout"}}
         )
         
+        # Remove from memory cache
+        if game["game_code"] in cricket_games:
+            del cricket_games[game["game_code"]]
+        
         # Send timeout message
         await update.message.reply_text(
             "⏰ Game timed out due to inactivity. Use /chatcricket to start a new game."
         )
     except Exception as e:
-        logging.error(f"Error handling game timeout: {e}")
+        logger.error(f"Error handling game timeout: {e}")
 
 def get_cricket_handlers():
     """Get all cricket game handlers."""
     return [
         CommandHandler("chatcricket", chat_cricket),
-        CommandHandler("join", handle_join_game),
-        CommandHandler("watch", handle_watch_game),
-        CallbackQueryHandler(handle_cricket_callback, pattern=r"^cricket_(join|watch|toss|bat|bowl|play|wicket|end_innings)_[0-9a-f-]+$"),
+        CallbackQueryHandler(handle_cricket_callback, pattern=r"^cricket_(join|watch|toss|bat|bowl|play|wicket|end_innings)_[0-9A-Z]+"),
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cricket_message)
     ]
+
+# Add error handling and logging
+async def error_handler(update: Update, context: CallbackContext):
+    """Log Errors caused by Updates."""
+    logger.warning(f'Update "{update}" caused error "{context.error}"')
