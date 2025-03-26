@@ -19,7 +19,11 @@ from token_1 import token
 
 
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button, send_artifact_reward, get_genshin_handlers
-from cricket import chat_cricket, handle_cricket_callback, handle_join_game, handle_watch_game, handle_toss, handle_choose, handle_play, handle_wicket, handle_end_innings, declare_winner, handle_cricket_message, get_cricket_handlers
+from cricket import (
+    chat_cricket, handle_cricket_callback, handle_join_game, handle_watch_game,
+    handle_toss, handle_choose, handle_play, handle_wicket, handle_end_innings,
+    declare_winner, handle_cricket_message, get_cricket_handlers
+)
 from minigame import dart, basketball, flip, dice, credits_leaderboard, football, help_command, start_command, roll, handle_flip_again, get_minigame_handlers
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
@@ -78,102 +82,64 @@ def check_started(func):
     return wrapped
 
 async def start(update: Update, context: CallbackContext) -> None:
-    """Start the bot and handle game join/watch actions."""
+    """Handle the /start command."""
     user = update.effective_user
     user_id = str(user.id)
     
-    # Check if this is a game join/watch action
-    if context.args and len(context.args) > 0:
-        action = context.args[0]
-        if action.startswith('join_'):
-            game_code = action.split('_')[1]
-            # Create a mock callback query for the game handlers
-            mock_query = CallbackQuery(
-                id="0",
-                from_user=user,
-                chat_instance="0",
-                message=update.message
-            )
-            await handle_join_game(mock_query, game_code, user_id)
-            return
-        elif action.startswith('watch_'):
-            game_code = action.split('_')[1]
-            # Create a mock callback query for the game handlers
-            mock_query = CallbackQuery(
-                id="0",
-                from_user=user,
-                chat_instance="0",
-                message=update.message
-            )
-            await handle_watch_game(mock_query, game_code, user_id)
-            return
-
-    # Regular start command
-    user_data = get_user_by_id(user_id)
+    # Check if user exists in database
+    user_data = users_collection.find_one({"user_id": user_id})
     if not user_data:
-        user_data = {
+        # Create new user
+        users_collection.insert_one({
             "user_id": user_id,
-            "credits": 1000,
-            "bank": 0,
-            "last_daily": None,
-            "referrer": None,
-            "referred_users": [],
-            "win": 0,
-            "loss": 0,
-            "achievement": [],
-            "faction": "None",
-            "ban": None,
-            "title": "None",
-            "bag": {}
-        }
-        save_user(user_data)
-        logger.info(f"New user created: {user_id}")
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "created_at": datetime.utcnow(),
+            "last_active": datetime.utcnow()
+        })
+        await update.message.reply_text(
+            f"👋 Welcome {user.first_name}! I'm your cricket game bot.\n\n"
+            f"Use /chatcricket in a group to start a new game!"
+        )
     else:
-        # Ensure all required fields exist
-        required_fields = {
-            "credits": 1000,
-            "bank": 0,
-            "last_daily": None,
-            "referrer": None,
-            "referred_users": [],
-            "win": 0,
-            "loss": 0,
-            "achievement": [],
-            "faction": "None",
-            "ban": None,
-            "title": "None",
-            "bag": {}
-        }
-        
-        updated = False
-        for field, default_value in required_fields.items():
-            if field not in user_data:
-                user_data[field] = default_value
-                updated = True
-        
-        if updated:
-            save_user(user_data)
-            logger.info(f"Updated user data for {user_id} with missing fields")
+        # Update last active
+        users_collection.update_one(
+            {"user_id": user_id},
+            {"$set": {"last_active": datetime.utcnow()}}
+        )
+        await update.message.reply_text(
+            f"👋 Welcome back {user.first_name}! Use /chatcricket in a group to start a new game!"
+        )
 
-    # Check for referral
-    if context.args and len(context.args) > 0:
-        referrer_id = context.args[0]
-        if referrer_id != user_id and referrer_id not in user_data.get("referred_users", []):
-            referrer_data = get_user_by_id(referrer_id)
-            if referrer_data:
-                user_data["referrer"] = referrer_id
-                referrer_data["referred_users"].append(user_id)
-                save_user(user_data)
-                save_user(referrer_data)
-                logger.info(f"Referral updated: {user_id} referred by {referrer_id}")
-
-    await update.message.reply_text(
-        f"👋 Welcome {user.first_name}!\n\n"
-        f"Your current balance:\n"
-        f"💰 Credits: {user_data.get('credits', 1000)}\n"
-        f"🏦 Bank: {user_data.get('bank', 0)}\n\n"
-        f"Use /help to see available commands!"
+async def help_command(update: Update, context: CallbackContext) -> None:
+    """Handle the /help command."""
+    help_text = (
+        "🎮 *Cricket Game Bot Commands:*\n\n"
+        "/start - Start the bot\n"
+        "/help - Show this help message\n"
+        "/chatcricket - Start a new cricket game (group only)\n"
+        "/join [code] - Join an existing game\n"
+        "/watch [code] - Watch an existing game\n\n"
+        "*How to Play:*\n"
+        "1. Start a game with /chatcricket in a group\n"
+        "2. Share the game code with your opponent\n"
+        "3. Join the game using the code\n"
+        "4. Play the toss and choose to bat or bowl\n"
+        "5. Take turns choosing numbers (1-6)\n"
+        "6. Score runs or take wickets!\n\n"
+        "*Game Rules:*\n"
+        "• 5 overs per innings\n"
+        "• 10 wickets per innings\n"
+        "• Choose numbers 1-6 for runs\n"
+        "• Matching numbers = wicket\n"
+        "• Different numbers = runs (batter's choice)"
     )
+    await update.message.reply_text(help_text, parse_mode="Markdown")
+
+async def error_handler(update: Update, context: CallbackContext) -> None:
+    """Log Errors caused by Updates."""
+    logger.warning(f'Update "{update}" caused error "{context.error}"')
 
 app = Flask(__name__)
 
@@ -729,6 +695,7 @@ def main() -> None:
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
     application.add_handler(CommandHandler("broadcast", broadcast))
+    application.add_handler(CommandHandler("help", help_command))
 
     # Add game handlers
     for handler in get_xox_handlers():
@@ -755,6 +722,9 @@ def main() -> None:
     # Add timeout task
     application.job_queue.run_once(timeout_task, 0)
     application.job_queue.run_repeating(timeout_task, interval=60, first=10)
+
+    # Add error handler
+    application.add_error_handler(error_handler)
 
     # Run the bot
     application.run_polling()

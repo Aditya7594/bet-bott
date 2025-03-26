@@ -731,6 +731,81 @@ async def handle_watch_game(query, game_code, user_id):
     await query.answer("You are now watching the game!")
     await update_game_interface(game_code, query)
 
+async def handle_wicket(query, game_code, user_id):
+    """Handle when a wicket is taken."""
+    game = cricket_collection.find_one({"game_code": game_code})
+    if not game or not game.get("active"):
+        await query.edit_message_text("❌ This game is no longer active or doesn't exist.")
+        return
+
+    # Update ball count
+    game["ball"] += 1
+    if game["ball"] == 6:
+        game["over"] += 1
+        game["ball"] = 0
+
+    # Check if we need to end the innings
+    if game["wickets"] >= game["max_wickets"] or game["over"] >= game["max_overs"]:
+        await handle_end_innings(query, game_code, user_id)
+        return
+    
+    # Continue the current innings
+    batter_name = (await query.bot.get_chat(game["batter"])).first_name
+    bowler_name = (await query.bot.get_chat(game["bowler"])).first_name
+    score = game['score1'] if game['innings'] == 1 else game['score2']
+    spectator_count = len(game["spectators"])
+    spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
+    
+    text = (
+        f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
+        f"🔸 Batting: {batter_name}\n"
+        f"🔹 Bowling: {bowler_name}\n"
+        f"📊 Score: {score}/{game['wickets']}"
+    )
+    
+    if game['innings'] == 2:
+        text += f" (Target: {game['target']})"
+    
+    text += "\n\n⚡ Next ball. Batter, choose a number (1-6):"
+    
+    # Create keyboard for batter
+    keyboard = []
+    row = []
+    for i in range(1, 7):
+        row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_code}_{i}"))
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_code}")])
+
+    # Update game state
+    cricket_collection.update_one(
+        {"game_code": game_code},
+        {"$set": {
+            "ball": game["ball"],
+            "over": game["over"],
+            "last_move": datetime.utcnow()
+        }}
+    )
+    cricket_games[game_code].update({
+        "ball": game["ball"],
+        "over": game["over"]
+    })
+
+    # Update interface for all participants
+    recipients = list(game["spectators"]) + [game["player1"], game["player2"]]
+    for player_id in recipients:
+        try:
+            await query.bot.edit_message_text(
+                chat_id=player_id,
+                message_id=game["message_id"].get(player_id),
+                text=text,
+                reply_markup=InlineKeyboardMarkup(keyboard) if player_id not in game["spectators"] else None,
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.error(f"Error updating interface for {player_id}: {e}")
+
 def get_cricket_handlers():
     """Get all cricket game handlers."""
     return [
