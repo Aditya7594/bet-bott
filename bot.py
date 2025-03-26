@@ -697,6 +697,11 @@ def main() -> None:
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("help", help_command))
 
+    # Add cricket game command handlers
+    application.add_handler(CommandHandler("chatcricket", chat_cricket))
+    application.add_handler(CommandHandler("join", join_cricket))
+    application.add_handler(CommandHandler("watch", watch_cricket))
+
     # Add game handlers
     for handler in get_xox_handlers():
         application.add_handler(handler)
