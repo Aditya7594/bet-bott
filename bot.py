@@ -117,10 +117,43 @@ async def start(update: Update, context: CallbackContext) -> None:
             "bank": 0,
             "last_daily": None,
             "referrer": None,
-            "referred_users": []
+            "referred_users": [],
+            "win": 0,
+            "loss": 0,
+            "achievement": [],
+            "faction": "None",
+            "ban": None,
+            "title": "None",
+            "bag": {}
         }
         save_user(user_data)
         logger.info(f"New user created: {user_id}")
+    else:
+        # Ensure all required fields exist
+        required_fields = {
+            "credits": 1000,
+            "bank": 0,
+            "last_daily": None,
+            "referrer": None,
+            "referred_users": [],
+            "win": 0,
+            "loss": 0,
+            "achievement": [],
+            "faction": "None",
+            "ban": None,
+            "title": "None",
+            "bag": {}
+        }
+        
+        updated = False
+        for field, default_value in required_fields.items():
+            if field not in user_data:
+                user_data[field] = default_value
+                updated = True
+        
+        if updated:
+            save_user(user_data)
+            logger.info(f"Updated user data for {user_id} with missing fields")
 
     # Check for referral
     if context.args and len(context.args) > 0:
@@ -137,8 +170,8 @@ async def start(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(
         f"👋 Welcome {user.first_name}!\n\n"
         f"Your current balance:\n"
-        f"💰 Credits: {user_data['credits']}\n"
-        f"🏦 Bank: {user_data['bank']}\n\n"
+        f"💰 Credits: {user_data.get('credits', 1000)}\n"
+        f"🏦 Bank: {user_data.get('bank', 0)}\n\n"
         f"Use /help to see available commands!"
     )
 

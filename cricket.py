@@ -71,11 +71,11 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         # Insert game into database
         cricket_collection.insert_one(game_data)
         
-        # Create join and watch buttons with URLs
+        # Create join and watch buttons with callbacks
         keyboard = [
             [
-                InlineKeyboardButton("🎮 Join Game", url=f"https://t.me/{context.bot.username}?start=join_{game_code}"),
-                InlineKeyboardButton("👁️ Watch Game", url=f"https://t.me/{context.bot.username}?start=watch_{game_code}")
+                InlineKeyboardButton("🎮 Join Game", callback_data=f"cricket_join_{game_code}"),
+                InlineKeyboardButton("👁️ Watch Game", callback_data=f"cricket_watch_{game_code}")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -99,31 +99,29 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("❌ An error occurred while creating the game. Please try again.")
 
 async def handle_cricket_callback(update: Update, context: CallbackContext) -> None:
+    """Handle all cricket game callbacks."""
     query = update.callback_query
-    user = update.effective_user
-    user_id = str(user.id)
     await query.answer()
-
-    try:
-        action, subaction, game_code = query.data.split("_")
-        
-        if subaction == "join":
-            await handle_join_game(query, game_code, user_id)
-        elif subaction == "watch":
-            await handle_watch_game(query, game_code, user_id)
-        elif subaction == "toss":
-            await handle_toss(query, game_code, user_id)
-        elif subaction == "choose":
-            await handle_choose(query, game_code, user_id)
-        elif subaction == "play":
-            await handle_play(query, game_code, user_id)
-        elif subaction == "wicket":
-            await handle_wicket(query, game_code, user_id)
-        elif subaction == "end":
-            await handle_end_innings(query, game_code, user_id)
-    except Exception as e:
-        print(f"Error handling callback: {e}")
-        await query.edit_message_text("❌ An error occurred while processing your action.")
+    
+    # Parse callback data
+    _, action, game_code = query.data.split("_")
+    
+    if action == "join":
+        await handle_join_game(query, game_code, str(query.from_user.id))
+    elif action == "watch":
+        await handle_watch_game(query, game_code, str(query.from_user.id))
+    elif action == "toss":
+        await handle_toss(query, game_code)
+    elif action == "bat":
+        await handle_choose(query, game_code, "bat")
+    elif action == "bowl":
+        await handle_choose(query, game_code, "bowl")
+    elif action == "play":
+        await handle_play(query, game_code)
+    elif action == "wicket":
+        await handle_wicket(query, game_code)
+    elif action == "end_innings":
+        await handle_end_innings(query, game_code)
 
 async def handle_join_game(query, game_code, user_id):
     """Handle when a user joins a game."""
@@ -486,8 +484,11 @@ async def handle_cricket_message(update: Update, context: CallbackContext, game:
         logger.error(f"Error handling cricket message: {e}")
 
 def get_cricket_handlers():
-    """Return all cricket game handlers."""
+    """Get all cricket game handlers."""
     return [
         CommandHandler("chatcricket", chat_cricket),
-        CallbackQueryHandler(handle_cricket_callback, pattern=r"^cricket_(join|watch|toss|choose|play|wicket|end)_[0-9]+")
+        CommandHandler("join", handle_join_game),
+        CommandHandler("watch", handle_watch_game),
+        CallbackQueryHandler(handle_cricket_callback, pattern=r"^cricket_(join|watch|toss|bat|bowl|play|wicket|end_innings)_[0-9a-f-]+$"),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cricket_message)
     ]
