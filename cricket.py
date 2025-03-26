@@ -640,6 +640,97 @@ async def handle_timeout(update, game):
     except Exception as e:
         logger.error(f"Error handling game timeout: {e}")
 
+async def handle_join_game(query, game_code, user_id):
+    """Handle when a user joins a game."""
+    game = cricket_collection.find_one({"game_code": game_code})
+    if not game or not game.get("active"):
+        await query.edit_message_text("❌ This game is no longer active or doesn't exist.")
+        return
+
+    if game["player2"] is not None:
+        await query.answer("This game is already full!")
+        return
+
+    if user_id == str(game["player1"]):
+        await query.answer("You cannot join your own game!")
+        return
+
+    try:
+        # Update game with player2
+        cricket_collection.update_one(
+            {"game_code": game_code},
+            {"$set": {"player2": user_id, "last_move": datetime.utcnow()}}
+        )
+
+        # Update memory cache
+        cricket_games[game_code]["player2"] = user_id
+        cricket_games[game_code]["last_move"] = datetime.utcnow()
+
+        # Prepare players information
+        player1 = await query.bot.get_chat(int(game["player1"]))
+        player2 = query.from_user
+
+        # Send game message to both players in their DMs
+        game_message = (
+            f"🎮 *Cricket Game Started!*\n\n"
+            f"Game Code: `{game_code}`\n"
+            f"Player 1: {player1.mention_html()}\n"
+            f"Player 2: {player2.mention_html()}\n\n"
+            f"Starting toss..."
+        )
+
+        # Send to player 1
+        await query.bot.send_message(
+            chat_id=int(game["player1"]),
+            text=game_message,
+            parse_mode="HTML"
+        )
+
+        # Send to player 2
+        await query.bot.send_message(
+            chat_id=int(user_id),
+            text=game_message,
+            parse_mode="HTML"
+        )
+
+        # Update game message in group chat
+        await query.edit_message_text(
+            f"🎮 *Cricket Game Started!*\n\n"
+            f"Game Code: `{game_code}`\n"
+            f"Player 1: {player1.mention_html()}\n"
+            f"Player 2: {player2.mention_html()}\n\n"
+            f"Starting toss...",
+            parse_mode="HTML"
+        )
+
+        # Delay and start toss
+        await asyncio.sleep(1)
+        await handle_toss(query, game_code, user_id)
+
+    except Exception as e:
+        logger.error(f"Error in handle_join_game: {e}")
+        await query.edit_message_text("❌ An error occurred while joining the game. Please try again.")
+
+async def handle_watch_game(query, game_code, user_id):
+    """Handle when a user watches a game."""
+    game = cricket_collection.find_one({"game_code": game_code})
+    if not game or not game.get("active"):
+        await query.edit_message_text("❌ This game is no longer active or doesn't exist.")
+        return
+
+    if user_id in game.get("spectators", []):
+        await query.answer("You are already watching this game!")
+        return
+
+    # Add user to spectators
+    cricket_collection.update_one(
+        {"game_code": game_code},
+        {"$addToSet": {"spectators": user_id}, "$set": {"last_move": datetime.utcnow()}}
+    )
+
+    await query.answer("You are now watching the game!")
+    await update_game_interface(game_code, query)
+
 def get_cricket_handlers():
     """Get all cricket game handlers."""
     return [
