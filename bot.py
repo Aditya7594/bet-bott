@@ -27,6 +27,7 @@ from bank import exchange, sell, store, withdraw, bank
 from hilo_game import start_hilo, hilo_click, hilo_cashout
 from cards import gacha, gacha, my_collection,view_card, card_pull
 from mines_game import Mines, Mines_click, Mines_CashOut
+from xox_game import get_xox_handlers
 OWNER_ID = 5667016949
 muted_users = set()
 last_interaction_time = {}
@@ -596,6 +597,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(Mines_click, pattern="^[0-9]+$"))  # Tile clicks
     application.add_handler(CallbackQueryHandler(Mines_CashOut, pattern="^MinesCashOut$"))
 
+    # Add XOX game handlers
+    for handler in get_xox_handlers():
+        application.add_handler(handler)
 
     # Universal handler comes LAST
     application.add_handler(MessageHandler(
