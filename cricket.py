@@ -3,6 +3,9 @@ import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext, MessageHandler, filters
 from datetime import datetime, timedelta
+import logging
+from functools import wraps
+import string
 
 # MongoDB connection
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
@@ -12,80 +15,74 @@ cricket_collection = db["cricket_games"]
 
 cricket_games = {}
 
+# Fetch user data from database
+def get_user_by_id(user_id):
+    return db['users'].find_one({"user_id": user_id})
+
+def save_user(user_data):
+    db['users'].update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
+
 def generate_game_code():
-    return str(random.randint(100, 999))
+    """Generate a unique game code."""
+    while True:
+        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        if not cricket_collection.find_one({"game_code": code}):
+            return code
 
 async def chat_cricket(update: Update, context: CallbackContext) -> None:
+    """Start a new cricket game."""
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        await update.message.reply_text("This command can only be used in group chats!")
+        return
+
     user = update.effective_user
-    chat_id = update.effective_chat.id
+    user_id = str(user.id)
     
-    # Only allow creating games in group chats
-    if update.effective_chat.type == "private":
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚠️ This command can only be used in group chats!")
-        return
-    
-    user_data = user_collection.find_one({"user_id": str(user.id)})
+    # Check if user has started the bot
+    user_data = get_user_by_id(user_id)
     if not user_data:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚠️ You need to start the bot first to create a match!")
+        await update.message.reply_text("You need to start the bot first by using /start.")
         return
 
+    # Generate unique game code
     game_code = generate_game_code()
-    while game_code in cricket_games:
-        game_code = generate_game_code()
-
+    
+    # Create game data
     game_data = {
         "game_code": game_code,
-        "player1": user.id,
+        "player1": user_id,
         "player2": None,
-        "score1": 0,
-        "score2": 0,
-        "message_id": {},
-        "over": 0,
-        "ball": 0,
-        "batter": None,
-        "bowler": None,
-        "toss_winner": None,
-        "innings": 1,
-        "current_players": {},
-        "batter_choice": None,
-        "bowler_choice": None,
-        "target": None,
-        "group_chat_id": chat_id,
-        "match_details": [],
-        "wickets": 0,
-        "max_wickets": 1,
-        "max_overs": 20,
-        "spectators": set(),
+        "status": "waiting",
         "created_at": datetime.utcnow(),
         "last_move": datetime.utcnow(),
         "active": True
     }
-
-    cricket_games[game_code] = game_data
-    cricket_collection.insert_one(game_data)
-
-    keyboard = [
-        [InlineKeyboardButton("🎮 Join Game", callback_data=f"cricket_join_{game_code}")],
-        [InlineKeyboardButton("👁️ Watch Game", callback_data=f"cricket_watch_{game_code}")]
-    ]
-
+    
     try:
-        sent_message = await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"🎮 *Cricket Game Started!*\n\n"
-                 f"Game Code: `{game_code}`\n"
-                 f"Created by: {user.mention_html()}\n\n"
-                 f"Click the buttons below to join or watch the game!\n"
-                 f"Game will timeout after 5 minutes of inactivity.",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML")
-        await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
+        # Insert game into database
+        cricket_collection.insert_one(game_data)
+        
+        # Create join and watch buttons
+        keyboard = [
+            [
+                InlineKeyboardButton("Join Game", callback_data=f"cricket_join_{game_code}"),
+                InlineKeyboardButton("Watch Game", callback_data=f"cricket_watch_{game_code}")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Send game creation message
+        await update.message.reply_text(
+            f"🎮 *New Cricket Game Created!*\n\n"
+            f"Game Code: `{game_code}`\n"
+            f"Created by: {user.first_name}\n\n"
+            f"Join the game or watch as a spectator!",
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
     except Exception as e:
-        print(f"Error creating game: {e}")
+        logging.error(f"Error creating cricket game: {e}")
+        await update.message.reply_text("❌ An error occurred while creating the game. Please try again.")
 
 async def handle_cricket_callback(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
