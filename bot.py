@@ -18,11 +18,11 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from token_1 import token
 
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button, send_artifact_reward, get_genshin_handlers
-from cricket import chat_cricket, declare_winner, chat_message,join_cricket, watch_cricket, toss_button, choose_button, play_button,end_innings,update_game_interface,get_cricket_handlers
+from cricket import chat_cricket, declare_winner, chat_message,join_cricket, watch_cricket, toss_button, choose_button, play_button,end_innings,update_game_interface
 from minigame import dart, basketball, flip, dice, credits_leaderboard, football, help_command, start_command, roll, handle_flip_again, get_minigame_handlers
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
-from bank import exchange, sell, store, withdraw, bank, get_bank_handlers
+from bank import exchange, sell, store, withdraw, bank, get_bank_handlers   
 from hilo_game import start_hilo, hilo_click, hilo_cashout, get_hilo_handlers
 from cards import gacha, my_collection, view_card, card_pull
 from mines_game import Mines, Mines_click, Mines_CashOut, get_mines_handlers
@@ -727,8 +727,6 @@ def main() -> None:
 
     # Add game handlers
     for handler in get_xox_handlers():
-        application.add_handler(handler)
-    for handler in get_cricket_handlers():
         application.add_handler(handler)
     for handler in get_hilo_handlers():
         application.add_handler(handler)
