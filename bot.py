@@ -16,33 +16,30 @@ from telegram.constants import ChatType
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, CallbackQuery
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters
 from token_1 import token
-from dotenv import load_dotenv
-from cricket import (
-    chat_cricket,
-    join_cricket,
-    watch_cricket,
-    toss_button,
-    choose_button,
-    play_button,
-    handle_wicket,
-    end_innings,
-    declare_winner,
-    update_game_interface,
-    get_cricket_handlers
-)
 
-# Load environment variables
-load_dotenv()
+from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button, send_artifact_reward, get_genshin_handlers
+from cricket import chat_cricket, declare_winner, chat_message,join_cricket, watch_cricket, toss_button, choose_button, play_button,end_innings,update_game_interface,get_cricket_handlers
+from minigame import dart, basketball, flip, dice, credits_leaderboard, football, help_command, start_command, roll, handle_flip_again, get_minigame_handlers
+from bdice import bdice
+from claim import daily, random_claim, claim_credits, send_random_claim
+from bank import exchange, sell, store, withdraw, bank, get_bank_handlers
+from hilo_game import start_hilo, hilo_click, hilo_cashout, get_hilo_handlers
+from cards import gacha, my_collection, view_card, card_pull
+from mines_game import Mines, Mines_click, Mines_CashOut, get_mines_handlers
+from xox_game import get_xox_handlers
+OWNER_ID = 5667016949
+muted_users = set()
+last_interaction_time = {}
+user_daily_credits = {}
 
-# Configure logging
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# MongoDB connection
-client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
+client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot') 
 db = client['telegram_bot']
 users_collection = db['users']
 genshin_collection = db['genshin_users']
