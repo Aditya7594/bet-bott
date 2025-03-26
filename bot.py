@@ -87,11 +87,25 @@ async def start(update: Update, context: CallbackContext) -> None:
         action = context.args[0]
         if action.startswith('join_'):
             game_code = action.split('_')[1]
-            await handle_join_game(update.callback_query, game_code, user_id)
+            # Create a mock callback query for the game handlers
+            mock_query = CallbackQuery(
+                id="0",
+                from_user=user,
+                chat_instance="0",
+                message=update.message
+            )
+            await handle_join_game(mock_query, game_code, user_id)
             return
         elif action.startswith('watch_'):
             game_code = action.split('_')[1]
-            await handle_watch_game(update.callback_query, game_code, user_id)
+            # Create a mock callback query for the game handlers
+            mock_query = CallbackQuery(
+                id="0",
+                from_user=user,
+                chat_instance="0",
+                message=update.message
+            )
+            await handle_watch_game(mock_query, game_code, user_id)
             return
 
     # Regular start command

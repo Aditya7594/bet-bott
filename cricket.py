@@ -55,7 +55,16 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "status": "waiting",
         "created_at": datetime.utcnow(),
         "last_move": datetime.utcnow(),
-        "active": True
+        "active": True,
+        "score1": 0,
+        "score2": 0,
+        "wickets": 0,
+        "over": 0,
+        "ball": 0,
+        "max_overs": 5,
+        "max_wickets": 10,
+        "innings": 1,
+        "target": 0
     }
     
     try:
@@ -83,7 +92,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
             f"1. Click the Watch Game button\n"
             f"2. Or copy and use: `/watch {game_code}`",
             reply_markup=reply_markup,
-            parse_mode="HTML"
+            parse_mode="Markdown"
         )
     except Exception as e:
         logging.error(f"Error creating cricket game: {e}")
