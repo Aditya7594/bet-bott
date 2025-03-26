@@ -480,11 +480,5 @@ def get_cricket_handlers():
     """Return all cricket game handlers."""
     return [
         CommandHandler("chatcricket", chat_cricket),
-        CommandHandler("join", join_cricket),
-        CommandHandler("watch", watch_game),
-        CallbackQueryHandler(toss_button, pattern="^toss_"),
-        CallbackQueryHandler(choose_button, pattern="^choose_"),
-        CallbackQueryHandler(play_button, pattern="^play_"),
-        CallbackQueryHandler(handle_wicket, pattern="^wicket_"),
-        CallbackQueryHandler(end_innings, pattern="^end_innings_")
+        CallbackQueryHandler(handle_cricket_callback, pattern=r"^cricket_(join|watch|toss|choose|play|wicket|end)_[0-9]+")
     ]
