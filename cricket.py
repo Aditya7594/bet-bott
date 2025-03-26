@@ -7,8 +7,6 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Call
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
 db = client['telegram_bot']
 user_collection = db["users"]
-
-BOT_TOKEN = "8104505314:AAHeleqAEIJPuGmxPw80c_BsCU6gsRKhYlo"
 cricket_games = {}
 
 def generate_game_code():
@@ -69,6 +67,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     keyboard = InlineKeyboardMarkup([[join_button], [watch_button]])
 
     try:
+        # Send as a new message instead of replying to prevent tagging
         sent_message = await context.bot.send_message(
             chat_id=chat_id,
             text=f"🎮 *Game Started!*\nCode: `{game_code}`\n\n"
@@ -79,6 +78,83 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
     except Exception as e:
         print(f"Error creating game: {e}")
+
+async def update_game_interface(game_code: str, context: CallbackContext, text: str = None):
+    if game_code not in cricket_games:
+        return
+
+    game = cricket_games[game_code]
+    if not text:
+        batter_name = (await context.bot.get_chat(game["batter"])).first_name
+        bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
+        score = game['score1'] if game['innings'] == 1 else game['score2']
+        target = game['target'] if game['innings'] == 2 else None
+        spectator_count = len(game["spectators"])
+        
+        # Put spectator count in the top right, separate from overs
+        spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
+        
+        text = (
+            f"⏳ Over: {game['over']}.{game['ball']}    {spectator_text}\n"
+            f"🔸 Batting: {batter_name}\n"
+            f"🔹 Bowling: {bowler_name}\n"
+            f"📊 Score: {score}/{game['wickets']}"
+        )
+        
+        if game['innings'] == 2:
+            text += f" (Target: {game['target']})"
+        
+        text += "\n\n"
+
+        if game["batter_choice"] is None:
+            text += f"⚡ {batter_name}, choose a number (1-6):"
+        else:
+            text += f"⚡ {bowler_name}, choose a number (1-6):"
+
+    # Create the keyboard with buttons
+    keyboard = []
+    row = []
+    for i in range(1, 7):
+        row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_code}_{i}"))
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_code}")])
+
+    # Update message for all participants
+    recipients = list(game["spectators"]) + [game["player1"], game["player2"]]
+    for player_id in recipients:
+        try:
+            # If no message ID exists for this player, send a new message and pin it
+            if player_id not in game["message_id"]:
+                msg = await context.bot.send_message(
+                    chat_id=player_id,
+                    text=text,
+                    reply_markup=InlineKeyboardMarkup(keyboard) if player_id not in game["spectators"] else None,
+                    parse_mode="Markdown"
+                )
+                game["message_id"][player_id] = msg.message_id
+                
+                # Try to pin the message in DM
+                try:
+                    await context.bot.pin_chat_message(
+                        chat_id=player_id,
+                        message_id=msg.message_id,
+                        disable_notification=True
+                    )
+                except Exception as e:
+                    print(f"Couldn't pin message: {e}")
+            else:
+                # Update existing message
+                await context.bot.edit_message_text(
+                    chat_id=player_id,
+                    message_id=game["message_id"].get(player_id),
+                    text=text,
+                    reply_markup=InlineKeyboardMarkup(keyboard) if player_id not in game["spectators"] else None,
+                    parse_mode="Markdown"
+                )
+        except Exception as e:
+            print(f"Error updating game interface for {player_id}: {e}")
 
 async def join_cricket(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
@@ -215,6 +291,82 @@ async def choose_button(update: Update, context: CallbackContext) -> None:
     })
 
     await update_game_interface(game_code, context)
+
+async def update_game_interface(game_code: str, context: CallbackContext, text: str = None):
+    if game_code not in cricket_games:
+        return
+
+    game = cricket_games[game_code]
+    if not text:
+        batter_name = (await context.bot.get_chat(game["batter"])).first_name
+        bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
+        score = game['score1'] if game['innings'] == 1 else game['score2']
+        target = game['target'] if game['innings'] == 2 else None
+        spectator_count = len(game["spectators"])
+        spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
+
+        text = (
+            f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
+            f"🔸 Batting: {batter_name}\n"
+            f"🔹 Bowling: {bowler_name}\n"
+            f"📊 Score: {score}/{game['wickets']}"
+        )
+        
+        if game['innings'] == 2:
+            text += f" (Target: {game['target']})"
+        
+        text += "\n\n"
+
+        if game["batter_choice"] is None:
+            text += f"⚡ {batter_name}, choose a number (1-6):"
+        else:
+            text += f"⚡ {bowler_name}, choose a number (1-6):"
+
+    # Create the keyboard with buttons
+    keyboard = []
+    row = []
+    for i in range(1, 7):
+        row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_code}_{i}"))
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_code}")])
+
+    # Update message for all participants
+    recipients = list(game["spectators"]) + [game["player1"], game["player2"]]
+    for player_id in recipients:
+        try:
+            # If no message ID exists for this player, send a new message and pin it
+            if player_id not in game["message_id"]:
+                msg = await context.bot.send_message(
+                    chat_id=player_id,
+                    text=text,
+                    reply_markup=InlineKeyboardMarkup(keyboard) if player_id not in game["spectators"] else None,
+                    parse_mode="Markdown"
+                )
+                game["message_id"][player_id] = msg.message_id
+                
+                # Try to pin the message in DM
+                try:
+                    await context.bot.pin_chat_message(
+                        chat_id=player_id,
+                        message_id=msg.message_id,
+                        disable_notification=True
+                    )
+                except Exception as e:
+                    print(f"Couldn't pin message: {e}")
+            else:
+                # Update existing message
+                await context.bot.edit_message_text(
+                    chat_id=player_id,
+                    message_id=game["message_id"].get(player_id),
+                    text=text,
+                    reply_markup=InlineKeyboardMarkup(keyboard) if player_id not in game["spectators"] else None,
+                    parse_mode="Markdown"
+                )
+        except Exception as e:
+            print(f"Error updating game interface for {player_id}: {e}")
+   
 
 async def play_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -453,6 +605,74 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         await query.answer("Not your turn!")
         return
 
+async def declare_winner(game_code: str, context: CallbackContext):
+    if game_code not in cricket_games:
+        return
+
+    game = cricket_games[game_code]
+    p1 = (await context.bot.get_chat(game["player1"])).first_name
+    p2 = (await context.bot.get_chat(game["player2"])).first_name
+
+    # Determine the result
+    if game["score1"] == game["score2"]:
+        result = "🤝 Match Drawn!"
+    elif game["innings"] == 2:
+        if game["score2"] >= game["target"]:
+            winner = (await context.bot.get_chat(game["batter"])).first_name
+            loser = (await context.bot.get_chat(game["bowler"])).first_name
+            result = f"🏅 {winner} won by {game['max_wickets'] - game['wickets']} wicket(s)!"
+        else:
+            winner = (await context.bot.get_chat(game["bowler"])).first_name
+            diff = game["target"] - game["score2"] - 1
+            result = f"🏅 {winner} won by {diff} runs!"
+    else:
+        # This shouldn't normally happen as we should always end with innings 2
+        result = "Match ended unexpectedly!"
+
+    # Build the result message
+    result_message = (
+        f"🏆 *GAME OVER!*\n\n"
+        f"📜 *Match Summary:*\n"
+        f"🧑 {p1}: {game['score1']} runs\n"
+        f"🧑 {p2}: {game['score2']} runs\n\n"
+        f"{result}"
+    )
+
+    # Send the result to the group chat where the game was started
+    try:
+        await context.bot.send_message(
+            chat_id=game["group_chat_id"],
+            text=result_message,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        print(f"Error sending result to group chat: {e}")
+
+    # Notify players and spectators
+    participants = list(game["spectators"]) + [game["player1"], game["player2"]]
+    for player_id in participants:
+        try:
+            await context.bot.send_message(
+                chat_id=player_id,
+                text=result_message,
+                parse_mode="Markdown"
+            )
+            
+            # Try to unpin the game message
+            try:
+                await context.bot.unpin_chat_message(
+                    chat_id=player_id,
+                    message_id=game["message_id"].get(player_id)
+                )
+            except Exception as e:
+                print(f"Error unpinning message for {player_id}: {e}")
+                
+        except Exception as e:
+            print(f"Error sending result to {player_id}: {e}")
+
+    # Remove the game from active games
+    del cricket_games[game_code]
+
 async def handle_wicket(game_code: str, context: CallbackContext):
     if game_code not in cricket_games:
         return
@@ -541,153 +761,86 @@ async def end_innings(game_code: str, context: CallbackContext):
         # Game over - declare winner
         await declare_winner(game_code, context)
 
-async def declare_winner(game_code: str, context: CallbackContext):
-    if game_code not in cricket_games:
-        return
-
-    game = cricket_games[game_code]
-    p1 = (await context.bot.get_chat(game["player1"])).first_name
-    p2 = (await context.bot.get_chat(game["player2"])).first_name
-
-    # Determine the result
-    if game["score1"] == game["score2"]:
-        result = "🤝 Match Drawn!"
-    elif game["innings"] == 2:
-        if game["score2"] >= game["target"]:
-            winner = (await context.bot.get_chat(game["batter"])).first_name
-            loser = (await context.bot.get_chat(game["bowler"])).first_name
-            result = f"🏅 {winner} won by {game['max_wickets'] - game['wickets']} wicket(s)!"
-        else:
-            winner = (await context.bot.get_chat(game["bowler"])).first_name
-            diff = game["target"] - game["score2"] - 1
-            result = f"🏅 {winner} won by {diff} runs!"
+async def watch_cricket(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    
+    # Check if command used with code or from deep link
+    if context.args and context.args[0]:
+        game_code = context.args[0]
+    elif update.message and update.message.text and update.message.text.startswith("/start watch_"):
+        game_code = update.message.text.split("watch_")[1]
     else:
-        # This shouldn't normally happen as we should always end with innings 2
-        result = "Match ended unexpectedly!"
-
-    # Build the result message
-    result_message = (
-        f"🏆 *GAME OVER!*\n\n"
-        f"📜 *Match Summary:*\n"
-        f"🧑 {p1}: {game['score1']} runs\n"
-        f"🧑 {p2}: {game['score2']} runs\n\n"
-        f"{result}"
-    )
-
-    # Send the result to the group chat where the game was started
-    try:
-        await context.bot.send_message(
-            chat_id=game["group_chat_id"],
-            text=result_message,
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        print(f"Error sending result to group chat: {e}")
-
-    # Notify players and spectators
-    participants = list(game["spectators"]) + [game["player1"], game["player2"]]
-    for player_id in participants:
-        try:
-            await context.bot.send_message(
-                chat_id=player_id,
-                text=result_message,
-                parse_mode="Markdown"
-            )
-            
-            # Try to unpin the game message
-            try:
-                await context.bot.unpin_chat_message(
-                    chat_id=player_id,
-                    message_id=game["message_id"].get(player_id)
-                )
-            except Exception as e:
-                print(f"Error unpinning message for {player_id}: {e}")
-                
-        except Exception as e:
-            print(f"Error sending result to {player_id}: {e}")
-
-    # Remove the game from active games
-    del cricket_games[game_code]
-
-async def update_game_interface(game_code: str, context: CallbackContext, text: str = None):
+        await update.message.reply_text("Please provide a game code: /watch [code]")
+        return
+    
     if game_code not in cricket_games:
+        await update.message.reply_text("Game not found or expired!")
+        return
+    
+    game = cricket_games[game_code]
+    
+    # Check if user is already a player
+    if user_id in [game["player1"], game["player2"]]:
+        await update.message.reply_text("You're already playing in this game!")
+        return
+    
+    # Add user to spectators
+    game["spectators"].add(user_id)
+    
+    player1_name = (await context.bot.get_chat(game["player1"])).first_name
+    player2_name = "Waiting for opponent" if not game["player2"] else (await context.bot.get_chat(game["player2"])).first_name
+    
+    await update.message.reply_text(
+        f"🎮 You're now watching match: {game_code}\n"
+        f"🧑 Player 1: {player1_name}\n"
+        f"🧑 Player 2: {player2_name}\n\n"
+        f"Match updates will appear shortly!"
+    )
+    
+    # If game is already in progress, update the interface for the spectator
+    if game["player2"] and "batter" in game and game["batter"]:
+        await update_game_interface(game_code, context)
+
+async def chat_message(update: Update, context: CallbackContext) -> None:
+    if update.message is None:
         return
 
-    game = cricket_games[game_code]
-    if not text:
-        batter_name = (await context.bot.get_chat(game["batter"])).first_name
-        bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
-        score = game['score1'] if game['innings'] == 1 else game['score2']
-        target = game['target'] if game['innings'] == 2 else None
-        spectator_count = len(game["spectators"])
-        spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
-        
-        text = (
-            f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
-            f"🔸 Batting: {batter_name}\n"
-            f"🔹 Bowling: {bowler_name}\n"
-            f"📊 Score: {score}/{game['wickets']}"
-        )
-        
-        if game['innings'] == 2:
-            text += f" (Target: {game['target']})"
-        
-        text += "\n\n"
+    user_id = update.effective_user.id
+    message = update.message
 
-        if game["batter_choice"] is None:
-            text += f"⚡ {batter_name}, choose a number (1-6):"
-        else:
-            text += f"⚡ {bowler_name}, choose a number (1-6):"
+    # Ignore commands
+    if message.text and message.text.startswith('/'):
+        return
 
-    # Create the keyboard with buttons
-    keyboard = []
-    row = []
-    for i in range(1, 7):
-        row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_code}_{i}"))
-        if len(row) == 3:
-            keyboard.append(row)
-            row = []
-    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_code}")])
+    # Forward messages only in private chats
+    if update.message.chat.type != "private":
+        return
 
-    # Update message for all participants
-    recipients = list(game["spectators"]) + [game["player1"], game["player2"]]
-    for player_id in recipients:
+    # Find active game for this user
+    for game_code in list(cricket_games.keys()):
+        game = cricket_games.get(game_code)
+        if not game:
+            continue
+
+        # Check if the user is part of this game
+        if user_id not in [game["player1"], game["player2"]]:
+            continue
+        other_player_id = game["player2"] if user_id == game["player1"] else game["player1"]
+        sender_name = update.effective_user.first_name
+
         try:
-            # If no message ID exists for this player, send a new message and pin it
-            if player_id not in game["message_id"]:
-                msg = await context.bot.send_message(
-                    chat_id=player_id,
-                    text=text,
-                    reply_markup=InlineKeyboardMarkup(keyboard) if player_id not in game["spectators"] else None,
-                    parse_mode="Markdown"
+            if message.text:
+                await context.bot.send_message(
+                    chat_id=other_player_id,
+                    text=f"{message.text}"
                 )
-                game["message_id"][player_id] = msg.message_id
-                
-                # Try to pin the message in DM
-                try:
-                    await context.bot.pin_chat_message(
-                        chat_id=player_id,
-                        message_id=msg.message_id,
-                        disable_notification=True
-                    )
-                except Exception as e:
-                    print(f"Couldn't pin message: {e}")
-            else:
-                # Update existing message
-                await context.bot.edit_message_text(
-                    chat_id=player_id,
-                    message_id=game["message_id"].get(player_id),
-                    text=text,
-                    reply_markup=InlineKeyboardMarkup(keyboard) if player_id not in game["spectators"] else None,
-                    parse_mode="Markdown"
+            elif message.sticker:
+                # Forward the sticker directly without any additional text
+                await context.bot.send_sticker(
+                    chat_id=other_player_id,
+                    sticker=message.sticker.file_id
                 )
         except Exception as e:
-            print(f"Error updating game interface for {player_id}: {e}")
+            print(f"Error forwarding message: {e}")
+            break
 
-def get_cricket_handlers():
-    """Return all cricket game handlers."""
-    return [
-        CallbackQueryHandler(toss_button, pattern="^toss_"),
-        CallbackQueryHandler(choose_button, pattern="^choose_"),
-        CallbackQueryHandler(play_button, pattern="^play_")
-    ]
