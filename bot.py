@@ -77,65 +77,56 @@ def check_started(func):
         return await func(update, context, *args, **kwargs)
     return wrapped
 
-async def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: CallbackContext) -> None:
+    """Start the bot and handle game join/watch actions."""
     user = update.effective_user
     user_id = str(user.id)
-    first_name = user.first_name
+    
+    # Check if this is a game join/watch action
+    if context.args and len(context.args) > 0:
+        action = context.args[0]
+        if action.startswith('join_'):
+            game_code = action.split('_')[1]
+            await handle_join_game(update.callback_query, game_code, user_id)
+            return
+        elif action.startswith('watch_'):
+            game_code = action.split('_')[1]
+            await handle_watch_game(update.callback_query, game_code, user_id)
+            return
 
-    if context.args and context.args[0].startswith("ref"):
-        referrer_id = str(context.args[0][3:])
-        referrer = get_user_by_id(referrer_id)
-
-        if referrer and referrer_id != user_id:
-            logging.info(f"Referrer before update: {referrer}")
-            existing_user = get_user_by_id(user_id)
-            if not existing_user:
-                referrer['credits'] = referrer.get('credits', 0) + 1000
-                referrer['primos'] = referrer.get('primos', 0) + 1000
-                referrer['referrals'] = referrer.get('referrals', 0) + 1
-                save_user(referrer)
-
-                logging.info(f"Referrer after update: {referrer}")
-
-                await context.bot.send_message(
-                    referrer_id,
-                    f"🎉 You referred {first_name} to the bot and earned 1,000 credits"
-                )
-
-    existing_user = get_user_by_id(user_id)
-    if not existing_user:
-        new_user = {
+    # Regular start command
+    user_data = get_user_by_id(user_id)
+    if not user_data:
+        user_data = {
             "user_id": user_id,
-            "first_name": first_name,
-            "join_date": datetime.now().strftime('%m/%d/%y'),
-            "credits": 5000 + (1000 if context.args and context.args[0].startswith("ref") else 0),
-            "primos": 1000 if context.args and context.args[0].startswith("ref") else 0,
-            "daily": None,
-            "win": 0,
-            "loss": 0,
-            "achievement": [],
-            "faction": "None",
-            "ban": None,
-            "title": "None",
-            "bag": {},
-            "referrals": 0
+            "credits": 1000,
+            "bank": 0,
+            "last_daily": None,
+            "referrer": None,
+            "referred_users": []
         }
-        save_user(new_user)
+        save_user(user_data)
+        logger.info(f"New user created: {user_id}")
 
-        logging.info(f"New user created: {new_user}")
+    # Check for referral
+    if context.args and len(context.args) > 0:
+        referrer_id = context.args[0]
+        if referrer_id != user_id and referrer_id not in user_data.get("referred_users", []):
+            referrer_data = get_user_by_id(referrer_id)
+            if referrer_data:
+                user_data["referrer"] = referrer_id
+                referrer_data["referred_users"].append(user_id)
+                save_user(user_data)
+                save_user(referrer_data)
+                logger.info(f"Referral updated: {user_id} referred by {referrer_id}")
 
-        await update.message.reply_text(
-            f"Welcome {first_name}! You've received 5,000 credits and 16,000 Primogems to start betting. Use /profile to check your details."
-        )
-
-        if context.args and context.args[0].startswith("ref"):
-            await update.message.reply_text(
-                "🎉 You joined through a referral link and earned 1,000 credits!"
-            )
-    else:
-        await update.message.reply_text(
-            f"Welcome back, {first_name}! Use /profile to view your details."
-        )
+    await update.message.reply_text(
+        f"👋 Welcome {user.first_name}!\n\n"
+        f"Your current balance:\n"
+        f"💰 Credits: {user_data['credits']}\n"
+        f"🏦 Bank: {user_data['bank']}\n\n"
+        f"Use /help to see available commands!"
+    )
 
 app = Flask(__name__)
 

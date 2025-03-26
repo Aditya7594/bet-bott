@@ -62,21 +62,26 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         # Insert game into database
         cricket_collection.insert_one(game_data)
         
-        # Create join and watch buttons
+        # Create join and watch buttons with URLs
         keyboard = [
             [
-                InlineKeyboardButton("Join Game", callback_data=f"cricket_join_{game_code}"),
-                InlineKeyboardButton("Watch Game", callback_data=f"cricket_watch_{game_code}")
+                InlineKeyboardButton("🎮 Join Game", url=f"https://t.me/{context.bot.username}?start=join_{game_code}"),
+                InlineKeyboardButton("👁️ Watch Game", url=f"https://t.me/{context.bot.username}?start=watch_{game_code}")
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Send game creation message
+        # Send game creation message with copyable code
         await update.message.reply_text(
             f"🎮 *New Cricket Game Created!*\n\n"
             f"Game Code: `{game_code}`\n"
             f"Created by: {user.first_name}\n\n"
-            f"Join the game or watch as a spectator!",
+            f"To join the game:\n"
+            f"1. Click the Join Game button\n"
+            f"2. Or copy and use: `/join {game_code}`\n\n"
+            f"To watch the game:\n"
+            f"1. Click the Watch Game button\n"
+            f"2. Or copy and use: `/watch {game_code}`",
             reply_markup=reply_markup,
             parse_mode="HTML"
         )
@@ -112,7 +117,8 @@ async def handle_cricket_callback(update: Update, context: CallbackContext) -> N
         await query.edit_message_text("❌ An error occurred while processing your action.")
 
 async def handle_join_game(query, game_code, user_id):
-    game = cricket_games.get(game_code)
+    """Handle when a user joins a game."""
+    game = cricket_collection.find_one({"game_code": game_code})
     if not game or not game.get("active"):
         await query.edit_message_text("❌ This game is no longer active or doesn't exist.")
         return
@@ -125,9 +131,7 @@ async def handle_join_game(query, game_code, user_id):
         await query.answer("You cannot join your own game!")
         return
 
-    game["player2"] = user_id
-    game["last_move"] = datetime.utcnow()
-    cricket_games[game_code] = game
+    # Update game with player2
     cricket_collection.update_one(
         {"game_code": game_code},
         {"$set": {"player2": user_id, "last_move": datetime.utcnow()}}
@@ -147,18 +151,17 @@ async def handle_join_game(query, game_code, user_id):
     await start_toss(query, game_code)
 
 async def handle_watch_game(query, game_code, user_id):
-    game = cricket_games.get(game_code)
+    """Handle when a user watches a game."""
+    game = cricket_collection.find_one({"game_code": game_code})
     if not game or not game.get("active"):
         await query.edit_message_text("❌ This game is no longer active or doesn't exist.")
         return
 
-    if user_id in game["spectators"]:
+    if user_id in game.get("spectators", []):
         await query.answer("You are already watching this game!")
         return
 
-    game["spectators"].add(user_id)
-    game["last_move"] = datetime.utcnow()
-    cricket_games[game_code] = game
+    # Add user to spectators
     cricket_collection.update_one(
         {"game_code": game_code},
         {"$addToSet": {"spectators": user_id}, "$set": {"last_move": datetime.utcnow()}}
