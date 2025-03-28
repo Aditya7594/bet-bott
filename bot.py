@@ -717,6 +717,37 @@ async def start_command(update: Update, context: CallbackContext) -> None:
     
     await update.message.reply_text("Welcome! You're now registered.")
 
+async def dm_forwarder(update: Update, context: CallbackContext) -> None:
+    """Forward messages between users in cricket games."""
+    if not update.message or not update.message.text:
+        return
+
+    user_id = update.effective_user.id
+    message = update.message.text
+
+    # Ignore commands
+    if message.startswith('/'):
+        return
+
+    # Check for active cricket game
+    game = db['cricket_games'].find_one({
+        "$or": [{"player1": user_id}, {"player2": user_id}],
+        "active": True
+    })
+    
+    if game:
+        # Get the other player's ID
+        other_player = game["player2"] if user_id == game["player1"] else game["player1"]
+        
+        # Forward the message to the other player
+        try:
+            await context.bot.send_message(
+                chat_id=other_player,
+                text=f"💬 {update.effective_user.first_name}: {message}"
+            )
+        except Exception as e:
+            logger.error(f"Error forwarding message: {e}")
+
 def main() -> None:
     application = Application.builder().token(token).build()
 
