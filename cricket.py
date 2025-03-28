@@ -34,92 +34,70 @@ def generate_game_code():
     return str(random.randint(100, 999))
 
 async def chat_cricket(update: Update, context: CallbackContext) -> None:
-    """Start a new cricket game."""
-    if update.effective_chat.type not in ['group', 'supergroup']:
-        await update.message.reply_text("This command can only be used in groups!")
-        return
-
-    user_id = str(update.effective_user.id)
-    user_data = get_user_by_id(user_id)
+    user = update.effective_user
+    chat_id = update.effective_chat.id
     
+    # Only allow creating games in group chats
+    if update.effective_chat.type == "private":
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ This command can only be used in group chats!")
+        return
+    
+    user_data = user_collection.find_one({"user_id": str(user.id)})
     if not user_data:
-        await update.message.reply_text("You need to start the bot first by using /start.")
+        bot_username = (await context.bot.get_me()).username
+        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/{bot_username}?start=start")]]
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ You need to start the bot first to create a match!",
+            reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # Check for bet amount in command
-    bet_amount = 0
-    if context.args:
-        try:
-            bet_amount = int(context.args[0])
-            if bet_amount < 0:
-                await update.message.reply_text("Bet amount cannot be negative!")
-                return
-            if user_data['credits'] < bet_amount:
-                await update.message.reply_text(f"You need at least {bet_amount} credits to start a game with this bet!")
-                return
-        except ValueError:
-            await update.message.reply_text("Please provide a valid number for the bet amount!")
-            return
+    game_code = generate_game_code()
+    while game_code in cricket_games:
+        game_code = generate_game_code()
 
-    # Generate a random 3-digit game code
-    game_code = ''.join([str(random.randint(0, 9)) for _ in range(3)])
-    
-    # Create new game
-    game = {
-        "game_code": game_code,
-        "player1": user_id,
+    cricket_games[game_code] = {
+        "player1": user.id,
         "player2": None,
-        "spectators": set(),
-        "active": True,
-        "message_id": {},
-        "innings": 1,
-        "over": 0,
-        "ball": 0,
-        "wickets": 0,
         "score1": 0,
         "score2": 0,
-        "target": 0,
+        "message_id": {},
+        "over": 0,
+        "ball": 0,
         "batter": None,
         "bowler": None,
+        "toss_winner": None,
+        "innings": 1,
+        "current_players": {},
         "batter_choice": None,
         "bowler_choice": None,
+        "target": None,
+        "group_chat_id": chat_id,
         "match_details": [],
-        "max_overs": 5,
-        "max_wickets": 10,
-        "group_chat_id": update.effective_chat.id,
-        "bet": bet_amount,  # Set bet amount (0 for free game)
-        "last_move": datetime.utcnow()
+        "wickets": 0,
+        "max_wickets": 1,
+        "max_overs": 20,
+        "spectators": set(),
     }
-    
-    cricket_games[game_code] = game
-    
-    # Create buttons for joining and watching
-    keyboard = [
-        [
-            InlineKeyboardButton("Join Game", callback_data=f"join_{game_code}"),
-            InlineKeyboardButton("Watch Game", callback_data=f"watch_{game_code}")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Send game start message
-    message = (
-        f"🏏 *New Cricket Game Started!* 🏏\n\n"
-        f"🎮 Game Code: `{game_code}`\n"
-    )
-    
-    if bet_amount > 0:
-        message += f"💰 Bet Amount: {bet_amount} credits\n\n"
-    else:
-        message += "🎯 Free Game\n\n"
-        
-    message += "Click the buttons below to join or watch the game!"
-    
-    await update.message.reply_text(
-        message,
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
-    )
+
+    # Create callback buttons for join and watch
+    join_button = InlineKeyboardButton("Join Game", callback_data=f"join_{game_code}")
+    watch_button = InlineKeyboardButton("Watch Game", callback_data=f"watch_{game_code}")
+    keyboard = InlineKeyboardMarkup([[join_button], [watch_button]])
+
+    try:
+        sent_message = await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"🎮 *Game Started!*\nCode: `{game_code}`\n\n"
+                 f"To join, click the button or send /join {game_code}\n"
+                 f"To watch, click Watch Game or send /watch {game_code}",
+            reply_markup=keyboard,
+            parse_mode="Markdown")
+        await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
+    except Exception as e:
+        print(f"Error creating game: {e}")
 
 async def update_game_interface(game_code: str, context: CallbackContext, text: str = None):
     if game_code not in cricket_games:
