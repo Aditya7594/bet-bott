@@ -269,6 +269,30 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
         save_user(player1_data)
         save_user(player2_data)
     
+    # Send initial game interface to both players
+    player1_name = (await context.bot.get_chat(game["player1"])).first_name
+    player2_name = (await context.bot.get_chat(game["player2"])).first_name
+    
+    text = (
+        f"🎮 *Cricket Game {game_code}*\n\n"
+        f"🧑 Player 1: {player1_name}\n"
+        f"🧑 Player 2: {player2_name}\n"
+        f"💰 Bet Amount: {game['bet']} credits\n\n"
+        "The toss is starting..."
+    )
+    
+    # Send to both players
+    for player_id in [game["player1"], game["player2"]]:
+        try:
+            msg = await context.bot.send_message(
+                chat_id=player_id,
+                text=text,
+                parse_mode="Markdown"
+            )
+            game["message_id"][player_id] = msg.message_id
+        except Exception as e:
+            print(f"Error sending initial interface to player {player_id}: {e}")
+    
     # Start the toss
     await toss_button(update, context)
     
