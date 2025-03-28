@@ -248,7 +248,7 @@ async def bet(update: Update, context: CallbackContext) -> None:
         bet_amount = int(context.args[0])
         game_type = context.args[1].lower()
         
-        if bet_amount < 10000:
+        if bet_amount < 100:
             await update.message.reply_text("❌ Minimum bet amount is 10,000 credits!")
             return
             
