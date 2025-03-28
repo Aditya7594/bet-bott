@@ -676,12 +676,29 @@ async def handle_timeout(query: CallbackQuery, game: dict) -> None:
     )
     
     # Send timeout message
-    await query.edit_message_text(
+    timeout_message = (
         f"⏰ *Game Timed Out!* ⏰\n\n"
         "The game has ended due to inactivity.\n"
-        "Your credits have been refunded.",
-        parse_mode="HTML"
+        "Your credits have been refunded."
     )
+    
+    try:
+        if query and query.message:
+            await query.edit_message_text(
+                timeout_message,
+                parse_mode="Markdown"
+            )
+        else:
+            # If no query or message, send a new message to the game's chat
+            chat_id = game.get("chat_id") or game.get("group_chat_id")
+            if chat_id:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=timeout_message,
+                    parse_mode="Markdown"
+                )
+    except Exception as e:
+        logger.error(f"Error sending timeout message: {e}")
     
     # Refund credits if applicable
     if "bet" in game:

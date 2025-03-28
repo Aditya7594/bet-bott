@@ -4,6 +4,7 @@ from PIL import Image
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from pymongo import MongoClient
+from datetime import datetime
 
 # MongoDB setup (unchanged)
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
@@ -110,158 +111,170 @@ game_manager = HiLoGameManager()
 
 # Start HiLo game
 async def start_hilo(update: Update, context):
-    user_id = update.effective_user.id
-    user = game_manager.get_user(user_id)
-    credits = user["credits"]
-
-    # Check daily game limit
-    if not game_manager.can_play_game(user_id):
-        await update.message.reply_text("⏳ You've reached your daily game limit! Come back tomorrow.")
+    """Start a new HiLo game."""
+    user_id = str(update.effective_user.id)
+    user_data = game_manager.get_user(user_id)
+    
+    if not user_data:
+        await update.message.reply_text("You need to start the bot first by using /start.")
         return
-
-    # Validate bet
-    try:
-        bet = int(context.args[0])
-    except (IndexError, ValueError):
-        await update.message.reply_text("📜 <b>Usage:</b> /hilo <bet amount>", parse_mode="HTML")
-        return
-
-    # Bet amount validation
-    if bet < game_manager.min_bet or bet > game_manager.max_bet:
-        await update.message.reply_text(f"❌ Your bet must be between {game_manager.min_bet} and {game_manager.max_bet} credits!")
-        return
-
-    # Check sufficient credits
-    if credits < bet:
-        await update.message.reply_text("🚫 Not enough credits! Check your balance.")
-        return
-
-    # Deduct bet and start game
-    game_manager.update_user(user_id, credits - bet)
-    player_card = game_manager.start_game(user_id, bet)
-
-    # Create game interface
-    buttons = [
+        
+    # Check for bet amount in command
+    bet_amount = 0
+    if context.args:
+        try:
+            bet_amount = int(context.args[0])
+            if bet_amount < 0:
+                await update.message.reply_text("Bet amount cannot be negative!")
+                return
+            if user_data['credits'] < bet_amount:
+                await update.message.reply_text(f"You need at least {bet_amount} credits to start a game with this bet!")
+                return
+        except ValueError:
+            await update.message.reply_text("Please provide a valid number for the bet amount!")
+            return
+    
+    # Generate random number between 1 and 100
+    target = random.randint(1, 100)
+    
+    # Create game data
+    game_data = {
+        "user_id": user_id,
+        "target": target,
+        "bet": bet_amount,
+        "multiplier": 1.0,
+        "last_move": datetime.utcnow()
+    }
+    
+    # Store game data
+    db.hilo_games.insert_one(game_data)
+    
+    # Create keyboard
+    keyboard = [
         [
-            InlineKeyboardButton("⬆️ High", callback_data="hilo_high"), 
-            InlineKeyboardButton("⬇️ Low", callback_data="hilo_low")
+            InlineKeyboardButton("⬇️ Lower", callback_data=f"hilo_lower_{user_id}"),
+            InlineKeyboardButton("⬆️ Higher", callback_data=f"hilo_higher_{user_id}")
         ],
-        [InlineKeyboardButton("💰 Cash Out", callback_data="hilo_cashout")]
+        [InlineKeyboardButton("💰 Cashout", callback_data=f"hilo_cashout_{user_id}")]
     ]
-
-    card_image_path = resize_card_image(player_card)
-
-    text = (
-        f"🎮 <b>HiLo Game</b> 🎮\n\n"
-        f"🃏 Your Card: <b>{player_card[1]} of {player_card[0]}</b>\n"
-        f"❓ Next Card: <b>Hidden</b>\n\n"
-        f"💵 Bet: <b>{bet} credits</b>\n"
-        f"🔄 Multiplier: <b>1.0x</b>\n\n"
-        f"🤔 <b>Will the next card be higher or lower?</b>"
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Send game start message
+    message = (
+        f"🎲 *HiLo Game Started!* 🎲\n\n"
+        f"Guess if the next number will be higher or lower than 50.\n"
+        f"Current multiplier: 1.0x"
     )
-
-    with open(card_image_path, "rb") as card_image:
-        await update.message.reply_photo(
-            photo=card_image, 
-            caption=text, 
-            reply_markup=InlineKeyboardMarkup(buttons), 
-            parse_mode="HTML"
-        )
+    
+    if bet_amount > 0:
+        message += f"\n💰 Bet Amount: {bet_amount} credits"
+    
+    await update.message.reply_text(
+        message,
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
 
 # Handle HiLo choices
 async def hilo_click(update: Update, context):
+    """Handle HiLo game button clicks."""
     query = update.callback_query
-    user_id = query.from_user.id
-
-    if user_id not in game_manager.games:
-        await query.answer("⚠️ No active game found!", show_alert=True)
+    user_id = str(update.effective_user.id)
+    action, game_id = query.data.split('_')[1:]
+    
+    game = db.hilo_games.find_one({"user_id": user_id})
+    if not game:
+        await query.answer("Game not found!")
         return
-
-    choice = query.data.split("_")[-1]
-    is_correct, table_card, multiplier = game_manager.process_guess(user_id, choice)
-
-    if is_correct:
-        # Successful guess
-        buttons = [
+    
+    # Generate new number
+    new_number = random.randint(1, 100)
+    old_number = game.get("current_number", 50)
+    
+    # Update game data
+    game["current_number"] = new_number
+    game["multiplier"] *= 1.2  # Increase multiplier by 20%
+    game["last_move"] = datetime.utcnow()
+    db.hilo_games.update_one({"user_id": user_id}, {"$set": game})
+    
+    # Check if guess was correct
+    if (action == "higher" and new_number > old_number) or (action == "lower" and new_number < old_number):
+        # Correct guess
+        message = (
+            f"🎯 *Correct!*\n\n"
+            f"Previous number: {old_number}\n"
+            f"New number: {new_number}\n"
+            f"Current multiplier: {game['multiplier']:.1f}x"
+        )
+        
+        # Create keyboard for next move
+        keyboard = [
             [
-                InlineKeyboardButton("⬆️ High", callback_data="hilo_high"), 
-                InlineKeyboardButton("⬇️ Low", callback_data="hilo_low")
+                InlineKeyboardButton("⬇️ Lower", callback_data=f"hilo_lower_{user_id}"),
+                InlineKeyboardButton("⬆️ Higher", callback_data=f"hilo_higher_{user_id}")
             ],
-            [InlineKeyboardButton("💰 Cash Out", callback_data="hilo_cashout")]
+            [InlineKeyboardButton("💰 Cashout", callback_data=f"hilo_cashout_{user_id}")]
         ]
-
-        text = (
-            f"🎮 <b>HiLo Game</b> 🎮\n\n"
-            f"✅ <b>Correct!</b>\n"
-            f"🃏 Your New Card: <b>{table_card[1]} of {table_card[0]}</b>\n"
-            f"❓ Next Card: <b>Hidden</b>\n\n"
-            f"🔄 Multiplier: <b>{multiplier:.1f}x</b>\n\n"
-            f"🎉 Great guess! Continue or cash out?"
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            message,
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
         )
-
-        card_image_path = resize_card_image(table_card)
-        with open(card_image_path, "rb") as card_image:
-            await query.edit_message_media(
-                media=InputMediaPhoto(media=card_image),
-                reply_markup=InlineKeyboardMarkup(buttons)
-            )
-            await query.edit_message_caption(
-                caption=text, 
-                parse_mode="HTML", 
-                reply_markup=InlineKeyboardMarkup(buttons)
-            )
     else:
-        # Lost the game
-        text = (
-            f"🎮 <b>HiLo Game</b> 🎮\n\n"
-            f"❌ <b>Wrong guess!</b>\n"
-            f"🃏 The Table Card was: <b>{table_card[1]} of {table_card[0]}</b>\n\n"
-            f"😢 Better luck next time!"
-        )
-
-        card_image_path = resize_card_image(table_card)
-        with open(card_image_path, "rb") as card_image:
-            await query.edit_message_media(
-                media=InputMediaPhoto(media=card_image),
-                reply_markup=None
-            )
-            await query.edit_message_caption(
-                caption=text, 
-                parse_mode="HTML", 
-                reply_markup=None
-            )
+        # Wrong guess - game over
+        await hilo_cashout(update, context, game, True)
 
 # Handle Cash Out
-async def hilo_cashout(update: Update, context):
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    if user_id not in game_manager.games:
-        await query.answer("⚠️ No active game to cash out.", show_alert=True)
-        return
-
-    winnings = game_manager.calculate_winnings(user_id)
-    user = game_manager.get_user(user_id)
-
-    # Update user credits
-    game_manager.update_user(user_id, user['credits'] + winnings)
-
-    text = (
-        f"🎮 <b>HiLo Game</b> 🎮\n\n"
-        f"💰 <b>Successful Cashout!</b>\n\n"
-        f"🏆 Winnings: <b>{winnings} credits</b>\n\n"
-        f"🎊 Congratulations and thanks for playing!"
+async def hilo_cashout(update: Update, context, game=None, lost=False):
+    """Handle HiLo game cashout."""
+    if not game:
+        query = update.callback_query
+        user_id = str(update.effective_user.id)
+        game = db.hilo_games.find_one({"user_id": user_id})
+        
+        if not game:
+            await query.answer("Game not found!")
+            return
+    
+    user_id = game["user_id"]
+    bet_amount = game.get("bet", 0)
+    multiplier = game["multiplier"]
+    
+    # Calculate winnings
+    winnings = int(bet_amount * multiplier) if not lost else 0
+    
+    # Update user credits if it was a betting game
+    if bet_amount > 0:
+        user_data = game_manager.get_user(user_id)
+        if not lost:
+            game_manager.update_user(user_id, user_data['credits'] + winnings)
+        # Remove game from database
+        db.hilo_games.delete_one({"user_id": user_id})
+    
+    # Build result message
+    message = (
+        f"🎲 *HiLo Game Over!* 🎲\n\n"
+        f"Final multiplier: {multiplier:.1f}x"
     )
-    await query.edit_message_caption(
-        caption=text, 
-        parse_mode="HTML", 
-        reply_markup=None
-    )
+    
+    if bet_amount > 0:
+        if lost:
+            message += f"\n❌ You lost {bet_amount} credits!"
+        else:
+            message += f"\n💰 You won {winnings} credits!"
+    
+    # Send result message
+    if update.callback_query:
+        await update.callback_query.edit_message_text(message, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(message, parse_mode="Markdown")
 
 def get_hilo_handlers():
     """Return all HiLo game handlers."""
     return [
         CommandHandler("hilo", start_hilo),
-        CallbackQueryHandler(hilo_click, pattern="hilo_(high|low)"),
-        CallbackQueryHandler(hilo_cashout, pattern="hilo_cashout")
+        CallbackQueryHandler(hilo_click, pattern="^hilo_(lower|higher)_"),
+        CallbackQueryHandler(hilo_cashout, pattern="^hilo_cashout_")
     ]
