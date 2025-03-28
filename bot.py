@@ -20,8 +20,8 @@ from token_1 import token
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button, send_artifact_reward, get_genshin_handlers
 from cricket import (
     chat_cricket,
-    handle_join_button,
-    handle_watch_button,
+    handle_join_button as join_cricket,
+    handle_watch_button as watch_cricket,
     toss_button,
     choose_button,
     play_button,
@@ -32,7 +32,7 @@ from cricket import (
     chat_message,
     get_cricket_handlers
 )
-from minigame import dart, basketball, flip, dice, credits_leaderboard, football, help_command, start_command, roll, handle_flip_again, get_minigame_handlers, bet
+from minigame import dart, basketball, flip, dice, credits_leaderboard, football, help_command, start_command, roll, handle_flip_again, get_minigame_handlers
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from bank import exchange, sell, store, withdraw, bank, get_bank_handlers
@@ -547,42 +547,8 @@ async def universal_handler(update: Update, context: CallbackContext):
                 logger.info(f"User {user_id} received 5 primos for group chat message")
                 
         elif update.effective_chat.type == ChatType.PRIVATE:
-            # Check for active cricket game
-            user_id = str(update.effective_user.id)
-            active_game = None
-            
-            # Check all active games
-            for game_type in ['xox', 'cricket', 'hilo', 'mines']:
-                game = db[f'{game_type}_games'].find_one({
-                    "$or": [{"player1": user_id}, {"player2": user_id}],
-                    "active": True
-                })
-                if game:
-                    active_game = (game_type, game)
-                    break
-            
-            if active_game:
-                game_type, game = active_game
-                if game_type == 'cricket':
-                    # Forward message to other player
-                    other_player = game["player2"] if user_id == game["player1"] else game["player1"]
-                    if other_player:
-                        try:
-                            if update.message.text:
-                                await context.bot.send_message(
-                                    chat_id=other_player,
-                                    text=f"💬 {update.effective_user.first_name}: {update.message.text}"
-                                )
-                            elif update.message.sticker:
-                                await context.bot.send_sticker(
-                                    chat_id=other_player,
-                                    sticker=update.message.sticker.file_id
-                                )
-                        except Exception as e:
-                            logger.error(f"Error forwarding message: {e}")
-            else:
-                await handle_message(update, context)
-                
+            await dm_forwarder(update, context)
+            await handle_message(update, context)
     except Exception as e:
         logger.error(f"Universal handler error: {str(e)}")
         if update.effective_chat.type == ChatType.PRIVATE:
@@ -710,29 +676,12 @@ async def handle_timeout(query: CallbackQuery, game: dict) -> None:
     )
     
     # Send timeout message
-    timeout_message = (
+    await query.edit_message_text(
         f"⏰ *Game Timed Out!* ⏰\n\n"
         "The game has ended due to inactivity.\n"
-        "Your credits have been refunded."
+        "Your credits have been refunded.",
+        parse_mode="HTML"
     )
-    
-    try:
-        if query and query.message:
-            await query.edit_message_text(
-                timeout_message,
-                parse_mode="Markdown"
-            )
-        else:
-            # If no query or message, send a new message to the game's chat
-            chat_id = game.get("chat_id") or game.get("group_chat_id")
-            if chat_id:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=timeout_message,
-                    parse_mode="Markdown"
-                )
-    except Exception as e:
-        logger.error(f"Error sending timeout message: {e}")
     
     # Refund credits if applicable
     if "bet" in game:
@@ -742,62 +691,6 @@ async def handle_timeout(query: CallbackQuery, game: dict) -> None:
             if user_data:
                 user_data["credits"] += game["bet"]
                 save_user(user_data)
-
-async def start_command(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    user = users_collection.find_one({"user_id": user_id})
-    
-    if not user:
-        for attempt in range(3):  # Add retry mechanism
-            try:
-                users_collection.insert_one({
-                    "user_id": user_id,
-                    "username": update.effective_user.username,
-                    "first_name": update.effective_user.first_name,
-                    "last_name": update.effective_user.last_name,
-                    "credits": 1000,
-                    "daily_claimed": False,
-                    "last_daily": None
-                })
-                break
-            except Exception as e:
-                if attempt == 2:
-                    await update.message.reply_text(f"Error registering user: {e}")
-                    return
-                await asyncio.sleep(1)  # Wait before retrying
-    
-    await update.message.reply_text("Welcome! You're now registered.")
-
-async def dm_forwarder(update: Update, context: CallbackContext) -> None:
-    """Forward messages between users in cricket games."""
-    if not update.message or not update.message.text:
-        return
-
-    user_id = update.effective_user.id
-    message = update.message.text
-
-    # Ignore commands
-    if message.startswith('/'):
-        return
-
-    # Check for active cricket game
-    game = db['cricket_games'].find_one({
-        "$or": [{"player1": user_id}, {"player2": user_id}],
-        "active": True
-    })
-    
-    if game:
-        # Get the other player's ID
-        other_player = game["player2"] if user_id == game["player1"] else game["player1"]
-        
-        # Forward the message to the other player
-        try:
-            await context.bot.send_message(
-                chat_id=other_player,
-                text=f"💬 {update.effective_user.first_name}: {message}"
-            )
-        except Exception as e:
-            logger.error(f"Error forwarding message: {e}")
 
 def main() -> None:
     application = Application.builder().token(token).build()
@@ -810,31 +703,26 @@ def main() -> None:
     application.add_handler(CommandHandler("reffer", reffer))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("daily", daily))
-    application.add_handler(CommandHandler("bet", bet))  # Add bet command handler
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("help", help_command))
 
-    # Add cricket game handlers
     application.add_handler(CommandHandler("chatcricket", chat_cricket))
-    application.add_handler(CommandHandler("join", handle_join_button))
-    application.add_handler(CommandHandler("watch", handle_watch_button))
-    
-    # Add cricket game callback handlers
+    application.add_handler(CommandHandler("join", join_cricket))
+    application.add_handler(CommandHandler("watch", watch_cricket))
     application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
     application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
     application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
     application.add_handler(CallbackQueryHandler(handle_join_button, pattern="^join_"))
     application.add_handler(CallbackQueryHandler(handle_watch_button, pattern="^watch_"))
 
-    # Add cricket game deep link handlers
     application.add_handler(MessageHandler(
         filters.Regex(r"^/start ([0-9]{3})$"),
-        handle_join_button
+        lambda update, context: join_cricket(update, context)
     ))
     application.add_handler(MessageHandler(
         filters.Regex(r"^/start watch_([0-9]{3})$"),
-        handle_watch_button
+        lambda update, context: watch_cricket(update, context)
     ))
 
     # Add game handlers
