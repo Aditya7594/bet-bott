@@ -32,7 +32,7 @@ from cricket import (
     chat_message,
     get_cricket_handlers
 )
-from minigame import dart, basketball, flip, dice, credits_leaderboard, football, help_command, start_command, roll, handle_flip_again, get_minigame_handlers
+from minigame import dart, basketball, flip, dice, credits_leaderboard, football, help_command, start_command, roll, handle_flip_again, get_minigame_handlers, bet
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from bank import exchange, sell, store, withdraw, bank, get_bank_handlers
@@ -547,8 +547,42 @@ async def universal_handler(update: Update, context: CallbackContext):
                 logger.info(f"User {user_id} received 5 primos for group chat message")
                 
         elif update.effective_chat.type == ChatType.PRIVATE:
-            await dm_forwarder(update, context)
-            await handle_message(update, context)
+            # Check for active cricket game
+            user_id = str(update.effective_user.id)
+            active_game = None
+            
+            # Check all active games
+            for game_type in ['xox', 'cricket', 'hilo', 'mines']:
+                game = db[f'{game_type}_games'].find_one({
+                    "$or": [{"player1": user_id}, {"player2": user_id}],
+                    "active": True
+                })
+                if game:
+                    active_game = (game_type, game)
+                    break
+            
+            if active_game:
+                game_type, game = active_game
+                if game_type == 'cricket':
+                    # Forward message to other player
+                    other_player = game["player2"] if user_id == game["player1"] else game["player1"]
+                    if other_player:
+                        try:
+                            if update.message.text:
+                                await context.bot.send_message(
+                                    chat_id=other_player,
+                                    text=f"💬 {update.effective_user.first_name}: {update.message.text}"
+                                )
+                            elif update.message.sticker:
+                                await context.bot.send_sticker(
+                                    chat_id=other_player,
+                                    sticker=update.message.sticker.file_id
+                                )
+                        except Exception as e:
+                            logger.error(f"Error forwarding message: {e}")
+            else:
+                await handle_message(update, context)
+                
     except Exception as e:
         logger.error(f"Universal handler error: {str(e)}")
         if update.effective_chat.type == ChatType.PRIVATE:
@@ -776,6 +810,7 @@ def main() -> None:
     application.add_handler(CommandHandler("reffer", reffer))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("daily", daily))
+    application.add_handler(CommandHandler("bet", bet))  # Add bet command handler
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("help", help_command))

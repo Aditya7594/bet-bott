@@ -10,6 +10,26 @@ db = client['telegram_bot']
 user_collection = db["users"]
 cricket_games = {}
 
+def get_user_by_id(user_id):
+    """Get user data from database."""
+    user = user_collection.find_one({"user_id": str(user_id)})
+    if not user:
+        user = {
+            "user_id": str(user_id),
+            "credits": 1000,
+            "created_at": datetime.utcnow()
+        }
+        user_collection.insert_one(user)
+    return user
+
+def save_user(user_data):
+    """Save user data to database."""
+    user_collection.update_one(
+        {"user_id": user_data["user_id"]},
+        {"$set": user_data},
+        upsert=True
+    )
+
 def generate_game_code():
     return str(random.randint(100, 999))
 
