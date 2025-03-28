@@ -133,18 +133,19 @@ async def update_game_interface(game_code: str, context: CallbackContext, text: 
         target = game['target'] if game['innings'] == 2 else None
         spectator_count = len(game["spectators"])
         
-        # Put spectator count in the top right, separate from overs
-        spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
-        
         text = (
-            f"⏳ Over: {game['over']}.{game['ball']}    {spectator_text}\n"
+            f"🏏 *Cricket Game {game_code}*\n\n"
+            f"⏳ Over: {game['over']}.{game['ball']}\n"
             f"🔸 Batting: {batter_name}\n"
             f"🔹 Bowling: {bowler_name}\n"
             f"📊 Score: {score}/{game['wickets']}"
         )
         
         if game['innings'] == 2:
-            text += f" (Target: {game['target']})"
+            text += f"\n🎯 Target: {game['target']}"
+        
+        if spectator_count > 0:
+            text += f"\n👁️ Spectators: {spectator_count}"
         
         text += "\n\n"
 
