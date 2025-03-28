@@ -16,8 +16,17 @@ from telegram.constants import ChatType
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, CallbackQuery
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters
 from token_1 import token
+import random
 
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button, send_artifact_reward, get_genshin_handlers
+from minigame import dart, basketball, flip, dice, credits_leaderboard, football, help_command, start_command, roll, handle_flip_again, get_minigame_handlers
+from bdice import bdice
+from claim import daily, random_claim, claim_credits, send_random_claim
+from bank import exchange, sell, store, withdraw, bank, get_bank_handlers
+from hilo_game import start_hilo, hilo_click, hilo_cashout, get_hilo_handlers
+from cards import gacha, my_collection, view_card, card_pull
+from mines_game import Mines, Mines_click, Mines_CashOut, get_mines_handlers
+from xox_game import get_xox_handlers
 from cricket import (
     chat_cricket,
     handle_join_button as join_cricket,
@@ -32,19 +41,10 @@ from cricket import (
     chat_message,
     get_cricket_handlers
 )
-from minigame import dart, basketball, flip, dice, credits_leaderboard, football, help_command, start_command, roll, handle_flip_again, get_minigame_handlers
-from bdice import bdice
-from claim import daily, random_claim, claim_credits, send_random_claim
-from bank import exchange, sell, store, withdraw, bank, get_bank_handlers
-from hilo_game import start_hilo, hilo_click, hilo_cashout, get_hilo_handlers
-from cards import gacha, my_collection, view_card, card_pull
-from mines_game import Mines, Mines_click, Mines_CashOut, get_mines_handlers
-from xox_game import get_xox_handlers
 OWNER_ID = 5667016949
 muted_users = set()
 last_interaction_time = {}
 user_daily_credits = {}
-
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -76,8 +76,6 @@ def escape_markdown_v2(text):
 
 def generate_referral_link(user_id):
     return f"https://t.me/YourBotUsername?start=ref{user_id}"
-
-
 
 def check_started(func):
     @wraps(func)
@@ -169,7 +167,6 @@ async def keep_alive(context: CallbackContext):
     except Exception as e:
         logging.error(f"Keep-alive failed: {e}")
 
-
 async def reffer(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
@@ -193,8 +190,6 @@ async def reffer(update: Update, context: CallbackContext) -> None:
         f"You have referred {referral_count} users.\n\n"
         "When they join and start the bot using your link, both of you will receive 1000 credits and 1000 Primogems!"
     )
-
-
 
 async def profile(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
@@ -241,7 +236,6 @@ async def profile(update: Update, context: CallbackContext) -> None:
     else:
         await update.message.reply_text("You need to start the bot first by using /start.")
 
-
 async def add_credits(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = user.id
@@ -275,7 +269,6 @@ async def add_credits(update: Update, context: CallbackContext) -> None:
     # Send confirmation message
     await update.message.reply_text(f"Successfully added {credits_to_add} credits to user {target_user_id}. New balance: {new_credits} credits.")
 
-
 async def timeout_task(context: CallbackContext) -> None:
     """Check for and handle game timeouts."""
     current_time = datetime.now()
@@ -302,7 +295,6 @@ async def timeout_task():
     while True:
         await asyncio.sleep(60)  # Wait for 1 minute
         await timeout_task()
-
 
 async def reset(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
@@ -707,23 +699,12 @@ def main() -> None:
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("help", help_command))
 
+    # Add cricket game handlers
     application.add_handler(CommandHandler("chatcricket", chat_cricket))
     application.add_handler(CommandHandler("join", join_cricket))
     application.add_handler(CommandHandler("watch", watch_cricket))
-    application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
-    application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
-    application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
-    application.add_handler(CallbackQueryHandler(handle_join_button, pattern="^join_"))
-    application.add_handler(CallbackQueryHandler(handle_watch_button, pattern="^watch_"))
-
-    application.add_handler(MessageHandler(
-        filters.Regex(r"^/start ([0-9]{3})$"),
-        lambda update, context: join_cricket(update, context)
-    ))
-    application.add_handler(MessageHandler(
-        filters.Regex(r"^/start watch_([0-9]{3})$"),
-        lambda update, context: watch_cricket(update, context)
-    ))
+    for handler in get_cricket_handlers():
+        application.add_handler(handler)
 
     # Add game handlers
     for handler in get_xox_handlers():
@@ -754,7 +735,6 @@ def main() -> None:
 
     # Run the bot
     application.run_polling()
-
 
 if __name__ == '__main__':
     main()
