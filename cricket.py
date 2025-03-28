@@ -61,7 +61,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "spectators": set(),
     }
 
-    # Create callback buttons instead of URL buttons
+    # Create callback buttons for join and watch
     join_button = InlineKeyboardButton("Join Game", callback_data=f"join_{game_code}")
     watch_button = InlineKeyboardButton("Watch Game", callback_data=f"watch_{game_code}")
     keyboard = InlineKeyboardMarkup([[join_button], [watch_button]])

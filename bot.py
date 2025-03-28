@@ -702,6 +702,7 @@ def main() -> None:
     application.add_handler(CommandHandler("reach", reach))
     application.add_handler(CommandHandler("reffer", reffer))
     application.add_handler(CommandHandler("reset", reset))
+    application.add_handler(CommandHandler("daily", daily))
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("help", help_command))
@@ -709,6 +710,11 @@ def main() -> None:
     application.add_handler(CommandHandler("chatcricket", chat_cricket))
     application.add_handler(CommandHandler("join", join_cricket))
     application.add_handler(CommandHandler("watch", watch_cricket))
+    application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
+    application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
+    application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
+    application.add_handler(CallbackQueryHandler(handle_join_button, pattern="^join_"))
+    application.add_handler(CallbackQueryHandler(handle_watch_button, pattern="^watch_"))
 
     application.add_handler(MessageHandler(
         filters.Regex(r"^/start ([0-9]{3})$"),
@@ -718,25 +724,6 @@ def main() -> None:
         filters.Regex(r"^/start watch_([0-9]{3})$"),
         lambda update, context: watch_cricket(update, context)
     ))
-    
-    application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
-    application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
-    application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
-    
-    # Add cricket game deep link handlers
-    application.add_handler(MessageHandler(
-        filters.Regex(r"^/start ([0-9]{3})$"),
-        lambda update, context: join_cricket(update, context)
-    ))
-    application.add_handler(MessageHandler(
-        filters.Regex(r"^/start watch_([0-9]{3})$"),
-        lambda update, context: watch_cricket(update, context)
-    ))
-    
-    # Add cricket game callback handlers
-    application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
-    application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
-    application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
 
     # Add game handlers
     for handler in get_xox_handlers():
