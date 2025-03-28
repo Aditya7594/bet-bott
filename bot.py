@@ -692,6 +692,31 @@ async def handle_timeout(query: CallbackQuery, game: dict) -> None:
                 user_data["credits"] += game["bet"]
                 save_user(user_data)
 
+async def start_command(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    user = users_collection.find_one({"user_id": user_id})
+    
+    if not user:
+        for attempt in range(3):  # Add retry mechanism
+            try:
+                users_collection.insert_one({
+                    "user_id": user_id,
+                    "username": update.effective_user.username,
+                    "first_name": update.effective_user.first_name,
+                    "last_name": update.effective_user.last_name,
+                    "credits": 1000,
+                    "daily_claimed": False,
+                    "last_daily": None
+                })
+                break
+            except Exception as e:
+                if attempt == 2:
+                    await update.message.reply_text(f"Error registering user: {e}")
+                    return
+                await asyncio.sleep(1)  # Wait before retrying
+    
+    await update.message.reply_text("Welcome! You're now registered.")
+
 def main() -> None:
     application = Application.builder().token(token).build()
 

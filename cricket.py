@@ -689,10 +689,6 @@ async def chat_message(update: Update, context: CallbackContext) -> None:
     if message.text and message.text.startswith('/'):
         return
 
-    # Forward messages only in private chats
-    if update.message.chat.type != "private":
-        return
-
     # Find active game for this user
     for game_code in list(cricket_games.keys()):
         game = cricket_games.get(game_code)
@@ -721,9 +717,12 @@ async def chat_message(update: Update, context: CallbackContext) -> None:
                             sticker=message.sticker.file_id
                         )
                 except Exception as e:
-                    print(f"Error forwarding message: {e}")
+                    print(f"Error forwarding message to {participant_id}: {e}")
                     continue
         break  # Found and processed the game, no need to check others
+
+    if not game:
+        await update.message.reply_text("You're not in an active game.")
 
 def get_cricket_handlers():
     """Return all cricket game handlers."""

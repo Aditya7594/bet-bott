@@ -663,3 +663,12 @@ def get_genshin_handlers():
         CallbackQueryHandler(button)
     ]
 
+def initialize_user(user_id):
+    user_data = {
+        "primos": 16000,  # Changed from 0 to 16000
+        "bag": [],
+        "last_pull": None,
+        "last_reward": None
+    }
+    user_collection.update_one({"user_id": user_id}, {"$setOnInsert": user_data}, upsert=True)
+
