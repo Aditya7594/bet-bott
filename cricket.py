@@ -198,17 +198,6 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
     
     game = cricket_games[game_code]
     
-    # Check if user has enough credits for bet (if game has betting)
-    if game['bet'] > 0:
-        user_data = get_user_by_id(user_id)
-        if not user_data or user_data['credits'] < game['bet']:
-            message = f"❌ You need at least {game['bet']} credits to join this game!"
-            if query:
-                await query.answer(message, show_alert=True)
-            else:
-                await update.message.reply_text(message)
-            return
-    
     # Check if user is already in the game
     if user_id == game["player1"]:
         message = "❌ You can't join your own game!"
@@ -237,17 +226,6 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
     # Add user as player 2
     game["player2"] = user_id
     
-    # Deduct credits if it's a betting game
-    if game['bet'] > 0:
-        player1_data = get_user_by_id(game["player1"])
-        player2_data = get_user_by_id(game["player2"])
-        
-        player1_data["credits"] -= game["bet"]
-        player2_data["credits"] -= game["bet"]
-        
-        save_user(player1_data)
-        save_user(player2_data)
-    
     # Send initial game interface to both players
     player1_name = (await context.bot.get_chat(game["player1"])).first_name
     player2_name = (await context.bot.get_chat(game["player2"])).first_name
@@ -255,8 +233,7 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
     text = (
         f"🎮 *Cricket Game {game_code}*\n\n"
         f"🧑 Player 1: {player1_name}\n"
-        f"🧑 Player 2: {player2_name}\n"
-        f"💰 Bet Amount: {game['bet']} credits\n\n"
+        f"🧑 Player 2: {player2_name}\n\n"
         "The toss is starting..."
     )
     
@@ -617,33 +594,18 @@ async def declare_winner(game_code: str, context: CallbackContext):
     p1 = (await context.bot.get_chat(game["player1"])).first_name
     p2 = (await context.bot.get_chat(game["player2"])).first_name
 
-    # Determine the result and handle credits
+    # Determine the result
     if game["score1"] == game["score2"]:
         result = "🤝 Match Drawn!"
-        # Refund credits to both players
-        player1_data = get_user_by_id(game["player1"])
-        player2_data = get_user_by_id(game["player2"])
-        player1_data["credits"] += game["bet"]
-        player2_data["credits"] += game["bet"]
-        save_user(player1_data)
-        save_user(player2_data)
     elif game["innings"] == 2:
         if game["score2"] >= game["target"]:
             winner = (await context.bot.get_chat(game["batter"])).first_name
             loser = (await context.bot.get_chat(game["bowler"])).first_name
             result = f"🏅 {winner} won by {game['max_wickets'] - game['wickets']} wicket(s)!"
-            # Give credits to winner
-            winner_data = get_user_by_id(game["batter"])
-            winner_data["credits"] += game["bet"] * 2
-            save_user(winner_data)
         else:
             winner = (await context.bot.get_chat(game["bowler"])).first_name
             diff = game["target"] - game["score2"] - 1
             result = f"🏅 {winner} won by {diff} runs!"
-            # Give credits to winner
-            winner_data = get_user_by_id(game["bowler"])
-            winner_data["credits"] += game["bet"] * 2
-            save_user(winner_data)
     else:
         result = "Match ended unexpectedly!"
 
@@ -653,8 +615,7 @@ async def declare_winner(game_code: str, context: CallbackContext):
         f"📜 *Match Summary:*\n"
         f"🧑 {p1}: {game['score1']} runs\n"
         f"🧑 {p2}: {game['score2']} runs\n\n"
-        f"{result}\n\n"
-        f"💰 Bet Amount: {game['bet']} credits"
+        f"{result}"
     )
 
     # Send the result to the group chat where the game was started
