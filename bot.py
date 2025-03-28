@@ -20,8 +20,8 @@ from token_1 import token
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button, send_artifact_reward, get_genshin_handlers
 from cricket import (
     chat_cricket,
-    handle_join_button as join_cricket,
-    handle_watch_button as watch_cricket,
+    handle_join_button,
+    handle_watch_button,
     toss_button,
     choose_button,
     play_button,
@@ -707,22 +707,26 @@ def main() -> None:
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("help", help_command))
 
+    # Add cricket game handlers
     application.add_handler(CommandHandler("chatcricket", chat_cricket))
-    application.add_handler(CommandHandler("join", join_cricket))
-    application.add_handler(CommandHandler("watch", watch_cricket))
+    application.add_handler(CommandHandler("join", handle_join_button))
+    application.add_handler(CommandHandler("watch", handle_watch_button))
+    
+    # Add cricket game callback handlers
     application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
     application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
     application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
     application.add_handler(CallbackQueryHandler(handle_join_button, pattern="^join_"))
     application.add_handler(CallbackQueryHandler(handle_watch_button, pattern="^watch_"))
 
+    # Add cricket game deep link handlers
     application.add_handler(MessageHandler(
         filters.Regex(r"^/start ([0-9]{3})$"),
-        lambda update, context: join_cricket(update, context)
+        handle_join_button
     ))
     application.add_handler(MessageHandler(
         filters.Regex(r"^/start watch_([0-9]{3})$"),
-        lambda update, context: watch_cricket(update, context)
+        handle_watch_button
     ))
 
     # Add game handlers
