@@ -1,32 +1,13 @@
 from pymongo import MongoClient
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import CallbackContext, CallbackQueryHandler
 import random
-from datetime import datetime
-import logging
-
-from utils import (
-    get_user_by_id,
-    save_user,
-    OWNER_ID,
-    muted_users,
-    last_interaction_time,
-    user_daily_credits
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext, MessageHandler, filters
 
 # MongoDB connection
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
 db = client['telegram_bot']
 user_collection = db["users"]
-
-# Game state
 cricket_games = {}
-
-def get_user_by_id(user_id):
-    return user_collection.find_one({"user_id": str(user_id)})
-
-def save_user(user_data):
-    user_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
 
 def generate_game_code():
     return str(random.randint(100, 999))
@@ -42,7 +23,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
             text="⚠️ This command can only be used in group chats!")
         return
     
-    user_data = get_user_by_id(str(user.id))
+    user_data = user_collection.find_one({"user_id": str(user.id)})
     if not user_data:
         bot_username = (await context.bot.get_me()).username
         keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/{bot_username}?start=start")]]
@@ -80,7 +61,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "spectators": set(),
     }
 
-    # Create callback buttons for join and watch
+    # Create callback buttons instead of URL buttons
     join_button = InlineKeyboardButton("Join Game", callback_data=f"join_{game_code}")
     watch_button = InlineKeyboardButton("Watch Game", callback_data=f"watch_{game_code}")
     keyboard = InlineKeyboardMarkup([[join_button], [watch_button]])
