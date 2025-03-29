@@ -24,7 +24,7 @@ from cricket import (
     end_innings,
     declare_winner,
     update_game_interface,
-    chat_message,
+    chat_command,
     get_cricket_handlers
 )
 from bdice import bdice
