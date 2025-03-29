@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters
 from token_1 import token
+from functools import wraps
 
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button, send_artifact_reward, get_genshin_handlers
 from cricket import (
@@ -22,9 +23,9 @@ from cricket import (
     play_button,
     handle_wicket,
     end_innings,
-    declare_winner,
+    declare_winnerupated
     update_game_interface,
-    chat_message,
+    chat_command,
     get_cricket_handlers
 )
 from bdice import bdice
@@ -274,22 +275,66 @@ async def timeout_task():
         await timeout_task()
 
 
-async def reset(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    user_id = str(user.id)
-    user_data = get_user_by_id(user_id)
+async def reset_confirmation(update: Update, context: CallbackContext) -> None:
+    """Handle reset confirmation callback."""
+    query = update.callback_query
+    user_id = query.from_user.id
 
-    if not user_data:
-        await update.message.reply_text("You need to start the bot first by using /start.")
+    # Check if the user is the owner
+    if user_id != OWNER_ID:
+        await query.answer("You don't have permission to do this.", show_alert=True)
         return
 
-    # Reset user data
-    user_data.update({
-        "credits": 1000,  # Reset credits to 1000
-    })
-    save_user(user_data)
+    # Check the callback data (Yes or No)
+    if query.data == "reset_yes":
+        # Reset all users' data and set specified values to defaults
+        users_collection.update_many({}, {"$set": {
+            "credits": 5000,  # Set credits to 5000 after reset
+            "daily": None,
+            "win": 0,
+            "loss": 0,
+            "achievement": [],
+            "faction": "None",
+            "ban": None,
+            "title": "None",
+            "primos": 0,
+            "bag": {},
+            "bank": 0,  # Reset bank balance to 0
+            "cards": [],  # Reset cards to 0
+        }})
+        
+        # Inform the owner that the reset was successful
+        await query.answer("All user data has been reset to default values, and all users have received 5000 credits.", show_alert=True)
 
-    await update.message.reply_text("Your profile has been reset! You now have 1000 credits.")
+    elif query.data == "reset_no":
+        # Inform the owner that the reset was canceled
+        await query.answer("User data reset was canceled.", show_alert=True)
+
+    # Delete the inline keyboard after answering
+    await query.edit_message_reply_markup(reply_markup=None)
+
+async def reset(update: Update, context: CallbackContext) -> None:
+    """Handle the reset command."""
+    user_id = update.effective_user.id
+
+    # Check if the user is the owner
+    if user_id != OWNER_ID:
+        await update.message.reply_text("You don't have permission to use this command.")
+        return
+
+    # Create inline keyboard for confirmation
+    keyboard = [
+        [
+            InlineKeyboardButton("Yes", callback_data="reset_yes"),
+            InlineKeyboardButton("No", callback_data="reset_no"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "Are you sure you want to reset all user data? This will wipe all progress!",
+        reply_markup=reply_markup
+    )
 
 async def reach(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -741,10 +786,11 @@ def main() -> None:
     application.add_handler(CommandHandler("reffer", reffer))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("daily", daily))
-    application.add_handler(CommandHandler("c", chat_command))  # Add the chat command handler
+    application.add_handler(CommandHandler("c", chat_command))
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("addcredits", add_credits))
 
     # Add cricket game handlers
     application.add_handler(CommandHandler("chatcricket", chat_cricket))
