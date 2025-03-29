@@ -25,132 +25,6 @@ def get_genshin_user_by_id(user_id):
 def save_genshin_user(user_data):
     genshin_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
 
-async def exchange(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    user_id = str(user.id)
-
-    # Get the amount and type of currency to exchange
-    try:
-        amount = int(context.args[0])
-        currency_type = context.args[1].lower()
-    except (IndexError, ValueError):
-        await update.message.reply_text("Usage: /exchange <amount> <currency_type (gold/silver/bronze/primos)>")
-        return
-
-    # Fetch user data from the main users collection
-    user_data = get_user_by_id(user_id)
-    if not user_data:
-        await update.message.reply_text("You need to start the bot first by using /start.")
-        return
-
-    # Fetch genshin user data for primos
-    genshin_user_data = get_genshin_user_by_id(user_id)
-    if not genshin_user_data and currency_type == "primos":
-        await update.message.reply_text("You need to link your Genshin account first to exchange primos.")
-        return
-
-    # Determine conversion rates
-    if currency_type == "gold":
-        credit_cost = 100000
-    elif currency_type == "silver":
-        credit_cost = 50000
-    elif currency_type == "bronze":
-        credit_cost = 10000
-    elif currency_type == "primos":
-        credit_cost = 1  # 1 primos = 1 credit
-    else:
-        await update.message.reply_text("Invalid currency type. Choose between 'gold', 'silver', 'bronze', or 'primos'.")
-        return
-
-    # Calculate total cost
-    total_credit_cost = amount * credit_cost
-
-    if currency_type == "primos":
-        # Check if user has enough primos in genshin collection
-        if genshin_user_data.get("primos", 0) < amount:
-            await update.message.reply_text(f"You don't have enough primos. You need {amount} primos.")
-            return
-
-        # Deduct primos and add credits to the user's account
-        genshin_user_data["primos"] -= amount
-        user_data["credits"] += total_credit_cost
-        save_genshin_user(genshin_user_data)
-        save_user(user_data)
-
-        await update.message.reply_text(
-            f"Successfully exchanged {amount} primos for {total_credit_cost} credits.\n"
-            f"Your new balance: {user_data['credits']} credits.\n"
-            f"Remaining primos: {genshin_user_data['primos']}."
-        )
-    else:
-        # Check if user has enough credits for other currency types
-        if user_data.get('credits', 0) < total_credit_cost:
-            await update.message.reply_text(f"You don't have enough credits. You need {total_credit_cost} credits.")
-            return
-
-        # Deduct credits and add coins to the user's bag
-        user_data['credits'] -= total_credit_cost
-        user_data.setdefault('bag', {})
-        user_data['bag'][currency_type] = user_data['bag'].get(currency_type, 0) + amount
-        save_user(user_data)
-
-        await update.message.reply_text(
-            f"Successfully exchanged {total_credit_cost} credits for {amount} {currency_type} coin(s)."
-        )
-
-async def sell(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    user_id = str(user.id)
-
-    # Get the amount and type of coin to sell
-    try:
-        amount = int(context.args[0])
-        currency_type = context.args[1].lower()
-    except (IndexError, ValueError):
-        await update.message.reply_text("Usage: /sell <amount> <currency_type (gold/silver/bronze)>")
-        return
-
-    # Fetch user data
-    user_data = get_user_by_id(user_id)
-    if not user_data:
-        await update.message.reply_text("You need to start the bot first by using /start.")
-        return
-
-    # Check if user has the coins they want to sell
-    user_bag = user_data.get('bag', {})
-    if user_bag.get(currency_type, 0) < amount:
-        await update.message.reply_text(f"You don't have enough {currency_type} coins to sell.")
-        return
-
-    # Determine credit values for selling coins
-    if currency_type == "gold":
-        credit_value = 100000
-    elif currency_type == "silver":
-        credit_value = 50000
-    elif currency_type == "bronze":
-        credit_value = 10000
-    else:
-        await update.message.reply_text("Invalid coin type. Choose between 'gold', 'silver', or 'bronze'.")
-        return
-
-    # Calculate the total credit value for selling the coins
-    total_credit_value = amount * credit_value
-
-    # Update the user's bag and credits
-    user_data['credits'] += total_credit_value
-    user_bag[currency_type] -= amount
-
-    # Clean up if coin count goes to 0
-    if user_bag[currency_type] <= 0:
-        del user_bag[currency_type]
-
-    save_user(user_data)
-
-    await update.message.reply_text(
-        f"Successfully sold {amount} {currency_type} coin(s) for {total_credit_value} credits.\n"
-        f"Your new balance: {user_data['credits']} credits."
-    )
-
 # Bank system - Store credits
 async def store(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
@@ -209,7 +83,7 @@ async def withdraw(update: Update, context: CallbackContext) -> None:
 
     await update.message.reply_text(f"Successfully withdrew {amount} credits from your virtual bank. Your current balance is {user_data['credits']} credits.")
 
-# Bank balance command - Show user's bank balance and deduct 37 credits
+# Bank balance command - Show user's bank balance
 async def bank(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
@@ -229,8 +103,6 @@ async def bank(update: Update, context: CallbackContext) -> None:
 def get_bank_handlers():
     """Return all bank handlers."""
     return [
-        CommandHandler("exchange", exchange),
-        CommandHandler("sell", sell),
         CommandHandler("store", store),
         CommandHandler("withdraw", withdraw),
         CommandHandler("bank", bank)

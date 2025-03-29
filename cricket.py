@@ -1,5 +1,6 @@
 from pymongo import MongoClient
 import random
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext, MessageHandler, filters
 
@@ -678,52 +679,45 @@ async def end_innings(game_code: str, context: CallbackContext):
         # Game over - declare winner
         await declare_winner(game_code, context)
 
-async def chat_message(update: Update, context: CallbackContext) -> None:
-    if update.message is None:
+async def chat_command(update: Update, context: CallbackContext) -> None:
+    """Handle the /c command for chat during cricket games."""
+    if not context.args:
+        await update.message.reply_text("Usage: /c <message>")
         return
 
-    user_id = update.effective_user.id
-    message = update.message
+    user = update.effective_user
+    user_id = str(user.id)
+    message = " ".join(context.args)
 
-    # Ignore commands
-    if message.text and message.text.startswith('/'):
-        return
+    # Check for active cricket game
+    game = db['cricket_games'].find_one({
+        "$or": [{"player1": user_id}, {"player2": user_id}],
+        "active": True
+    })
+    
+    if game:
+        # Get the game's chat ID
+        chat_id = game.get("chat_id")
+        if not chat_id:
+            await update.message.reply_text("❌ Game chat not found.")
+            return
 
-    # Forward messages only in private chats
-    if update.message.chat.type != "private":
-        return
+        # Format the message
+        formatted_message = f"💬 {user.first_name}: {message}"
 
-    # Find active game for this user
-    for game_code in list(cricket_games.keys()):
-        game = cricket_games.get(game_code)
-        if not game:
-            continue
-
-        # Check if the user is part of this game (player or spectator)
-        if user_id not in [game["player1"], game["player2"]] and user_id not in game["spectators"]:
-            continue
-
-        # Get all participants (players and spectators)
-        participants = list(game["spectators"]) + [game["player1"], game["player2"]]
-        
-        # Forward message to all other participants
-        for participant_id in participants:
-            if participant_id != user_id:  # Don't forward to sender
-                try:
-                    if message.text:
-                        await context.bot.send_message(
-                            chat_id=participant_id,
-                            text=f"💬 {update.effective_user.first_name}: {message.text}"
-                        )
-                    elif message.sticker:
-                        await context.bot.send_sticker(
-                            chat_id=participant_id,
-                            sticker=message.sticker.file_id
-                        )
-                except Exception as e:
-                    print(f"Error forwarding message: {e}")
-                    continue
-        break  # Found and processed the game, no need to check others
+        # Send the message to the game chat
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=formatted_message
+            )
+            # Delete the command message in private chat
+            await update.message.delete()
+        except Exception as e:
+            logger.error(f"Error sending chat message: {e}")
+            await update.message.reply_text("❌ Failed to send message to game chat.")
+    else:
+        await update.message.reply_text("❌ You are not in an active cricket game.")
 
 def get_cricket_handlers():
     """Return all cricket game handlers."""

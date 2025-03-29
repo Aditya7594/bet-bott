@@ -7,13 +7,8 @@ from threading import Thread
 import requests
 import re 
 import logging
-from telegram import Update, ChatPermissions
-from telegram.ext import filters, ContextTypes
-from functools import wraps
-import logging
 from datetime import datetime, timedelta
-from telegram.constants import ChatType
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, CallbackQuery
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters
 from token_1 import token
 
@@ -32,14 +27,13 @@ from cricket import (
     chat_message,
     get_cricket_handlers
 )
-from minigame import dart, basketball, flip, dice, credits_leaderboard, football, help_command, start_command, roll, handle_flip_again, get_minigame_handlers
 from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
-from bank import exchange, sell, store, withdraw, bank, get_bank_handlers
+from bank import store, withdraw, bank, get_bank_handlers
 from hilo_game import start_hilo, hilo_click, hilo_cashout, get_hilo_handlers
-from cards import gacha, my_collection, view_card, card_pull
 from mines_game import Mines, Mines_click, Mines_CashOut, get_mines_handlers
 from xox_game import get_xox_handlers
+
 OWNER_ID = 5667016949
 muted_users = set()
 last_interaction_time = {}
@@ -199,47 +193,23 @@ async def reffer(update: Update, context: CallbackContext) -> None:
 async def profile(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
-
-    # Fetch user data from the database
     user_data = get_user_by_id(user_id)
 
-    if user_data:
-        # Get the number of gold, silver, and bronze coins in the user's bag
-        gold_coins = user_data['bag'].get('gold', 0)
-        silver_coins = user_data['bag'].get('silver', 0)
-        bronze_coins = user_data['bag'].get('bronze', 0)
-
-        # Construct the profile message with clear boundaries and formatting
-        profile_message = (
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 User: {user.first_name}\n"
-            f"🆔 ID: {user_data['user_id']}\n"
-            f"💰 Credits: {user_data['credits']} 💎\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🏆 Wins: {user_data['win']}\n"
-            f"💔 Losses: {user_data['loss']}\n"
-            f"🎖️ Title: {user_data['title']}\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💎 Gold Coins: {gold_coins}\n"
-            f"🥈 Silver Coins: {silver_coins}\n"
-            f"🥉 Bronze Coins: {bronze_coins}\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        )
-
-        # Send profile message with photo if available
-        try:
-            photos = await context.bot.get_user_profile_photos(user_id)
-            if photos.photos:
-                # Use the smallest size available (last element in the list)
-                smallest_photo = photos.photos[0][-1].file_id
-                await update.message.reply_photo(photo=smallest_photo, caption=profile_message)
-            else:
-                await update.message.reply_text(profile_message)
-        except Exception as e:
-            logger.error(f"Error fetching user photo: {e}")
-            await update.message.reply_text(profile_message)
-    else:
+    if not user_data:
         await update.message.reply_text("You need to start the bot first by using /start.")
+        return
+
+    # Get user's credits
+    credits = user_data.get('credits', 0)
+
+    # Create profile message
+    profile_message = (
+        f"👤 <b>Profile for {user.first_name}</b>\n\n"
+        f"💰 Credits: {credits}\n"
+        f"🆔 User ID: {user_id}\n"
+    )
+
+    await update.message.reply_text(profile_message, parse_mode='HTML')
 
 
 async def add_credits(update: Update, context: CallbackContext) -> None:
@@ -305,66 +275,21 @@ async def timeout_task():
 
 
 async def reset(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = str(user.id)
+    user_data = get_user_by_id(user_id)
 
-    # Check if the user is the owner
-    if user_id != OWNER_ID:
-        await update.message.reply_text("You don't have permission to use this command.")
+    if not user_data:
+        await update.message.reply_text("You need to start the bot first by using /start.")
         return
 
-    # Create inline keyboard for confirmation
-    keyboard = [
-        [
-            InlineKeyboardButton("Yes", callback_data="reset_yes"),
-            InlineKeyboardButton("No", callback_data="reset_no"),
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    # Reset user data
+    user_data.update({
+        "credits": 1000,  # Reset credits to 1000
+    })
+    save_user(user_data)
 
-    await update.message.reply_text(
-        "Are you sure you want to reset all user data? This will wipe all progress!",
-        reply_markup=reply_markup
-    )
-
-async def reset_confirmation(update: Update, context: CallbackContext) -> None:
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    # Check if the user is the owner
-    if user_id != OWNER_ID:
-        await query.answer("You don't have permission to do this.", show_alert=True)
-        return
-
-    # Check the callback data (Yes or No)
-    if query.data == "reset_yes":
-        # Reset all users' data and set specified values to defaults
-        users_collection.update_many({}, {"$set": {
-            "credits": 5000,  # Set credits to 5000 after reset
-            "daily": None,
-            "win": 0,
-            "loss": 0,
-            "achievement": [],
-            "faction": "None",
-            "ban": None,
-            "title": "None",
-            "primos": 0,
-            "bag": {},
-            "bank": 0,  # Reset bank balance to 0
-            "gold_coins": 0,  # Reset gold coins to 0
-            "silver_coins": 0,  # Reset silver coins to 0
-            "bronze_coins": 0,  # Reset bronze coins to 0
-            "cards": [],  # Reset cards to 0
-        }})
-        
-        # Inform the owner that the reset was successful
-        await query.answer("All user data has been reset to default values, and all users have received 5000 credits.", show_alert=True)
-
-    elif query.data == "reset_no":
-        # Inform the owner that the reset was canceled
-        await query.answer("User data reset was canceled.", show_alert=True)
-
-    # Delete the inline keyboard after answering
-    await query.edit_message_reply_markup(reply_markup=None)
+    await update.message.reply_text("Your profile has been reset! You now have 1000 credits.")
 
 async def reach(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -765,6 +690,46 @@ async def dm_forwarder(update: Update, context: CallbackContext) -> None:
         except Exception as e:
             logger.error(f"Error forwarding message: {e}")
 
+async def chat_command(update: Update, context: CallbackContext) -> None:
+    """Handle the /c command for chat during cricket games."""
+    if not context.args:
+        await update.message.reply_text("Usage: /c <message>")
+        return
+
+    user = update.effective_user
+    user_id = str(user.id)
+    message = " ".join(context.args)
+
+    # Check for active cricket game
+    game = db['cricket_games'].find_one({
+        "$or": [{"player1": user_id}, {"player2": user_id}],
+        "active": True
+    })
+    
+    if game:
+        # Get the game's chat ID
+        chat_id = game.get("chat_id")
+        if not chat_id:
+            await update.message.reply_text("❌ Game chat not found.")
+            return
+
+        # Format the message
+        formatted_message = f"💬 {user.first_name}: {message}"
+
+        # Send the message to the game chat
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=formatted_message
+            )
+            # Delete the command message in private chat
+            await update.message.delete()
+        except Exception as e:
+            logger.error(f"Error sending chat message: {e}")
+            await update.message.reply_text("❌ Failed to send message to game chat.")
+    else:
+        await update.message.reply_text("❌ You are not in an active cricket game.")
+
 def main() -> None:
     application = Application.builder().token(token).build()
 
@@ -776,6 +741,7 @@ def main() -> None:
     application.add_handler(CommandHandler("reffer", reffer))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("daily", daily))
+    application.add_handler(CommandHandler("c", chat_command))  # Add the chat command handler
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("help", help_command))
@@ -810,8 +776,6 @@ def main() -> None:
     for handler in get_mines_handlers():
         application.add_handler(handler)
     for handler in get_genshin_handlers():
-        application.add_handler(handler)
-    for handler in get_minigame_handlers():
         application.add_handler(handler)
     for handler in get_bank_handlers():
         application.add_handler(handler)

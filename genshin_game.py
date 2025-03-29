@@ -17,6 +17,7 @@ client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?r
 db = client['telegram_bot']
 user_collection = db["users"]
 genshin_collection = db["genshin_users"]
+group_settings = db["group_settings"]  # New collection for group settings
 
 CHARACTERS = {
     # 5-star characters
@@ -157,11 +158,39 @@ async def reward_primos(update: Update, context: CallbackContext):
     user_data["primos"] += 5
     save_genshin_user(user_data)
     
+def get_group_settings(chat_id: int) -> dict:
+    """Get group settings, create default if not exists"""
+    settings = group_settings.find_one({"chat_id": chat_id})
+    if not settings:
+        settings = {
+            "chat_id": chat_id,
+            "artifact_threshold": 50,  # Default threshold
+            "artifact_enabled": True,   # Default enabled
+            "last_artifact_time": None
+        }
+        group_settings.insert_one(settings)
+    return settings
+
+def update_group_settings(chat_id: int, settings: dict):
+    """Update group settings"""
+    group_settings.update_one(
+        {"chat_id": chat_id},
+        {"$set": settings},
+        upsert=True
+    )
+
 async def handle_message(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
 
     # Skip if the message is not from a group
     if update.effective_chat.type not in ["group", "supergroup"]:
+        return
+
+    # Get group settings
+    settings = get_group_settings(chat_id)
+    
+    # Skip if artifacts are disabled
+    if not settings.get("artifact_enabled", True):
         return
 
     # Initialize message count for the chat if it doesn't exist
@@ -171,11 +200,8 @@ async def handle_message(update: Update, context: CallbackContext) -> None:
     # Increment message count
     message_counts[chat_id] += 1
 
-    # Get the threshold for the chat (default to 100 if not set)
-    threshold = artifact_thresholds.get(chat_id, 100)
-
-    # Ensure the threshold is at least 50
-    threshold = max(threshold, 50)
+    # Get the threshold for the chat
+    threshold = settings.get("artifact_threshold", 50)
 
     # Check if the threshold is reached
     if message_counts[chat_id] >= threshold:
@@ -191,31 +217,77 @@ async def set_threshold(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("❗ This command can only be used in groups.")
         return
 
-    # Fetch the list of admins in the group
+    # Check if user is admin
     chat_id = update.effective_chat.id
-    admins = await context.bot.get_chat_administrators(chat_id)
-
-    # Check if the user is an admin
     user_id = update.effective_user.id
-    is_admin = any(admin.user.id == user_id for admin in admins)
-
-    if not is_admin:
-        await update.message.reply_text("🔒 You must be a group admin to use this command.")
+    chat_member = await context.bot.get_chat_member(chat_id, user_id)
+    
+    if chat_member.status not in ['creator', 'administrator']:
+        await update.message.reply_text("❗ Only administrators can use this command.")
         return
 
-    # Validate the threshold input
     try:
         threshold = int(context.args[0])
-        if threshold < 50 or threshold > 300:
-            await update.message.reply_text("❗ The threshold must be between 50 and 300.")
+        if threshold < 50:
+            await update.message.reply_text("❗ The threshold cannot be less than 50 messages.")
             return
     except (IndexError, ValueError):
-        await update.message.reply_text("❗ Usage: /set <threshold> (e.g., /set 100)")
+        await update.message.reply_text("Usage: /setthreshold <number>")
         return
 
-    # Set the threshold for the group
-    artifact_thresholds[chat_id] = threshold
-    await update.message.reply_text(f"✅ Artifact reward threshold set to {threshold} messages.")
+    # Update group settings
+    settings = get_group_settings(chat_id)
+    settings["artifact_threshold"] = threshold
+    update_group_settings(chat_id, settings)
+
+    await update.message.reply_text(f"✅ Artifact threshold set to {threshold} messages.")
+
+async def toggle_artifacts(update: Update, context: CallbackContext) -> None:
+    # Check if the command is used in a group
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        await update.message.reply_text("❗ This command can only be used in groups.")
+        return
+
+    # Check if user is admin
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    chat_member = await context.bot.get_chat_member(chat_id, user_id)
+    
+    if chat_member.status not in ['creator', 'administrator']:
+        await update.message.reply_text("❗ Only administrators can use this command.")
+        return
+
+    # Toggle artifact system
+    settings = get_group_settings(chat_id)
+    current_state = settings.get("artifact_enabled", True)
+    settings["artifact_enabled"] = not current_state
+    update_group_settings(chat_id, settings)
+
+    status = "enabled" if settings["artifact_enabled"] else "disabled"
+    await update.message.reply_text(f"✅ Artifact system has been {status}.")
+
+async def artifact_settings(update: Update, context: CallbackContext) -> None:
+    # Check if the command is used in a group
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        await update.message.reply_text("❗ This command can only be used in groups.")
+        return
+
+    # Get group settings
+    chat_id = update.effective_chat.id
+    settings = get_group_settings(chat_id)
+
+    # Create settings message
+    message = (
+        "🎮 *Artifact System Settings*\n\n"
+        f"Status: {'✅ Enabled' if settings.get('artifact_enabled', True) else '❌ Disabled'}\n"
+        f"Message Threshold: {settings.get('artifact_threshold', 50)} messages\n"
+        f"Messages until next artifact: {settings.get('artifact_threshold', 50) - message_counts.get(chat_id, 0)}\n\n"
+        "*Admin Commands:*\n"
+        "/setthreshold <number> - Set message threshold\n"
+        "/toggleartifacts - Enable/disable artifacts"
+    )
+
+    await update.message.reply_text(message, parse_mode='Markdown')
 
 async def send_artifact_reward(chat_id: int, context: CallbackContext) -> None:
     artifact_name, artifact_image = random.choice(list(ARTIFACTS.items()))
@@ -650,17 +722,19 @@ async def drop_primos(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("❌ An error occurred while dropping primos.")
 
 def get_genshin_handlers():
-    """Return all Genshin game handlers."""
+    """Return all genshin handlers."""
     return [
         CommandHandler("pull", pull),
         CommandHandler("bag", bag),
-        CommandHandler("add_primos", add_primos),
-        CommandHandler("Primos_leaderboard", leaderboard),
-        CommandHandler("drop_primos", drop_primos),
-        CommandHandler("reset_bag_data", reset_bag_data),
-        CommandHandler("set", set_threshold),
+        CommandHandler("leaderboard", leaderboard),
+        CommandHandler("resetbag", reset_bag_data),
+        CommandHandler("drop", drop_primos),
+        CommandHandler("setthreshold", set_threshold),
+        CommandHandler("toggleartifacts", toggle_artifacts),
+        CommandHandler("artifactsettings", artifact_settings),
+        CallbackQueryHandler(button, pattern="^genshin_"),
         CallbackQueryHandler(handle_artifact_button, pattern="^artifact_"),
-        CallbackQueryHandler(button)
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     ]
 
 def initialize_user(user_id):
