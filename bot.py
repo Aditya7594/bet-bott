@@ -753,30 +753,23 @@ async def chat_command(update: Update, context: CallbackContext) -> None:
     })
     
     if game:
-        # Get the game's chat ID - try both possible field names
-        chat_id = game.get("chat_id") or game.get("group_chat_id")
-        if not chat_id:
-            # If no chat_id found, try to get it from the game's message
-            if "message_id" in game and "chat_id" in game:
-                chat_id = game["chat_id"]
-            else:
-                await update.message.reply_text("❌ Game chat not found. Please start a new game.")
-                return
-
+        # Get the other player's ID
+        other_player_id = game["player2"] if user_id == game["player1"] else game["player1"]
+        
         # Format the message
         formatted_message = f"💬 {user.first_name}: {message}"
 
-        # Send the message to the game chat
         try:
+            # Send the message to the other player's DM
             await context.bot.send_message(
-                chat_id=chat_id,
+                chat_id=other_player_id,
                 text=formatted_message
             )
             # Delete the command message in private chat
             await update.message.delete()
         except Exception as e:
             logger.error(f"Error sending chat message: {e}")
-            await update.message.reply_text("❌ Failed to send message to game chat.")
+            await update.message.reply_text("❌ Failed to send message to the other player.")
     else:
         await update.message.reply_text("❌ You are not in an active cricket game.")
 
