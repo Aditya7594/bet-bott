@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters
+from telegram.constants import ChatType
 from token_1 import token
 from functools import wraps
 
@@ -752,11 +753,15 @@ async def chat_command(update: Update, context: CallbackContext) -> None:
     })
     
     if game:
-        # Get the game's chat ID
-        chat_id = game.get("chat_id")
+        # Get the game's chat ID - try both possible field names
+        chat_id = game.get("chat_id") or game.get("group_chat_id")
         if not chat_id:
-            await update.message.reply_text("❌ Game chat not found.")
-            return
+            # If no chat_id found, try to get it from the game's message
+            if "message_id" in game and "chat_id" in game:
+                chat_id = game["chat_id"]
+            else:
+                await update.message.reply_text("❌ Game chat not found. Please start a new game.")
+                return
 
         # Format the message
         formatted_message = f"💬 {user.first_name}: {message}"
