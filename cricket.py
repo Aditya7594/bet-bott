@@ -4,6 +4,13 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext, MessageHandler, filters
 
+# Set up logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
 # MongoDB connection
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
 db = client['telegram_bot']
@@ -160,22 +167,28 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     _, game_code = query.data.split('_')
+    
+    logger.info(f"Cricket Game - Join Button: User {user_id} attempted to join game {game_code}")
 
     if game_code not in cricket_games:
+        logger.warning(f"Cricket Game - Join Button: Game {game_code} not found")
         await query.answer("Game not found or expired!")
         return
 
     game = cricket_games[game_code]
     
     if user_id == game["player1"]:
+        logger.info(f"Cricket Game - Join Button: User {user_id} tried to join their own game")
         await query.answer("You can't join your own game!")
         return
 
     if game["player2"]:
+        logger.info(f"Cricket Game - Join Button: Game {game_code} is already full")
         await query.answer("Game full!")
         return
 
     game["player2"] = user_id
+    logger.info(f"Cricket Game - Join Button: User {user_id} successfully joined game {game_code}")
     await context.bot.send_message(
         chat_id=game["group_chat_id"],
         text=f"🎉 {query.from_user.first_name} joined the game!")
@@ -193,7 +206,7 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
                 reply_markup=InlineKeyboardMarkup(keyboard))
             game["message_id"][player_id] = msg.message_id
         except Exception as e:
-            print(f"Error sending toss: {e}")
+            logger.error(f"Cricket Game - Join Button: Error sending toss message to {player_id}: {e}")
 
 async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -232,18 +245,24 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     _, game_code, choice = query.data.split('_')
+    
+    logger.info(f"Cricket Game - Toss Button: User {user_id} chose {choice} for game {game_code}")
 
     if game_code not in cricket_games:
+        logger.warning(f"Cricket Game - Toss Button: Game {game_code} not found")
         await query.answer("Game expired!")
         return
 
     game = cricket_games[game_code]
     if game["toss_winner"]:
+        logger.info(f"Cricket Game - Toss Button: Toss already completed for game {game_code}")
         await query.answer("Toss done!")
         return
 
     toss_result = random.choice(['heads', 'tails'])
     game["toss_winner"] = user_id if choice == toss_result else game["player2"] if user_id == game["player1"] else game["player1"]
+    
+    logger.info(f"Cricket Game - Toss Button: Toss result was {toss_result}, winner is {game['toss_winner']}")
 
     winner_name = (await context.bot.get_chat(game["toss_winner"])).first_name
     keyboard = [[
@@ -263,13 +282,17 @@ async def choose_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     _, game_code, choice = query.data.split('_')
+    
+    logger.info(f"Cricket Game - Choose Button: User {user_id} chose to {choice} for game {game_code}")
 
     if game_code not in cricket_games:
+        logger.warning(f"Cricket Game - Choose Button: Game {game_code} not found")
         await query.answer("Game expired!")
         return
 
     game = cricket_games[game_code]
     if user_id != game["toss_winner"]:
+        logger.info(f"Cricket Game - Choose Button: User {user_id} tried to choose when not toss winner")
         await query.answer("Not your choice!")
         return
 
@@ -283,6 +306,8 @@ async def choose_button(update: Update, context: CallbackContext) -> None:
         "bowler": bowler,
         "current_players": {"batter": batter, "bowler": bowler}
     })
+    
+    logger.info(f"Cricket Game - Choose Button: Game {game_code} setup - Batter: {batter}, Bowler: {bowler}")
 
     await update_game_interface(game_code, context)
 
@@ -291,8 +316,11 @@ async def play_button(update: Update, context: CallbackContext) -> None:
     user_id = query.from_user.id
     _, game_code, number = query.data.split('_')
     number = int(number)
+    
+    logger.info(f"Cricket Game - Play Button: User {user_id} chose number {number} for game {game_code}")
 
     if game_code not in cricket_games:
+        logger.warning(f"Cricket Game - Play Button: Game {game_code} not found")
         await query.answer("Game expired!")
         return
 
@@ -301,6 +329,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
     # Validate player turn
     if user_id == game["current_players"]["batter"] and game["batter_choice"] is None:
         game["batter_choice"] = number
+        logger.info(f"Cricket Game - Play Button: Batter {user_id} chose {number}")
         await query.answer(f"Your choice: {number}")
         
         # Update game interface after batter's choice - DON'T REVEAL BATTER'S CHOICE
@@ -364,11 +393,14 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         
     elif user_id == game["current_players"]["bowler"] and game["bowler_choice"] is None:
         game["bowler_choice"] = number
+        logger.info(f"Cricket Game - Play Button: Bowler {user_id} chose {number}")
         await query.answer(f"Your choice: {number}")
         
         # Process the result now that both players have chosen
         batter_choice = game["batter_choice"]
         bowler_choice = number
+        
+        logger.info(f"Cricket Game - Play Button: Ball result - Batter: {batter_choice}, Bowler: {bowler_choice}")
         
         # Reset choices for next ball
         game["batter_choice"] = None
@@ -520,6 +552,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
             except Exception as e:
                 print(f"Error updating participant {participant_id}: {e}")
     else:
+        logger.info(f"Cricket Game - Play Button: User {user_id} tried to play out of turn")
         await query.answer("Not your turn!")
         return
 
