@@ -23,7 +23,7 @@ from cricket import (
     play_button,
     handle_wicket,
     end_innings,
-    declare_winnerupated
+    declare_winner,
     update_game_interface,
     chat_command,
     get_cricket_handlers
