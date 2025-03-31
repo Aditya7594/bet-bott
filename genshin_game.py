@@ -525,8 +525,10 @@ async def pull(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(response, parse_mode='Markdown')
 
 async def bag(update: Update, context: CallbackContext) -> None:
+    """Show user's bag contents."""
     user_id = str(update.effective_user.id)
     user_data = get_genshin_user_by_id(user_id)
+    
     if not user_data:
         await update.message.reply_text("🔹 You need to start the bot first by using /start.")
         return
