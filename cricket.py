@@ -3,6 +3,7 @@ import random
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext, MessageHandler, filters
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(
@@ -752,9 +753,42 @@ async def chat_command(update: Update, context: CallbackContext) -> None:
     else:
         await update.message.reply_text("❌ You are not in an active cricket game.")
 
+async def start(update: Update, context: CallbackContext) -> None:
+    """Handle the /start command."""
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    # Check if user exists in database
+    user_data = user_collection.find_one({"user_id": user_id})
+    
+    if not user_data:
+        # Create new user data
+        user_collection.insert_one({
+            "user_id": user_id,
+            "username": user.username,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "credits": 1000,  # Starting credits
+            "created_at": datetime.now()
+        })
+        
+        await update.message.reply_text(
+            f"👋 Welcome {user.first_name}!\n\n"
+            "🎮 You've been given 1000 credits to start playing.\n"
+            "Use /profile to check your balance and stats.\n"
+            "Use /help to see available commands."
+        )
+    else:
+        await update.message.reply_text(
+            f"👋 Welcome back {user.first_name}!\n\n"
+            "Use /profile to check your balance and stats.\n"
+            "Use /help to see available commands."
+        )
+
 def get_cricket_handlers():
     """Return all cricket game handlers."""
     return [
+        CommandHandler("start", start),
         CallbackQueryHandler(toss_button, pattern="^toss_"),
         CallbackQueryHandler(choose_button, pattern="^choose_"),
         CallbackQueryHandler(play_button, pattern="^play_"),
