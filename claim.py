@@ -48,6 +48,11 @@ async def send_random_claim(context: CallbackContext) -> None:
     # Re-schedule the next random claim after the interval
     context.job_queue.run_once(send_random_claim, interval, context=context.job.context)
 
+def get_random_claim_handlers():
+    return [
+        CommandHandler("randomclaim", random_claim),
+    ]
+
 # Daily reward function
 async def daily(update: Update, context: CallbackContext) -> None:
     user_id = str(update.effective_user.id)
@@ -79,7 +84,7 @@ async def daily(update: Update, context: CallbackContext) -> None:
 def get_claim_handlers():
     return [
         CommandHandler("daily", daily),
-        CommandHandler("randomclaim", random_claim),
         CallbackQueryHandler(claim_credits, pattern=r"^claim_\d+$"),
-        CallbackQueryHandler(claim_credits, pattern=r"^random_claim$")
+        CallbackQueryHandler(claim_credits, pattern=r"^random_claim$"),
+        *get_random_claim_handlers(),
     ]
