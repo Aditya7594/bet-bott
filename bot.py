@@ -715,7 +715,6 @@ def main() -> None:
     
     # Add all handlers inside the main function
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("profile", check_started(profile)))
     application.add_handler(CommandHandler("profile", profile))
     application.add_handler(CommandHandler("reach", reach))    
     application.add_handler(CommandHandler("reffer", reffer))
