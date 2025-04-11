@@ -5,7 +5,7 @@ from pymongo import MongoClient
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Tuple
-from telegram.ext import JobQueue,CommandHandler
+from telegram.ext import JobQueue,CommandHandler,CallbackQueryHandler
 import os
 
 OWNER_ID = 5667016949
