@@ -21,9 +21,8 @@ from cricket import (
     end_innings,
     declare_winner,
     update_game_interface,
-    get_cricket_handlers
-)from claim import get_claim_handlers
-from claim import daily, random_claim, claim_credits, send_random_claim
+    get_cricket_handlers)
+from claim import get_claim_handlers, daily
 from bank import store, withdraw, bank, get_bank_handlers
 from hilo_game import start_hilo, hilo_click, hilo_cashout, get_hilo_handlers
 from mines_game import Mines, Mines_click, Mines_CashOut, get_mines_handlers
