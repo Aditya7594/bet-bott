@@ -1,8 +1,9 @@
 from pymongo import MongoClient
+import os
+import secrets
 from flask import Flask
 from threading import Thread
-import asyncio
-import time
+import requests
 import re 
 import logging
 from datetime import datetime, timedelta
@@ -431,7 +432,6 @@ async def give(update: Update, context: CallbackContext) -> None:
         text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
     )
 
-last_interaction_time = {}
 
 async def universal_handler(update: Update, context: CallbackContext):
     try:
@@ -470,7 +470,6 @@ async def universal_handler(update: Update, context: CallbackContext):
         logger.error(f"Universal handler error: {str(e)}")
         if update.effective_chat.type == ChatType.PRIVATE:
             await update.message.reply_text("❌ An error occurred while processing your message.")
-
 async def handle_message(update: Update, context: CallbackContext):
     if not update.message or not update.message.text:
         return
@@ -480,8 +479,8 @@ async def handle_message(update: Update, context: CallbackContext):
     
     chat_id = update.effective_chat.id
 
-    # Update last interaction time (to not remove for now)
-    global last_interaction_time
+    # Check if user is muted
+    # Update last interaction time
     last_interaction_time[user_id] = datetime.utcnow()
 
     # Handle game-specific messages
@@ -624,10 +623,11 @@ async def handle_timeout(query: CallbackQuery, game: dict) -> None:
     if "bet" in game:
         user_id = game.get("player_id") or game.get("player1")
         if user_id:
-                user_data = get_user_by_id(user_id)
-                if user_data:
-                    user_data["credits"] += game["bet"]
-                    save_user(user_data)
+            user_data = get_user_by_id(user_id)
+            if user_data:
+                user_data["credits"] += game["bet"]
+                save_user(user_data)
+
 
             
 
@@ -662,7 +662,6 @@ async def dm_forwarder(update: Update, context: CallbackContext) -> None:
         except Exception as e:
             logger.error(f"Error forwarding message: {e}")
 
-
 async def chat_command_cricket(update: Update, context: CallbackContext) -> None:
     """Handle the /c command for chat during cricket games."""
     if not context.args:
@@ -683,24 +682,17 @@ async def chat_command_cricket(update: Update, context: CallbackContext) -> None
         # Get the other player's ID
         other_player_id = game["player2"] if user_id == game["player1"] else game["player1"]
         
-        # Format the message with sender's name
+        # Format the message
         formatted_message = f"💬 {user.first_name}: {message}"
 
         try:
-            # Check if the other player has started the bot
-            other_player_data = get_user_by_id(str(other_player_id))
-            if not other_player_data:
-                await update.message.reply_text("❌ The other player hasn't started the bot.")
-                return
-            
-            # Send the message to the other player's DM as an integer
+            # Send the message to the other player's DM
             await context.bot.send_message(
-                chat_id=int(other_player_id),
+                chat_id=int(other_player_id),  # Convert to integer
                 text=formatted_message
             )
-            # Delete the original /c command message
+            # Delete the command message in private chat
             await update.message.delete()
-
         except Exception as e:
             logger.error(f"Error sending chat message: {e}")
             await update.message.reply_text("❌ Failed to send message to the other player.")
@@ -708,26 +700,16 @@ async def chat_command_cricket(update: Update, context: CallbackContext) -> None
         await update.message.reply_text("❌ You are not in an active cricket game.")
 
 def check_started(func):
-    """Decorator to check if the user has started the bot before running a command."""
-    async def wrapper(update: Update, context: CallbackContext, *args, **kwargs):
-        """Wrapper function to check user and run the original command."""
+    async def wrapper(update: Update, context: CallbackContext):
         user_id = str(update.effective_user.id)
         user_data = get_user_by_id(user_id)
-        if not user_data:
+        if user_data is None:
             await update.message.reply_text("You need to start the bot first by using /start.")
             return
-        await func(update, context, *args, **kwargs)
+        await func(update, context)
     return wrapper
 
-async def timeout_task(context: CallbackContext):
-    """Periodically check for timed-out games."""
-    pass
-
-
 def main() -> None:
-
-    # to use it:
-    # application.job_queue.run_repeating(timeout_task, interval=60, first=10)
 
     application = Application.builder().token(token).build()
 
@@ -792,7 +774,7 @@ def main() -> None:
     # Flask background thread
     Thread(target=run_flask).start()
     
-
+    application.job_queue.run_repeating(timeout_task, interval=60, first=10)
 
     # Add error handler
     application.add_error_handler(error_handler)
