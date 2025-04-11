@@ -1,10 +1,7 @@
 from pymongo import MongoClient
 import os
 import secrets
-from flask import Flask
-from threading import Thread
 import requests
-import re 
 import logging
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
@@ -12,7 +9,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from telegram.constants import ChatType
 from token_1 import token
 
-from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button, send_artifact_reward, get_genshin_handlers
+from genshin_game import get_genshin_handlers
 from cricket import (
     chat_cricket,
     handle_join_button,
@@ -25,7 +22,7 @@ from cricket import (
     declare_winner,
     update_game_interface,
     get_cricket_handlers
-)
+)from claim import get_claim_handlers
 from claim import daily, random_claim, claim_credits, send_random_claim
 from bank import store, withdraw, bank, get_bank_handlers
 from hilo_game import start_hilo, hilo_click, hilo_cashout, get_hilo_handlers
@@ -123,17 +120,6 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 async def error_handler(update: Update, context: CallbackContext) -> None:
     """Log Errors caused by Updates."""
     logger.warning(f'Update "{update}" caused error "{context.error}"')
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is alive!"
-
-def run_flask():
-    app.run(host='0.0.0.0', port=8080)
-
-
 
 async def reffer(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
@@ -745,6 +731,9 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("help", help_command))
+    for handler in get_claim_handlers():
+        application.add_handler(handler)
+
     application.add_handler(CommandHandler("addcredits", add_credits))
 
     # Add cricket game handlers
@@ -791,8 +780,6 @@ def main() -> None:
         universal_handler
     ))
 
-    # Flask background thread
-    Thread(target=run_flask).start()
     
     application.job_queue.run_repeating(timeout_task, interval=60, first=10, name='timeout_task')
 
