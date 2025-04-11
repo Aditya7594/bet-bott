@@ -584,13 +584,9 @@ async def bag(update: Update, context: CallbackContext) -> None:
 
 async def button(update: Update, context: CallbackContext) -> None:
     """Handle button presses related to Genshin Impact content."""    
-    query.answer()
-
-    if update.callback_query is None:
-        query = update.message
-    else:
-        query = update.callback_query
-
+    query = update.callback_query
+    await query.answer()  # Answer the callback query to stop the loading animation
+    
     user_id = str(query.from_user.id)
     user_data = get_genshin_user_by_id(user_id)
     if not user_data:
@@ -644,18 +640,6 @@ async def button(update: Update, context: CallbackContext) -> None:
         total_weapons = sum(1 for _ in weapons)
         total_artifacts = sum(1 for _ in artifacts)
 
-        characters_str = "\n".join([f"✨ {char}: {info}" for char, info in characters.items()]) if characters else "No characters in bag."
-        weapons_str = "\n".join([f"⚔️ {weapon}: {info}" for weapon, info in weapons.items()]) if weapons else "No weapons in bag."
-        artifacts_str = "\n".join([f"🖼️ {name}: x{info.get('count', info.get('refinement', 1))}" for name, info in artifacts.items()]) if artifacts else "No artifacts in bag."
-
-        keyboard = [
-            [InlineKeyboardButton("Characters", callback_data="show_characters"),
-             InlineKeyboardButton("Weapons", callback_data="show_weapons"),
-             InlineKeyboardButton("Artifacts", callback_data="show_artifacts")],
-            [InlineKeyboardButton("Back", callback_data="back")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
         response = (
             "🔹 **Your Bag:**\n\n"
             f"💎 **Primogems:** {primos}\n\n"
@@ -663,9 +647,13 @@ async def button(update: Update, context: CallbackContext) -> None:
             f"⚔️ **Total Weapons:** {total_weapons}\n"
             f"🖼️ **Total Artifacts:** {total_artifacts}"
         )
-
-        await query.edit_message_text(response, reply_markup=reply_markup, parse_mode='Markdown')
-        return
+        
+        keyboard = [
+            [InlineKeyboardButton("Characters", callback_data="show_characters"),
+             InlineKeyboardButton("Weapons", callback_data="show_weapons"),
+             InlineKeyboardButton("Artifacts", callback_data="show_artifacts")],
+            [InlineKeyboardButton("Back", callback_data="back")]
+        ]
     else:
         return
 
