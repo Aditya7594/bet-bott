@@ -722,14 +722,14 @@ def check_started(func):
 def main() -> None:
 
     application = Application.builder().token(token).build()
-
+    
     # Add all handlers inside the main function
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("profile", check_started(profile)))
     application.add_handler(CommandHandler("give", check_started(give)))
     application.add_handler(CommandHandler("reach", reach))
     application.add_handler(CommandHandler("reffer", reffer))
-    application.add_handler(CommandHandler("reset", reset))    
+    application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("daily", daily))
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
@@ -744,7 +744,7 @@ def main() -> None:
     application.add_handler(CommandHandler("chatcricket", chat_cricket))
     application.add_handler(CommandHandler("join", handle_join_button))
     application.add_handler(CommandHandler("watch", handle_watch_button))
-    
+
     # Add cricket game callback handlers
     application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
     application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
@@ -784,7 +784,7 @@ def main() -> None:
         universal_handler
     ))
 
-    
+
     application.job_queue.run_repeating(timeout_task, interval=60, first=10, name='timeout_task')
 
     # Add error handler
