@@ -40,6 +40,29 @@ db = client['telegram_bot']
 users_collection = db['users']
 genshin_collection = db['genshin_users']
 
+# Global variable for tracking last interaction time
+last_interaction_time = {}
+
+async def timeout_task(context: CallbackContext) -> None:
+    """Checks for game timeouts and handles them."""
+    now = datetime.utcnow()
+    
+    # Check each game collection for timeouts
+    for game_type in ['cricket', 'hilo', 'mines', 'xox']:
+        games = db[f'{game_type}_games'].find({"active": True})
+        
+        for game in games:
+            if game.get("last_move") is None:
+                continue
+            if (now - game["last_move"]) > timedelta(minutes=5):
+                # Create a dummy query for timeout
+                class DummyQuery:
+                    pass
+                dummy_query = DummyQuery()
+                dummy_query.message = None
+                await handle_timeout(dummy_query, game)
+
+
 # MongoDB management functions
 def get_user_by_id(user_id):
     return users_collection.find_one({"user_id": user_id})
@@ -683,25 +706,6 @@ async def chat_command_cricket(update: Update, context: CallbackContext) -> None
             await update.message.reply_text("❌ Failed to send message to the other player.")
     else:
         await update.message.reply_text("❌ You are not in an active cricket game.")
-
-def check_started(func):
-    async def timeout_task(context: CallbackContext) -> None:
-        now = datetime.utcnow()
-        
-        # Check each game collection for timeouts
-        for game_type in ['cricket', 'hilo', 'mines', 'xox']:
-            games = db[f'{game_type}_games'].find({"active": True})
-            
-            for game in games:
-                if game.get("last_move") is None:
-                    continue
-                if (now - game["last_move"]) > timedelta(minutes=5):
-                    # Create a dummy query for timeout
-                    class DummyQuery:
-                        pass
-                    dummy_query = DummyQuery()
-                    dummy_query.message = None
-                    await handle_timeout(dummy_query, game)
     
 
     async def wrapper(update: Update, context: CallbackContext):
@@ -713,6 +717,7 @@ def check_started(func):
         await func(update, context)
     return wrapper
 
+def check_started(func):
 
 def main() -> None:
 
