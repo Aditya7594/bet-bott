@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from typing import Dict, Tuple
 from telegram.ext import JobQueue
 import os
-from telegram.ext import CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 OWNER_ID = 5667016949
 logging.basicConfig(level=logging.INFO)
@@ -139,7 +138,7 @@ async def start(update: Update, context: CallbackContext) -> None:
             "user_id": user_id,
             "first_name": first_name,
             "primos": 16000,  # Initial primogems
-            "bag": {},
+            "bag": {"artifacts": {}},
             "daily_earned": 0,        # New field to track daily earned primogems
             "last_reset": today_5am,  # New field to track the last reset time
         }
@@ -159,10 +158,11 @@ async def reward_primos(update: Update, context: CallbackContext):
     save_genshin_user(user_data)
     
 def get_group_settings(chat_id: int) -> dict:
-    """Get group settings, create default if not exists"""
+    """Get group settings, or create default if not exists."""
     settings = group_settings.find_one({"chat_id": chat_id})
     if not settings:
         settings = {
+            "_id": chat_id,
             "chat_id": chat_id,
             "artifact_threshold": 50,  # Default threshold
             "artifact_enabled": True,   # Default enabled
@@ -172,7 +172,7 @@ def get_group_settings(chat_id: int) -> dict:
     return settings
 
 def update_group_settings(chat_id: int, settings: dict):
-    """Update group settings"""
+    """Update group settings."""
     group_settings.update_one(
         {"chat_id": chat_id},
         {"$set": settings},
@@ -180,7 +180,7 @@ def update_group_settings(chat_id: int, settings: dict):
     )
 
 async def handle_message(update: Update, context: CallbackContext) -> None:
-    chat_id = update.effective_chat.id
+    chat_id = str(update.effective_chat.id)
 
     # Skip if the message is not from a group
     if update.effective_chat.type not in ["group", "supergroup"]:
@@ -212,7 +212,7 @@ async def handle_message(update: Update, context: CallbackContext) -> None:
         await send_artifact_reward(chat_id, context)
 
 async def set_threshold(update: Update, context: CallbackContext) -> None:
-    # Check if the command is used in a group
+    """Set the artifact drop threshold for a group."""
     if update.effective_chat.type not in ["group", "supergroup"]:
         await update.message.reply_text("❗ This command can only be used in groups.")
         return
@@ -222,15 +222,14 @@ async def set_threshold(update: Update, context: CallbackContext) -> None:
     user_id = update.effective_user.id
     chat_member = await context.bot.get_chat_member(chat_id, user_id)
     
-    if chat_member.status not in ['creator', 'administrator']:
+    if chat_member.status not in ["creator", "administrator"]:
         await update.message.reply_text("❗ Only administrators can use this command.")
         return
 
     try:
         threshold = int(context.args[0])
-        if threshold < 50:
-            await update.message.reply_text("❗ The threshold cannot be less than 50 messages.")
-            return
+        if not 10 <= threshold <= 100:
+            raise ValueError("Threshold out of range")
     except (IndexError, ValueError):
         await update.message.reply_text("Usage: /setthreshold <number>")
         return
@@ -243,7 +242,7 @@ async def set_threshold(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(f"✅ Artifact threshold set to {threshold} messages.")
 
 async def toggle_artifacts(update: Update, context: CallbackContext) -> None:
-    # Check if the command is used in a group
+    """Toggle the artifact system on or off for a group."""
     if update.effective_chat.type not in ["group", "supergroup"]:
         await update.message.reply_text("❗ This command can only be used in groups.")
         return
@@ -267,7 +266,7 @@ async def toggle_artifacts(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(f"✅ Artifact system has been {status}.")
 
 async def artifact_settings(update: Update, context: CallbackContext) -> None:
-    # Check if the command is used in a group
+    """Display the current artifact system settings for a group."""
     if update.effective_chat.type not in ["group", "supergroup"]:
         await update.message.reply_text("❗ This command can only be used in groups.")
         return
@@ -290,6 +289,7 @@ async def artifact_settings(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(message, parse_mode='Markdown')
 
 async def send_artifact_reward(chat_id: int, context: CallbackContext) -> None:
+    """Send an artifact reward to a group."""
     artifact_name, artifact_image = random.choice(list(ARTIFACTS.items()))
 
     try:
@@ -322,6 +322,7 @@ async def send_artifact_reward(chat_id: int, context: CallbackContext) -> None:
         await context.bot.send_message(chat_id=chat_id, text="❌ Failed to send artifact reward. Please try again.")
 
 async def handle_artifact_button(update: Update, context: CallbackContext) -> None:
+    """Handle the action when a user clicks the 'Get' button for an artifact."""
     query = update.callback_query
     user_id = str(query.from_user.id)
     chat_id = query.message.chat_id
@@ -365,7 +366,8 @@ async def handle_artifact_button(update: Update, context: CallbackContext) -> No
     if artifact_message_id:
         await context.bot.delete_message(chat_id=chat_id, message_id=artifact_message_id)
 
-def reset_artifact_claimed(context: CallbackContext):
+def reset_artifact_claimed(context: CallbackContext) -> None:
+    """Reset the claimed status of an artifact after a certain period."""
     job = context.job
     chat_id = job.chat_id
     artifact_name = job.name.replace("reset_", "")  
@@ -373,6 +375,7 @@ def reset_artifact_claimed(context: CallbackContext):
         del context.chat_data[f"artifact_{artifact_name}"]
         logger.info(f"Current chat_data: {context.chat_data}")
         logger.info(f"Artifact {artifact_name} reset for chat {chat_id}.")
+
 
 async def add_primos(update: Update, context: CallbackContext) -> None:
     if update.effective_user.id != OWNER_ID:
@@ -449,6 +452,7 @@ def draw_3_star_item(characters: Dict[str, int], weapons: Dict[str, int]) -> str
     three_star_items = list({k: v for k, v in {**characters, **weapons}.items() if v == 3}.keys())
     return random.choice(three_star_items)
 
+
 def update_item(user_data: Dict, item: str, item_type: str):
     if item_type not in ["characters", "weapons"]:
         raise ValueError(f"Invalid item type: {item_type}")
@@ -471,6 +475,7 @@ def update_item(user_data: Dict, item: str, item_type: str):
             user_data["bag"][item_type][item] = f"⚔️ R{current_level + 1}"
             
 async def pull(update: Update, context: CallbackContext) -> None:
+    """Handle the /pull command for Genshin Impact-style pulls."""
     user_id = str(update.effective_user.id)
     user_data = get_genshin_user_by_id(user_id)
     if not user_data:
@@ -527,7 +532,7 @@ async def pull(update: Update, context: CallbackContext) -> None:
 async def bag(update: Update, context: CallbackContext) -> None:
     """Show user's bag contents."""
     user_id = str(update.effective_user.id)
-    user_data = get_genshin_user_by_id(user_id)
+    user_data = get_genshin_user_by_id(user_id) or {"bag": {}}
     
     if not user_data:
         await update.message.reply_text("🔹 You need to start the bot first by using /start.")
@@ -578,7 +583,7 @@ async def bag(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(response, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def button(update: Update, context: CallbackContext) -> None:
-    query = update.callback_query
+    """Handle button presses related to Genshin Impact content."""    
     query.answer()
 
     user_id = str(query.from_user.id)
@@ -665,7 +670,7 @@ async def button(update: Update, context: CallbackContext) -> None:
 def get_all_genshin_users():
     """
     Retrieve all Genshin users from the MongoDB collection.
-    """
+    """    
     return list(genshin_collection.find({}, {"_id": 0, "user_id": 1, "primos": 1, "first_name": 1}))
 
 async def leaderboard(update: Update, context: CallbackContext) -> None:
@@ -722,23 +727,20 @@ async def drop_primos(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"Error dropping primos: {e}")
         await update.message.reply_text("❌ An error occurred while dropping primos.")
-
 def get_genshin_handlers():
     """Return all genshin handlers."""
     return [
-        CommandHandler("pull", pull),
-        CommandHandler("bag", bag),
-        CommandHandler("leaderboard", leaderboard),
-        CommandHandler("resetbag", reset_bag_data),
-        CommandHandler("drop", drop_primos),
-        CommandHandler("setthreshold", set_threshold),
-        CommandHandler("toggleartifacts", toggle_artifacts),
-        CommandHandler("artifactsettings", artifact_settings),
-        CallbackQueryHandler(button, pattern="^genshin_"),
-        CallbackQueryHandler(handle_artifact_button, pattern="^artifact_"),
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+        CommandHandler("pull", pull),  # Handle the /pull command
+        CommandHandler("bag", bag),  # Handle the /bag command
+        CommandHandler("leaderboard", leaderboard),  # Handle the /leaderboard command
+        CommandHandler("resetbag", reset_bag_data),  # Handle the /resetbag command
+        CommandHandler("drop", drop_primos),  # Handle the /drop command
+        CommandHandler("setthreshold", set_threshold),  # Handle the /setthreshold command
+        CommandHandler("toggleartifacts", toggle_artifacts),  # Handle the /toggleartifacts command
+        CommandHandler("artifactsettings", artifact_settings),  # Handle the /artifactsettings command
+        CallbackQueryHandler(button, pattern="^(show_characters|show_weapons|show_artifacts|back)$"), # Handle artifact-related buttons
+        CallbackQueryHandler(handle_artifact_button, pattern="^artifact_") #Handle artifact-related buttons
     ]
-
 def initialize_user(user_id):
     user_data = {
         "primos": 16000,  # Changed from 0 to 16000
