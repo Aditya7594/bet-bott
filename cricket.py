@@ -1,6 +1,6 @@
 from pymongo import MongoClient
 import random
-import logging
+import logging,re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext, MessageHandler, filters
 from datetime import datetime
@@ -21,6 +21,31 @@ cricket_games = {}
 def generate_game_code():
     return str(random.randint(100, 999))
 
+async def check_user_started_bot(update: Update, context: CallbackContext) -> bool:
+    """Checks if the user has started the bot and prompts them if they haven't."""
+    user = update.effective_user
+    user_id = str(user.id)
+    user_data = user_collection.find_one({"user_id": user_id})
+
+    if not user_data:
+        bot_username = (await context.bot.get_me()).username
+        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/{bot_username}?start=start")]]
+
+        user_tag = f"@{user.username}" if user.username else user.first_name if user.first_name else user_id
+
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"⚠️ {user_tag}, you need to start the bot first!\n"
+                 f"Click the button below to start the bot.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+        return False
+    return True
+
+
+
+
 async def chat_cricket(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     chat_id = update.effective_chat.id
@@ -32,15 +57,10 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
             text="⚠️ This command can only be used in group chats!")
         return
     
-    user_data = user_collection.find_one({"user_id": str(user.id)})
-    if not user_data:
-        bot_username = (await context.bot.get_me()).username
-        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/{bot_username}?start=start")]]
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚠️ You need to start the bot first to create a match!",
-            reply_markup=InlineKeyboardMarkup(keyboard))
-        return
+    # Check if the user has started the bot
+    if not await check_user_started_bot(update, context):
+        return  # Exit if the user hasn't started the bot
+
 
     game_code = generate_game_code()
     while game_code in cricket_games:
@@ -169,6 +189,10 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
     user_id = query.from_user.id
     _, game_code = query.data.split('_')
     
+    # Check if the user has started the bot
+    if not await check_user_started_bot(update, context):
+        return  # Exit if the user hasn't started the bot
+    
     logger.info(f"Cricket Game - Join Button: User {user_id} attempted to join game {game_code}")
 
     if game_code not in cricket_games:
@@ -214,6 +238,10 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     user_id = query.from_user.id
     _, game_code = query.data.split('_')
 
+    # Check if the user has started the bot
+    if not await check_user_started_bot(update, context):
+        return  # Exit if the user hasn't started the bot
+
     if game_code not in cricket_games:
         await query.answer("Game not found or expired!")
         return
@@ -246,6 +274,10 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     _, game_code, choice = query.data.split('_')
+    
+    # Check if the user has started the bot
+    if not await check_user_started_bot(update, context):
+        return  # Exit if the user hasn't started the bot
     
     logger.info(f"Cricket Game - Toss Button: User {user_id} chose {choice} for game {game_code}")
 
@@ -284,6 +316,10 @@ async def choose_button(update: Update, context: CallbackContext) -> None:
     user_id = query.from_user.id
     _, game_code, choice = query.data.split('_')
     
+    # Check if the user has started the bot
+    if not await check_user_started_bot(update, context):
+        return  # Exit if the user hasn't started the bot
+    
     logger.info(f"Cricket Game - Choose Button: User {user_id} chose to {choice} for game {game_code}")
 
     if game_code not in cricket_games:
@@ -317,6 +353,10 @@ async def play_button(update: Update, context: CallbackContext) -> None:
     user_id = query.from_user.id
     _, game_code, number = query.data.split('_')
     number = int(number)
+    
+    # Check if the user has started the bot
+    if not await check_user_started_bot(update, context):
+        return  # Exit if the user hasn't started the bot
     
     logger.info(f"Cricket Game - Play Button: User {user_id} chose number {number} for game {game_code}")
 
@@ -723,6 +763,10 @@ async def chat_command(update: Update, context: CallbackContext) -> None:
     user_id = str(user.id)
     message = " ".join(context.args)
 
+    # Check if the user has started the bot
+    if not await check_user_started_bot(update, context):
+        return  # Exit if the user hasn't started the bot
+    
     # Check for active cricket game
     game = db['cricket_games'].find_one({
         "$or": [{"player1": user_id}, {"player2": user_id}],
@@ -758,6 +802,7 @@ async def start(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
     
+
     # Check if user exists in database
     user_data = user_collection.find_one({"user_id": user_id})
     
@@ -792,6 +837,7 @@ def get_cricket_handlers():
         CallbackQueryHandler(toss_button, pattern="^toss_"),
         CallbackQueryHandler(choose_button, pattern="^choose_"),
         CallbackQueryHandler(play_button, pattern="^play_"),
-        CallbackQueryHandler(handle_join_button, pattern="^join_"),
-        CallbackQueryHandler(handle_watch_button, pattern="^watch_")
+        CallbackQueryHandler(handle_join_button, pattern=r"^join_"),
+        CallbackQueryHandler(handle_watch_button, pattern=r"^watch_")
     ]
+
