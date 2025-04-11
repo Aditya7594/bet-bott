@@ -708,26 +708,18 @@ async def chat_command_cricket(update: Update, context: CallbackContext) -> None
         await update.message.reply_text("❌ You are not in an active cricket game.")
     
 
-    async def wrapper(update: Update, context: CallbackContext):
-        user_id = str(update.effective_user.id)
-        user_data = get_user_by_id(user_id)
-        if user_data is None:
-            await update.message.reply_text("You need to start the bot first by using /start.")
-            return
-        await func(update, context)
-    return wrapper
-
-def check_started(func):
-
 def main() -> None:
-
     application = Application.builder().token(token).build()
+
+
     
     # Add all handlers inside the main function
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("profile", check_started(profile)))
     application.add_handler(CommandHandler("give", check_started(give)))
-    application.add_handler(CommandHandler("reach", reach))
+    application.add_handler(CommandHandler("profile", profile))
+    application.add_handler(CommandHandler("give", give))
+    application.add_handler(CommandHandler("reach", reach))    
     application.add_handler(CommandHandler("reffer", reffer))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("broadcast", broadcast))
@@ -735,56 +727,53 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("help", help_command))
-    for handler in get_claim_handlers():
-        application.add_handler(handler)
+    for handler in get_claim_handlers():        
+      application.add_handler(handler)
+    
+    application.add_handler(CommandHandler("addcredits", add_credits))    
 
-    application.add_handler(CommandHandler("addcredits", add_credits))
-
-    # Add cricket game handlers
-    application.add_handler(CommandHandler("chatcricket", chat_cricket))
-    application.add_handler(CommandHandler("join", handle_join_button))
+    # Add cricket game handlers    
+    application.add_handler(CommandHandler("chatcricket", chat_cricket))    
+    application.add_handler(CommandHandler("join", handle_join_button))    
     application.add_handler(CommandHandler("watch", handle_watch_button))
 
-    # Add cricket game callback handlers
-    application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))
-    application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))
-    application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))
-    application.add_handler(CallbackQueryHandler(handle_join_button, pattern="^join_"))
+    # Add cricket game callback handlers    
+    application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))    
+    application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))    
+    application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))    
+    application.add_handler(CallbackQueryHandler(handle_join_button, pattern="^join_"))    
     application.add_handler(CallbackQueryHandler(handle_watch_button, pattern="^watch_"))
 
-    # Add cricket game deep link handlers
-    application.add_handler(MessageHandler(
-        filters.Regex(r"^/start ([0-9]{3})$"),
-        handle_join_button
-    ))
-    application.add_handler(MessageHandler(
-        filters.Regex(r"^/start watch_([0-9]{3})$"),
-        handle_watch_button
-    ))
-
-    # Add game handlers
-    for handler in get_xox_handlers():
-        application.add_handler(handler)
-    for handler in get_hilo_handlers():
-        application.add_handler(handler)
-    for handler in get_mines_handlers():
-        application.add_handler(handler)
-    for handler in get_genshin_handlers():
-        application.add_handler(handler)
-    for handler in get_bank_handlers():
-        application.add_handler(handler)
-
-
-    # Add the /c command handler before the universal message handler
-    application.add_handler(CommandHandler("c", chat_command_cricket))
-
-    # Universal message handler (must come after all other specific handlers)
-    application.add_handler(MessageHandler(
-        (filters.TEXT | filters.Sticker.ALL) & ~filters.COMMAND,
-        universal_handler
+    # Add cricket game deep link handlers    
+    application.add_handler(MessageHandler(        
+        filters.Regex(r"^/start ([0-9]{3})$"),        
+        handle_join_button    
+    ))    
+    application.add_handler(MessageHandler(        
+        filters.Regex(r"^/start watch_([0-9]{3})$"),        
+        handle_watch_button    
     ))
 
+    # Add game handlers    
+    for handler in get_xox_handlers():        
+      application.add_handler(handler)    
+    for handler in get_hilo_handlers():        
+      application.add_handler(handler)    
+    for handler in get_mines_handlers():        
+      application.add_handler(handler)    
+    for handler in get_genshin_handlers():        
+      application.add_handler(handler)    
+    for handler in get_bank_handlers():        
+      application.add_handler(handler)
 
+    # Add the /c command handler before the universal message handler    
+    application.add_handler(CommandHandler("c", chat_command_cricket))    
+
+    # Universal message handler (must come after all other specific handlers)    
+    application.add_handler(MessageHandler(        
+        (filters.TEXT | filters.Sticker.ALL) & ~filters.COMMAND,        
+        universal_handler    
+    ))
     application.job_queue.run_repeating(timeout_task, interval=60, first=10, name='timeout_task')
 
     # Add error handler
