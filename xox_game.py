@@ -73,7 +73,7 @@ async def xox(update: Update, context: CallbackContext) -> None:
         )
         return
 
-    new_game = {
+   new_game = {
         "_id": game_id,
         "player1": user_id,
         "player2": None,
