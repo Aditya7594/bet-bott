@@ -1,9 +1,8 @@
 from pymongo import MongoClient
-import os
-import secrets
 from flask import Flask
 from threading import Thread
-import requests
+import asyncio
+import time
 import re 
 import logging
 from datetime import datetime, timedelta
@@ -370,7 +369,6 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(report_message)
 
 async def give(update: Update, context: CallbackContext) -> None:
-    """Handle the /give command to transfer credits between users."""
     giver = update.effective_user
     giver_id = str(giver.id)
     message = update.message
@@ -433,12 +431,13 @@ async def give(update: Update, context: CallbackContext) -> None:
         text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
     )
 
+last_interaction_time = {}
 
 async def universal_handler(update: Update, context: CallbackContext):
     try:
         if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
             # Only reward primos for text messages
-            if update.message and update.message.text:
+            if update.message and update.message.text and not update.message.text.startswith("/"):
                 user_id = str(update.effective_user.id)
                 user_data = get_genshin_user_by_id(user_id)
                 
@@ -472,17 +471,17 @@ async def universal_handler(update: Update, context: CallbackContext):
         if update.effective_chat.type == ChatType.PRIVATE:
             await update.message.reply_text("❌ An error occurred while processing your message.")
 
-async def handle_message(update: Update, context: CallbackContext) -> None:
-    """Handle messages and check for active games."""
+async def handle_message(update: Update, context: CallbackContext):
     if not update.message or not update.message.text:
         return
 
     user_id = str(update.effective_user.id)
     message = update.message.text.lower()
+    
     chat_id = update.effective_chat.id
 
-    # Check if user is muted
-    # Update last interaction time
+    # Update last interaction time (to not remove for now)
+    global last_interaction_time
     last_interaction_time[user_id] = datetime.utcnow()
 
     # Handle game-specific messages
@@ -625,15 +624,12 @@ async def handle_timeout(query: CallbackQuery, game: dict) -> None:
     if "bet" in game:
         user_id = game.get("player_id") or game.get("player1")
         if user_id:
-            user_data = get_user_by_id(user_id)
-            if user_data:
-                user_data["credits"] += game["bet"]
-                save_user(user_data)
+                user_data = get_user_by_id(user_id)
+                if user_data:
+                    user_data["credits"] += game["bet"]
+                    save_user(user_data)
 
-
-
-
-
+            
 
 async def dm_forwarder(update: Update, context: CallbackContext) -> None:
     """Forward messages between users in cricket games."""
@@ -666,6 +662,7 @@ async def dm_forwarder(update: Update, context: CallbackContext) -> None:
         except Exception as e:
             logger.error(f"Error forwarding message: {e}")
 
+
 async def chat_command_cricket(update: Update, context: CallbackContext) -> None:
     """Handle the /c command for chat during cricket games."""
     if not context.args:
@@ -686,24 +683,52 @@ async def chat_command_cricket(update: Update, context: CallbackContext) -> None
         # Get the other player's ID
         other_player_id = game["player2"] if user_id == game["player1"] else game["player1"]
         
-        # Format the message
+        # Format the message with sender's name
         formatted_message = f"💬 {user.first_name}: {message}"
 
         try:
-            # Send the message to the other player's DM
+            # Check if the other player has started the bot
+            other_player_data = get_user_by_id(str(other_player_id))
+            if not other_player_data:
+                await update.message.reply_text("❌ The other player hasn't started the bot.")
+                return
+            
+            # Send the message to the other player's DM as an integer
             await context.bot.send_message(
-                chat_id=int(other_player_id),  # Convert to integer
+                chat_id=int(other_player_id),
                 text=formatted_message
             )
-            # Delete the command message in private chat
+            # Delete the original /c command message
             await update.message.delete()
+
         except Exception as e:
             logger.error(f"Error sending chat message: {e}")
             await update.message.reply_text("❌ Failed to send message to the other player.")
     else:
         await update.message.reply_text("❌ You are not in an active cricket game.")
 
+def check_started(func):
+    """Decorator to check if the user has started the bot before running a command."""
+    async def wrapper(update: Update, context: CallbackContext, *args, **kwargs):
+        """Wrapper function to check user and run the original command."""
+        user_id = str(update.effective_user.id)
+        user_data = get_user_by_id(user_id)
+        if not user_data:
+            await update.message.reply_text("You need to start the bot first by using /start.")
+            return
+        await func(update, context, *args, **kwargs)
+    return wrapper
+
+async def timeout_task(context: CallbackContext):
+    """Periodically check for timed-out games."""
+    pass
+
+
 def main() -> None:
+
+    # to use it:
+    # application.job_queue.run_repeating(timeout_task, interval=60, first=10)
+
     application = Application.builder().token(token).build()
 
     # Add all handlers inside the main function
@@ -767,7 +792,7 @@ def main() -> None:
     # Flask background thread
     Thread(target=run_flask).start()
     
-    application.job_queue.run_repeating(timeout_task, interval=60, first=10)
+
 
     # Add error handler
     application.add_error_handler(error_handler)
