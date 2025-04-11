@@ -5,7 +5,7 @@ from pymongo import MongoClient
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Tuple
-from telegram.ext import JobQueue,CommandHandler,CallbackQueryHandler
+from telegram.ext import JobQueue
 import os
 
 OWNER_ID = 5667016949
@@ -585,6 +585,11 @@ async def bag(update: Update, context: CallbackContext) -> None:
 async def button(update: Update, context: CallbackContext) -> None:
     """Handle button presses related to Genshin Impact content."""    
     query.answer()
+
+    if update.callback_query is None:
+        query = update.message
+    else:
+        query = update.callback_query
 
     user_id = str(query.from_user.id)
     user_data = get_genshin_user_by_id(user_id)
