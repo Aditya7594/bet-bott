@@ -1,5 +1,4 @@
 from pymongo import MongoClient
-import asyncio
 import os
 import secrets
 from flask import Flask
@@ -12,7 +11,6 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Callbac
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters
 from telegram.constants import ChatType
 from token_1 import token
-from functools import wraps
 
 from genshin_game import pull, bag, reward_primos, add_primos, leaderboard, handle_message, button, reset_bag_data, drop_primos, set_threshold, handle_artifact_button, send_artifact_reward, get_genshin_handlers
 from cricket import (
@@ -26,27 +24,21 @@ from cricket import (
     end_innings,
     declare_winner,
     update_game_interface,
-    chat_command,
     get_cricket_handlers
 )
-from bdice import bdice
 from claim import daily, random_claim, claim_credits, send_random_claim
 from bank import store, withdraw, bank, get_bank_handlers
 from hilo_game import start_hilo, hilo_click, hilo_cashout, get_hilo_handlers
 from mines_game import Mines, Mines_click, Mines_CashOut, get_mines_handlers
 from xox_game import get_xox_handlers
 
+# Constants and settings
 OWNER_ID = 5667016949
-muted_users = set()
-last_interaction_time = {}
-user_daily_credits = {}
-
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot') 
 db = client['telegram_bot']
 users_collection = db['users']
@@ -71,16 +63,6 @@ def escape_markdown_v2(text):
 
 def generate_referral_link(user_id):
     return f"https://t.me/YourBotUsername?start=ref{user_id}"
-
-def check_started(func):
-    @wraps(func)
-    async def wrapped(update: Update, context: CallbackContext, *args, **kwargs):
-        user_id = str(update.effective_user.id)
-        if get_user_by_id(user_id) is None:
-            await update.message.reply_text("You need to start the bot first by using /start.")
-            return
-        return await func(update, context, *args, **kwargs)
-    return wrapped
 
 async def start(update: Update, context: CallbackContext) -> None:
     """Handle the /start command."""
@@ -151,16 +133,7 @@ def home():
 def run_flask():
     app.run(host='0.0.0.0', port=8080)
 
-# Start Flask in a background thread
-Thread(target=run_flask).start()
 
-# Keep-alive function
-async def keep_alive(context: CallbackContext):
-    try:
-        requests.get("https://your-app-name.koyeb.app/")  # Ping your Koyeb app
-        await context.bot.send_message(chat_id=CHANNEL_ID, text="🤖 Bot is alive!")
-    except Exception as e:
-        logging.error(f"Keep-alive failed: {e}")
 
 async def reffer(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
@@ -193,7 +166,7 @@ async def profile(update: Update, context: CallbackContext) -> None:
 
     if not user_data:
         await update.message.reply_text("You need to start the bot first by using /start.")
-        return
+        return  # Exit early if user is not registered
 
     # Get user's credits
     credits = user_data.get('credits', 0)
@@ -240,32 +213,6 @@ async def add_credits(update: Update, context: CallbackContext) -> None:
     # Send confirmation message
     await update.message.reply_text(f"Successfully added {credits_to_add} credits to user {target_user_id}. New balance: {new_credits} credits.")
 
-async def timeout_task(context: CallbackContext) -> None:
-    """Check for and handle game timeouts."""
-    current_time = datetime.now()
-    
-    for user_id, last_time in last_interaction_time.items():
-        if (current_time - last_time).total_seconds() > 180:  # If no interaction for 3 minutes
-            game_state = cd.get(user_id)
-            if game_state:
-                # Refund the credits and remove the game data
-                bet = game_state['bet']
-                user_data = get_user_by_id(user_id)
-                if user_data:
-                    user_data['credits'] += bet
-                    save_user(user_data)
-                
-                # Notify user and delete game data
-                await context.bot.send_message(user_id, "Your game was canceled due to inactivity. Your credits have been refunded.")
-                del cd[user_id]  # Remove the game state
-
-            # Remove from the timeout tracker
-            del last_interaction_time[user_id]
-
-async def timeout_task():
-    while True:
-        await asyncio.sleep(60)  # Wait for 1 minute
-        await timeout_task()
 
 async def reset_confirmation(update: Update, context: CallbackContext) -> None:
     """Handle reset confirmation callback."""
@@ -423,6 +370,7 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(report_message)
 
 async def give(update: Update, context: CallbackContext) -> None:
+    """Handle the /give command to transfer credits between users."""
     giver = update.effective_user
     giver_id = str(giver.id)
     message = update.message
@@ -485,6 +433,7 @@ async def give(update: Update, context: CallbackContext) -> None:
         text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
     )
 
+
 async def universal_handler(update: Update, context: CallbackContext):
     try:
         if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
@@ -524,7 +473,7 @@ async def universal_handler(update: Update, context: CallbackContext):
             await update.message.reply_text("❌ An error occurred while processing your message.")
 
 async def handle_message(update: Update, context: CallbackContext) -> None:
-    """Handle all messages that are not commands."""
+    """Handle messages and check for active games."""
     if not update.message or not update.message.text:
         return
 
@@ -533,9 +482,6 @@ async def handle_message(update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
 
     # Check if user is muted
-    if user_id in muted_users:
-        return
-
     # Update last interaction time
     last_interaction_time[user_id] = datetime.utcnow()
 
@@ -563,14 +509,10 @@ async def handle_message(update: Update, context: CallbackContext) -> None:
             elif game_type == 'mines':
                 await handle_mines_message(update, context, game)
 
-    # Handle general messages
-    if message.startswith('!') or message.startswith('/'):
-        return
-
-    # Add your message handling logic here
-    # For example, credit rewards, random events, etc.
-
 async def handle_cricket_message(update: Update, context: CallbackContext, game: dict) -> None:
+    """Handle messages during an active Cricket game.
+    Deletes user messages and asks them to use the buttons to play
+    """
     """Handle messages during an active Cricket game."""
     user_id = str(update.effective_user.id)
     
@@ -592,6 +534,10 @@ async def handle_cricket_message(update: Update, context: CallbackContext, game:
     )
 
 async def handle_hilo_message(update: Update, context: CallbackContext, game: dict) -> None:
+    """Handle messages during an active HiLo game.
+    Deletes user messages and asks them to use the buttons to play
+    """
+    
     """Handle messages during an active HiLo game."""
     user_id = str(update.effective_user.id)
     
@@ -613,6 +559,10 @@ async def handle_hilo_message(update: Update, context: CallbackContext, game: di
     )
 
 async def handle_mines_message(update: Update, context: CallbackContext, game: dict) -> None:
+    """Handle messages during an active Mines game.
+    Deletes user messages and asks them to use the buttons to play
+    """
+
     """Handle messages during an active Mines game."""
     user_id = str(update.effective_user.id)
     
@@ -634,6 +584,8 @@ async def handle_mines_message(update: Update, context: CallbackContext, game: d
     )
 
 async def handle_timeout(query: CallbackQuery, game: dict) -> None:
+    """Handle game timeout for any game type."""
+
     """Handle game timeout for any game type."""
     game_type = game.get("game_type", "unknown")
     game_id = game.get("_id", game.get("game_code", "unknown"))
@@ -678,30 +630,10 @@ async def handle_timeout(query: CallbackQuery, game: dict) -> None:
                 user_data["credits"] += game["bet"]
                 save_user(user_data)
 
-async def start_command(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    user = users_collection.find_one({"user_id": user_id})
-    
-    if not user:
-        for attempt in range(3):  # Add retry mechanism
-            try:
-                users_collection.insert_one({
-                    "user_id": user_id,
-                    "username": update.effective_user.username,
-                    "first_name": update.effective_user.first_name,
-                    "last_name": update.effective_user.last_name,
-                    "credits": 1000,
-                    "daily_claimed": False,
-                    "last_daily": None
-                })
-                break
-            except Exception as e:
-                if attempt == 2:
-                    await update.message.reply_text(f"Error registering user: {e}")
-                    return
-                await asyncio.sleep(1)  # Wait before retrying
-    
-    await update.message.reply_text("Welcome! You're now registered.")
+
+
+
+
 
 async def dm_forwarder(update: Update, context: CallbackContext) -> None:
     """Forward messages between users in cricket games."""
@@ -734,7 +666,7 @@ async def dm_forwarder(update: Update, context: CallbackContext) -> None:
         except Exception as e:
             logger.error(f"Error forwarding message: {e}")
 
-async def chat_command(update: Update, context: CallbackContext) -> None:
+async def chat_command_cricket(update: Update, context: CallbackContext) -> None:
     """Handle the /c command for chat during cricket games."""
     if not context.args:
         await update.message.reply_text("Usage: /c <message>")
@@ -780,9 +712,9 @@ def main() -> None:
     application.add_handler(CommandHandler("give", check_started(give)))
     application.add_handler(CommandHandler("reach", reach))
     application.add_handler(CommandHandler("reffer", reffer))
-    application.add_handler(CommandHandler("reset", reset))
+    application.add_handler(CommandHandler("reset", reset))    
+    application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("daily", daily))
-    application.add_handler(CommandHandler("c", chat_command))
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("help", help_command))
@@ -822,14 +754,19 @@ def main() -> None:
     for handler in get_bank_handlers():
         application.add_handler(handler)
 
-    # Universal handler comes LAST
+
+    # Add the /c command handler before the universal message handler
+    application.add_handler(CommandHandler("c", chat_command_cricket))
+
+    # Universal message handler (must come after all other specific handlers)
     application.add_handler(MessageHandler(
         (filters.TEXT | filters.Sticker.ALL) & ~filters.COMMAND,
         universal_handler
     ))
 
-    # Add timeout task
-    application.job_queue.run_once(timeout_task, 0)
+    # Flask background thread
+    Thread(target=run_flask).start()
+    
     application.job_queue.run_repeating(timeout_task, interval=60, first=10)
 
     # Add error handler
