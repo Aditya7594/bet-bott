@@ -61,19 +61,9 @@ async def xox(update: Update, context: CallbackContext) -> None:
     user_id = str(user.id)
     game_id = str(uuid.uuid4())
     
-    # Check if user has an active game
-    active_game = games_collection.find_one({
-        "$or": [{"player1": user_id}, {"player2": user_id}],
-        "active": True
-    })
-    if active_game:
-        await update.message.reply_text(
-            "❌ You already have an active game! Please finish or forfeit it first.",
-            parse_mode="HTML"
-        )
-        return
-
-   new_game = {
+    # Removed the check that limits users to only one active game
+    
+    new_game = {
         "_id": game_id,
         "player1": user_id,
         "player2": None,
@@ -131,11 +121,13 @@ async def handle_xox_click(update: Update, context: CallbackContext) -> None:
                 }
             }
         )
+        # Fix: Correct mention for Player 1
+        player1_user = query.message.reply_to_message.from_user
         await query.edit_message_text(
             f"🎮 *Tic-Tac-Toe (XOX) Game Started!* 🎮\n\n"
-            f"Player 1: {query.message.reply_to_message.from_user.mention_html()} ❌\n"
+            f"Player 1: {player1_user.mention_html()} ❌\n"
             f"Player 2: {user.mention_html()} ⭕\n\n"
-            f"Current turn: {query.message.reply_to_message.from_user.mention_html()}",
+            f"Current turn: {player1_user.mention_html()}",
             reply_markup=generate_board_buttons(game["board"], game_id),
             parse_mode="HTML"
         )
@@ -173,8 +165,17 @@ async def handle_xox_click(update: Update, context: CallbackContext) -> None:
 
     if all(cell for row in game["board"] for cell in row):
         games_collection.update_one({"_id": game_id}, {"$set": {"active": False}})
-        update_stats(game["player1"], game["player2"])
-        update_stats(game["player2"], game["player1"])
+        # Fix: Update both players' stats for a draw
+        stats_collection.update_one(
+            {"user_id": game["player1"]},
+            {"$inc": {"draws": 1, "games_played": 1}, "$setOnInsert": {"wins": 0, "losses": 0}},
+            upsert=True
+        )
+        stats_collection.update_one(
+            {"user_id": game["player2"]},
+            {"$inc": {"draws": 1, "games_played": 1}, "$setOnInsert": {"wins": 0, "losses": 0}},
+            upsert=True
+        )
         
         await query.edit_message_text(
             "🤝 *It's a Draw!* 🤝\n\n"
@@ -196,15 +197,33 @@ async def handle_xox_click(update: Update, context: CallbackContext) -> None:
         }
     )
 
-    current_player = query.message.reply_to_message.from_user if user_id == game["player1"] else user
-    await query.edit_message_text(
-        f"🎮 *Tic-Tac-Toe (XOX) Game in Progress* 🎮\n\n"
-        f"Player 1: {query.message.reply_to_message.from_user.mention_html()} ❌\n"
-        f"Player 2: {user.mention_html()} ⭕\n\n"
-        f"Current turn: {current_player.mention_html()}",
-        reply_markup=generate_board_buttons(game["board"], game_id),
-        parse_mode="HTML"
-    )
+    # Fix: Correctly identify the next player's turn
+    player1_user = query.message.reply_to_message.from_user
+    player2_user = user if user_id == game["player2"] else None
+    
+    # If the second player is not yet known from this context, handle it differently
+    if not player2_user and game["player2"]:
+        # Just mention that it's the next player's turn without trying to get their user object
+        next_player_text = "Player 2's turn" if next_turn == game["player2"] else "Player 1's turn"
+        await query.edit_message_text(
+            f"🎮 *Tic-Tac-Toe (XOX) Game in Progress* 🎮\n\n"
+            f"Player 1: {player1_user.mention_html()} ❌\n"
+            f"Player 2: Unknown ⭕\n\n"
+            f"Current turn: {next_player_text}",
+            reply_markup=generate_board_buttons(game["board"], game_id),
+            parse_mode="HTML"
+        )
+    else:
+        # If we have both player objects
+        next_player = player2_user if next_turn == game["player2"] else player1_user
+        await query.edit_message_text(
+            f"🎮 *Tic-Tac-Toe (XOX) Game in Progress* 🎮\n\n"
+            f"Player 1: {player1_user.mention_html()} ❌\n"
+            f"Player 2: {player2_user.mention_html()} ⭕\n\n"
+            f"Current turn: {next_player.mention_html()}",
+            reply_markup=generate_board_buttons(game["board"], game_id),
+            parse_mode="HTML"
+        )
 
 async def handle_forfeit(query, game_id, user_id):
     game = games_collection.find_one({"_id": game_id, "active": True})
@@ -216,14 +235,23 @@ async def handle_forfeit(query, game_id, user_id):
         await query.answer("You're not part of this game!")
         return
 
+    # Fix: Correctly identify the winner when player forfeits
     winner_id = game["player2"] if user_id == game["player1"] else game["player1"]
     games_collection.update_one({"_id": game_id}, {"$set": {"active": False}})
-    update_stats(winner_id, user_id)
-
+    
+    # Only update stats if player2 exists (game has started)
+    if game["player2"]:
+        update_stats(winner_id, user_id)
+    
+    # Get the correct user mention for winner announcement
+    player1_user = query.message.reply_to_message.from_user
+    forfeiter_text = player1_user.mention_html() if user_id == game["player1"] else query.from_user.mention_html()
+    winner_text = player1_user.mention_html() if user_id == game["player2"] else query.from_user.mention_html()
+    
     await query.edit_message_text(
         f"🏳️ *Game Forfeited!* 🏳️\n\n"
-        f"{query.message.reply_to_message.from_user.mention_html()} has forfeited the game.\n"
-        f"Winner: {query.message.reply_to_message.from_user.mention_html() if user_id == game['player2'] else user.mention_html()}\n\n"
+        f"{forfeiter_text} has forfeited the game.\n"
+        f"Winner: {winner_text}\n\n"
         f"Final Board:",
         reply_markup=generate_board_buttons(game["board"], game_id),
         parse_mode="HTML"
@@ -232,8 +260,17 @@ async def handle_forfeit(query, game_id, user_id):
 async def handle_timeout(query, game):
     games_collection.update_one({"_id": game["_id"]}, {"$set": {"active": False}})
     if game["player2"]:
-        update_stats(game["player2"], game["player1"])
-        update_stats(game["player1"], game["player2"])
+        # Update both players' stats for timeout (counting as draws)
+        stats_collection.update_one(
+            {"user_id": game["player1"]},
+            {"$inc": {"draws": 1, "games_played": 1}, "$setOnInsert": {"wins": 0, "losses": 0}},
+            upsert=True
+        )
+        stats_collection.update_one(
+            {"user_id": game["player2"]},
+            {"$inc": {"draws": 1, "games_played": 1}, "$setOnInsert": {"wins": 0, "losses": 0}},
+            upsert=True
+        )
     
     await query.edit_message_text(
         "⏰ *Game Timed Out!* ⏰\n\n"
@@ -290,5 +327,6 @@ def get_xox_handlers():
     return [
         CommandHandler("xox", xox),
         CallbackQueryHandler(handle_xox_click, pattern=r"^[0-9a-f-]+:[0-9_]+$"),
+        CallbackQueryHandler(handle_xox_click, pattern=r"^[0-9a-f-]+:forfeit$"),
         CommandHandler("xoxstats", xox_stats)
     ]
