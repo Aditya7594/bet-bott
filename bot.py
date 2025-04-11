@@ -700,6 +700,25 @@ async def chat_command_cricket(update: Update, context: CallbackContext) -> None
         await update.message.reply_text("❌ You are not in an active cricket game.")
 
 def check_started(func):
+    async def timeout_task(context: CallbackContext) -> None:
+        now = datetime.utcnow()
+        
+        # Check each game collection for timeouts
+        for game_type in ['cricket', 'hilo', 'mines', 'xox']:
+            games = db[f'{game_type}_games'].find({"active": True})
+            
+            for game in games:
+                if game.get("last_move") is None:
+                    continue
+                if (now - game["last_move"]) > timedelta(minutes=5):
+                    # Create a dummy query for timeout
+                    class DummyQuery:
+                        pass
+                    dummy_query = DummyQuery()
+                    dummy_query.message = None
+                    await handle_timeout(dummy_query, game)
+    
+
     async def wrapper(update: Update, context: CallbackContext):
         user_id = str(update.effective_user.id)
         user_data = get_user_by_id(user_id)
@@ -708,6 +727,7 @@ def check_started(func):
             return
         await func(update, context)
     return wrapper
+
 
 def main() -> None:
 
@@ -774,7 +794,7 @@ def main() -> None:
     # Flask background thread
     Thread(target=run_flask).start()
     
-    application.job_queue.run_repeating(timeout_task, interval=60, first=10)
+    application.job_queue.run_repeating(timeout_task, interval=60, first=10, name='timeout_task')
 
     # Add error handler
     application.add_error_handler(error_handler)
