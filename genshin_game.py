@@ -1,11 +1,11 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, CommandHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from telegram.ext import CallbackContext
 import random
 from pymongo import MongoClient
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Tuple
-from telegram.ext import JobQueue
+from telegram.ext import JobQueue,CommandHandler
 import os
 
 OWNER_ID = 5667016949
