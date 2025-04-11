@@ -1,5 +1,5 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, CallbackQueryHandler
-from telegram.ext import CallbackContext,CommandHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
+from telegram.ext import CallbackContext,CommandHandler,CallbackQueryHandler
 import random
 from pymongo import MongoClient
 import logging
