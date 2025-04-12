@@ -421,11 +421,11 @@ async def play_button(update: Update, context: CallbackContext) -> None:
             if player_id == game["current_players"]["bowler"]:
                 row = []
                 for i in range(1, 7):
-                    row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_code}_{i}"))
+                    row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}"))
                     if len(row) == 3:
                         keyboard.append(row)
                         row = []
-                keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_code}")])
+                keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_id}")])
             
             try:
                 await context.bot.edit_message_text(
@@ -487,7 +487,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                     print(f"Error updating participant {participant_id}: {e}")
             
             # Handle wicket
-            await handle_wicket(game_code, context)
+            await handle_wicket(game_id, context)
             return
         else:
             runs = batter_choice
@@ -527,7 +527,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                     except Exception as e:
                         print(f"Error updating participant {participant_id}: {e}")
                 
-                await declare_winner(game_code, context)
+                await declare_winner(game_id, context)
                 return
             elif game["over"] >= game["max_overs"]:
                 # Update score first
@@ -551,7 +551,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                     except Exception as e:
                         print(f"Error updating participant {participant_id}: {e}")
                 
-                await end_innings(game_code, context)
+                await end_innings(game_id, context)
                 return
 
         # Update score after runs
@@ -574,10 +574,11 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         keyboard = []
         row = []
         for i in range(1, 7):
-            row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_code}_{i}"))
+            row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}"))
             if len(row) == 3:
                 keyboard.append(row)
                 row = []
+        keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_id}")])
         
         # Update all participants
         for participant_id in list(game["spectators"]) + [game["player1"], game["player2"]]:
@@ -602,11 +603,99 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         await query.answer("Not your turn!")
         return
 
-async def declare_winner(game_code: str, context: CallbackContext):
-    if game_code not in cricket_games:
+async def handle_wicket(game_id: int, context: CallbackContext):
+    if game_id not in cricket_games:
         return
 
-    game = cricket_games[game_code]
+    game = cricket_games[game_id]
+    
+    # Update ball counter
+    game["ball"] += 1
+    if game["ball"] == 6:
+        game["over"] += 1
+        game["ball"] = 0
+
+    # Check if we need to end the innings
+    if game["wickets"] >= game["max_wickets"] or game["over"] >= game["max_overs"]:
+        await end_innings(game_id, context)
+        return
+    
+    # Continue the current innings
+    batter_name = (await context.bot.get_chat(game["batter"])).first_name
+    bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
+    score = game['score1'] if game['innings'] == 1 else game['score2']
+    spectator_count = len(game["spectators"])
+    spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
+    
+    text = (
+        f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
+        f"🔸 Batting: {batter_name}\n"
+        f"🔹 Bowling: {bowler_name}\n"
+        f"📊 Score: {score}/{game['wickets']}"
+    )
+    
+    if game['innings'] == 2:
+        text += f" (Target: {game['target']})"
+    
+    text += "\n\n⚡ Next ball. Batter, choose a number (1-6):"
+    
+    await update_game_interface(game_id, context, text)
+
+async def end_innings(game_id: int, context: CallbackContext):
+    if game_id not in cricket_games:
+        return
+
+    game = cricket_games[game_id]
+    
+    if game["innings"] == 1:
+        # Switch to second innings
+        game["innings"] = 2
+        game["target"] = game["score1"] + 1
+        
+        # Swap batting and bowling roles
+        game["batter"], game["bowler"] = game["bowler"], game["batter"]
+        game["current_players"] = {
+            "batter": game["batter"],
+            "bowler": game["bowler"]
+        }
+        
+        # Reset counters
+        game["wickets"] = 0
+        game["over"] = 0
+        game["ball"] = 0
+        game["score2"] = 0
+        
+        # Build innings break message
+        batter_name = (await context.bot.get_chat(game["batter"])).first_name
+        bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
+        spectator_count = len(game["spectators"])
+        spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
+        
+        text = (
+            f"🔥 *INNINGS BREAK* 🔥\n\n"
+            f"First innings score: {game['score1']}\n"
+            f"Target: {game['target']} runs\n\n"
+            f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
+            f"🔸 Now batting: {batter_name}\n"
+            f"🔹 Now bowling: {bowler_name}\n\n"
+            f"⚡ {batter_name}, choose a number (1-6):"
+        )
+        
+        # Reset choices for new innings
+        game["batter_choice"] = None
+        game["bowler_choice"] = None
+        
+        # Update the game interface with innings break info
+        await update_game_interface(game_id, context, text)
+    else:
+        # Game over - declare winner
+        await declare_winner(game_id, context)
+
+async def declare_winner(game_id: int, context: CallbackContext):
+    if game_id not in cricket_games:
+        return
+
+    game = cricket_games[game_id]
     p1 = (await context.bot.get_chat(game["player1"])).first_name
     p2 = (await context.bot.get_chat(game["player2"])).first_name
 
@@ -668,95 +757,7 @@ async def declare_winner(game_code: str, context: CallbackContext):
             print(f"Error sending result to {player_id}: {e}")
 
     # Remove the game from active games
-    del cricket_games[game_code]
-
-async def handle_wicket(game_code: str, context: CallbackContext):
-    if game_code not in cricket_games:
-        return
-
-    game = cricket_games[game_code]
-    
-    # Update ball counter
-    game["ball"] += 1
-    if game["ball"] == 6:
-        game["over"] += 1
-        game["ball"] = 0
-
-    # Check if we need to end the innings
-    if game["wickets"] >= game["max_wickets"] or game["over"] >= game["max_overs"]:
-        await end_innings(game_code, context)
-        return
-    
-    # Continue the current innings
-    batter_name = (await context.bot.get_chat(game["batter"])).first_name
-    bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
-    score = game['score1'] if game['innings'] == 1 else game['score2']
-    spectator_count = len(game["spectators"])
-    spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
-    
-    text = (
-        f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
-        f"🔸 Batting: {batter_name}\n"
-        f"🔹 Bowling: {bowler_name}\n"
-        f"📊 Score: {score}/{game['wickets']}"
-    )
-    
-    if game['innings'] == 2:
-        text += f" (Target: {game['target']})"
-    
-    text += "\n\n⚡ Next ball. Batter, choose a number (1-6):"
-    
-    await update_game_interface(game_code, context, text)
-
-async def end_innings(game_code: str, context: CallbackContext):
-    if game_code not in cricket_games:
-        return
-
-    game = cricket_games[game_code]
-    
-    if game["innings"] == 1:
-        # Switch to second innings
-        game["innings"] = 2
-        game["target"] = game["score1"] + 1
-        
-        # Swap batting and bowling roles
-        game["batter"], game["bowler"] = game["bowler"], game["batter"]
-        game["current_players"] = {
-            "batter": game["batter"],
-            "bowler": game["bowler"]
-        }
-        
-        # Reset counters
-        game["wickets"] = 0
-        game["over"] = 0
-        game["ball"] = 0
-        game["score2"] = 0
-        
-        # Build innings break message
-        batter_name = (await context.bot.get_chat(game["batter"])).first_name
-        bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
-        spectator_count = len(game["spectators"])
-        spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
-        
-        text = (
-            f"🔥 *INNINGS BREAK* 🔥\n\n"
-            f"First innings score: {game['score1']}\n"
-            f"Target: {game['target']} runs\n\n"
-            f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
-            f"🔸 Now batting: {batter_name}\n"
-            f"🔹 Now bowling: {bowler_name}\n\n"
-            f"⚡ {batter_name}, choose a number (1-6):"
-        )
-        
-        # Reset choices for new innings
-        game["batter_choice"] = None
-        game["bowler_choice"] = None
-        
-        # Update the game interface with innings break info
-        await update_game_interface(game_code, context, text)
-    else:
-        # Game over - declare winner
-        await declare_winner(game_code, context)
+    del cricket_games[game_id]
 
 async def chat_command(update: Update, context: CallbackContext) -> None:
     """Handle the /c command for chat during cricket games."""
