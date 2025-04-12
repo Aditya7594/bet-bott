@@ -82,23 +82,43 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "max_overs": 20,
         "spectators": set(),
     }
+    
+    # Update the game activity timestamp
+    update_game_activity(chat_id)
 
-    # Create callback buttons instead of URL buttons
+    # Get the bot's username
+    bot_username = (await context.bot.get_me()).username
+    bot_link = f"https://t.me/{bot_username}"
+
+    # Create callback buttons instead of URL buttons for game actions
     join_button = InlineKeyboardButton("Join Game", callback_data=f"join_{chat_id}")
     watch_button = InlineKeyboardButton("Watch Game", callback_data=f"watch_{chat_id}")
-    keyboard = InlineKeyboardMarkup([[join_button], [watch_button]])
+    
+    # Add a direct link to the bot
+    open_bot_button = InlineKeyboardButton("🎮 Open Cricket Bot", url=bot_link)
+    
+    keyboard = InlineKeyboardMarkup([
+        [join_button], 
+        [watch_button],
+        [open_bot_button]  # Add direct link to bot
+    ])
 
     try:
         sent_message = await context.bot.send_message(
             chat_id=chat_id,
-            text=f"🎮 *Game Started!*\n\n"
-                 f"To join, click the button below\n"
-                 f"To watch, click Watch Game",
+            text=f"🏏 *Cricket Game Started!*\n\n"
+                 f"Started by: {user.first_name}\n\n"
+                 f"• To join, click \"Join Game\"\n"
+                 f"• To watch, click \"Watch Game\"\n"
+                 f"• For the best experience, open the bot directly",
             reply_markup=keyboard,
             parse_mode="Markdown")
         await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
     except Exception as e:
-        print(f"Error creating game: {e}")
+        logger.error(f"Error creating game: {e}")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ Error creating the game. Please try again later.")
 
 async def update_game_interface(game_id: int, context: CallbackContext, text: str = None):
     if game_id not in cricket_games:
@@ -208,11 +228,29 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
 
     game["player2"] = user_id
     logger.info(f"Cricket Game - Join Button: User {user_id} successfully joined game {game_id}")
+    
+    # Get bot username for direct link
+    bot_username = (await context.bot.get_me()).username
+    
+    # Create direct link to bot
+    bot_link = f"https://t.me/{bot_username}"
+    
+    # Create announcement message with direct link to bot
+    join_announcement = (
+        f"🎉 {query.from_user.first_name} joined the game!\n\n"
+        f"Players should open the bot to continue the game:"
+    )
+    
+    # Create keyboard with direct link to bot
+    keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=bot_link)]]
+    
     await context.bot.send_message(
         chat_id=game["group_chat_id"],
-        text=f"🎉 {query.from_user.first_name} joined the game!")
+        text=join_announcement,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
-    keyboard = [[
+    toss_keyboard = [[
         InlineKeyboardButton("Heads", callback_data=f"toss_{game_id}_heads"),
         InlineKeyboardButton("Tails", callback_data=f"toss_{game_id}_tails")
     ]]
@@ -222,10 +260,11 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
             msg = await context.bot.send_message(
                 chat_id=player_id,
                 text="⚡ Toss Time!",
-                reply_markup=InlineKeyboardMarkup(keyboard))
+                reply_markup=InlineKeyboardMarkup(toss_keyboard))
             game["message_id"][player_id] = msg.message_id
         except Exception as e:
             logger.error(f"Cricket Game - Join Button: Error sending toss message to {player_id}: {e}")
+
 
 async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -254,11 +293,21 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     player1_name = (await context.bot.get_chat(game["player1"])).first_name
     player2_name = "Waiting for opponent" if not game["player2"] else (await context.bot.get_chat(game["player2"])).first_name
     
+    # Get bot username for direct link
+    bot_username = (await context.bot.get_me()).username
+    
+    # Create direct link to bot
+    bot_link = f"https://t.me/{bot_username}"
+    
+    # Create keyboard with direct link to bot
+    keyboard = [[InlineKeyboardButton("🔄 Open Bot to Watch Live", url=bot_link)]]
+    
     await query.message.reply_text(
-        f"🎮 You're now watching the cricket match!\n"
+        f"👁️ You're now watching the cricket match!\n"
         f"🧑 Player 1: {player1_name}\n"
         f"🧑 Player 2: {player2_name}\n\n"
-        f"Match updates will appear shortly!"
+        f"Open the bot to view live match updates:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
     
     # If game is already in progress, update the interface for the spectator
@@ -768,22 +817,23 @@ async def chat_command(update: Update, context: CallbackContext) -> None:
         return
 
     user = update.effective_user
-    user_id = str(user.id)
+    user_id = user.id  # Keep as integer since we're comparing with game["player1"] and game["player2"]
     message = " ".join(context.args)
 
     # Check if the user has started the bot
     if not await check_user_started_bot(update, context):
         return  # Exit if the user hasn't started the bot
     
-    # Check for active cricket game
-    game = db['cricket_games'].find_one({
-        "$or": [{"player1": user_id}, {"player2": user_id}],
-        "active": True
-    })
+    # Find the game this user is participating in
+    active_game = None
+    for game_id, game in cricket_games.items():
+        if user_id in [game["player1"], game["player2"]]:
+            active_game = game
+            break
     
-    if game:
+    if active_game:
         # Get the game's chat ID
-        chat_id = game.get("chat_id")
+        chat_id = active_game.get("group_chat_id")
         if not chat_id:
             await update.message.reply_text("❌ Game chat not found.")
             return
@@ -798,7 +848,8 @@ async def chat_command(update: Update, context: CallbackContext) -> None:
                 text=formatted_message
             )
             # Delete the command message in private chat
-            await update.message.delete()
+            if update.effective_chat.type == "private":
+                await update.message.delete()
         except Exception as e:
             logger.error(f"Error sending chat message: {e}")
             await update.message.reply_text("❌ Failed to send message to game chat.")
