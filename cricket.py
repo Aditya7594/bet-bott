@@ -21,6 +21,7 @@ cricket_games = {}
 def generate_game_code():
     return str(random.randint(100, 999))
 
+
 async def check_user_started_bot(update: Update, context: CallbackContext) -> bool:
     """Checks if the user has started the bot and prompts them if they haven't."""
     user = update.effective_user
@@ -29,7 +30,7 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
 
     if not user_data:
         bot_username = (await context.bot.get_me()).username
-        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/{joyfunbot}?start=start")]]
+        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/{bot_username}?start=start")]]
 
         user_tag = f"@{user.username}" if user.username else user.first_name if user.first_name else user_id
 
@@ -42,6 +43,7 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
         )
         return False
     return True
+
 async def chat_cricket(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     chat_id = update.effective_chat.id
