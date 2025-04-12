@@ -14,10 +14,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # MongoDB connection
-client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
+client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority')
 db = client['telegram_bot']
 user_collection = db["users"]
-
+game_collection = db["games"]
 
 cricket_games = {}
 reminder_sent = {}
@@ -27,7 +27,6 @@ def generate_game_code():
     return str(random.randint(100, 999))
 
 async def check_user_started_bot(update: Update, context: CallbackContext) -> bool:
-    """Checks if the user has started the bot and prompts them if they haven't."""
     user = update.effective_user
     user_id = str(user.id)
     user_data = user_collection.find_one({"user_id": user_id})
@@ -52,18 +51,15 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     chat_id = update.effective_chat.id
     
-    # Only allow creating games in group chats
     if update.effective_chat.type == "private":
         await context.bot.send_message(
             chat_id=chat_id,
             text="⚠️ This command can only be used in group chats!")
         return
     
-    # Check if the user has started the bot
     if not await check_user_started_bot(update, context):
         return
     
-    # Validate if user is already in another game
     for game in cricket_games.values():
         if user.id in [game.get("player1"), game.get("player2")]:
             await context.bot.send_message(
@@ -71,7 +67,6 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
                 text="⚠️ You are already in a game. Please finish it first.")
             return
     
-    # Create new game
     game_id = chat_id
     cricket_games[game_id] = {
         "player1": user.id,
@@ -735,6 +730,45 @@ async def declare_winner(game_id: int, context: CallbackContext):
         except Exception as e:
             logger.error(f"Error sending result to {player_id}: {e}")
 
+    # Update player statistics
+    winner_id = game["batter"] if game["score2"] >= game["target"] else game["bowler"]
+    loser_id = game["bowler"] if game["score2"] >= game["target"] else game["batter"]
+    
+    # Update winner's stats
+    winner_stats = user_collection.find_one({"user_id": str(winner_id)}, {"_id": 0, "stats": 1})
+    if winner_stats and "stats" in winner_stats:
+        user_collection.update_one(
+            {"user_id": str(winner_id)},
+            {"$inc": {"stats.wins": 1, f"stats.runs": game['score2'] if winner_id == game["batter"] else game['score1']}}
+        )
+    else:
+        user_collection.update_one(
+            {"user_id": str(winner_id)},
+            {"$set": {"stats": {"wins": 1, "losses": 0, "runs": game['score2'] if winner_id == game["batter"] else game['score1'], "wickets": 0, "accuracy": 0}}}
+        )
+    
+    # Update loser's stats
+    loser_stats = user_collection.find_one({"user_id": str(loser_id)}, {"_id": 0, "stats": 1})
+    if loser_stats and "stats" in loser_stats:
+        user_collection.update_one(
+            {"user_id": str(loser_id)},
+            {"$inc": {"stats.losses": 1}}
+        )
+    else:
+        user_collection.update_one(
+            {"user_id": str(loser_id)},
+            {"$set": {"stats": {"wins": 0, "losses": 1, "runs": 0, "wickets": 0, "accuracy": 0}}}
+        )
+    
+    # Save game history
+    game_collection.insert_one({
+        "timestamp": datetime.now(),
+        "participants": [game["player1"], game["player2"]],
+        "scores": {"player1": game["score1"], "player2": game["score2"]},
+        "result": result,
+        "innings": game["innings"]
+    })
+
     del cricket_games[game_id]
 
 async def chat_command(update: Update, context: CallbackContext) -> None:
@@ -833,8 +867,96 @@ async def check_inactive_games(context: CallbackContext):
             except Exception as e:
                 logger.error(f"Error cleaning up inactive game: {e}")
 
+async def stats(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    user_data = user_collection.find_one({"user_id": user_id})
+
+    if not user_data:
+        await update.message.reply_text("You need to start the bot first!")
+        return
+    
+    # Fetch player statistics
+    stats_data = user_collection.find_one({"user_id": user_id}, {"_id": 0, "stats": 1})
+    if not stats_data or "stats" not in stats_data:
+        await update.message.reply_text("No statistics available yet. Play some games to see your stats!")
+        return
+    
+    stats = stats_data["stats"]
+    text = f"📊 *Your Statistics:*\n\n"
+    text += f"🏆 Wins: {stats.get('wins', 0)}\n"
+    text += f"铩 Losses: {stats.get('losses', 0)}\n"
+    text += f"🏃 Runs: {stats.get('runs', 0)}\n"
+    text += f"⚾ Wickets: {stats.get('wickets', 0)}\n"
+    text += f"🎯 Accuracy: {stats.get('accuracy', 0)}%"
+    
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def leaderboard(update: Update, context: CallbackContext) -> None:
+    # Fetch top players
+    top_players = user_collection.find({}, {"_id": 0, "user_id": 1, "first_name": 1, "stats": 1}) \
+                                .sort([("stats.wins", -1), ("stats.runs", -1)]) \
+                                .limit(10)
+    
+    text = "🏆 *Leaderboard:*\n\n"
+    for idx, player in enumerate(top_players, 1):
+        stats = player.get("stats", {})
+        text += f"{idx}. {player.get('first_name', 'Unknown')} - Wins: {stats.get('wins', 0)}, Runs: {stats.get('runs', 0)}\n"
+    
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def game_chat(update: Update, context: CallbackContext) -> None:
+    if not context.args:
+        await update.message.reply_text("Usage: /chat <message>")
+        return
+    
+    user = update.effective_user
+    message = " ".join(context.args)
+    
+    # Find the active game for this user
+    active_game = None
+    for game_id, game in cricket_games.items():
+        if user.id in [game["player1"], game["player2"]]:
+            active_game = game
+            break
+    
+    if not active_game:
+        await update.message.reply_text("You are not in an active game.")
+        return
+    
+    # Send message to all participants
+    participants = active_game.get("participants", [])
+    for participant_id in participants:
+        try:
+            await context.bot.send_message(
+                chat_id=participant_id,
+                text=f"💬 {user.first_name}: {message}"
+            )
+        except Exception as e:
+            logger.error(f"Error sending chat message to {participant_id}: {e}")
+
+async def game_history(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    # Fetch game history
+    history = game_collection.find({"participants": {"$in": [user_id]}}).sort("timestamp", -1).limit(5)
+    
+    text = "📜 *Game History:*\n\n"
+    for game in history:
+        text += f"Date: {game.get('timestamp', 'N/A')}\n"
+        text += f"Opponent: {game.get('opponent', 'N/A')}\n"
+        text += f"Result: {game.get('result', 'N/A')}\n\n"
+    
+    await update.message.reply_text(text, parse_mode="Markdown")
+
 def get_cricket_handlers():
     return [
+        CommandHandler("stats", stats),
+        CommandHandler("leaderboard", leaderboard),
+        CommandHandler("chat", game_chat),
+        CommandHandler("history", game_history),
         CallbackQueryHandler(toss_button, pattern="^toss_"),
         CallbackQueryHandler(choose_button, pattern="^choose_"),
         CallbackQueryHandler(play_button, pattern="^play_"),
