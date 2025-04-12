@@ -29,7 +29,7 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
 
     if not user_data:
         bot_username = (await context.bot.get_me()).username
-        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/{bot_username}?start=start")]]
+        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/{joyfunbot}?start=start")]]
 
         user_tag = f"@{user.username}" if user.username else user.first_name if user.first_name else user_id
 
@@ -42,10 +42,6 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
         )
         return False
     return True
-
-
-
-
 async def chat_cricket(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     chat_id = update.effective_chat.id
@@ -61,12 +57,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     if not await check_user_started_bot(update, context):
         return  # Exit if the user hasn't started the bot
 
-
-    game_code = generate_game_code()
-    while game_code in cricket_games:
-        game_code = generate_game_code()
-
-    cricket_games[game_code] = {
+    cricket_games[chat_id] = {
         "player1": user.id,
         "player2": None,
         "score1": 0,
@@ -91,27 +82,27 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     }
 
     # Create callback buttons instead of URL buttons
-    join_button = InlineKeyboardButton("Join Game", callback_data=f"join_{game_code}")
-    watch_button = InlineKeyboardButton("Watch Game", callback_data=f"watch_{game_code}")
+    join_button = InlineKeyboardButton("Join Game", callback_data=f"join_{chat_id}")
+    watch_button = InlineKeyboardButton("Watch Game", callback_data=f"watch_{chat_id}")
     keyboard = InlineKeyboardMarkup([[join_button], [watch_button]])
 
     try:
         sent_message = await context.bot.send_message(
             chat_id=chat_id,
-            text=f"🎮 *Game Started!*\nCode: `{game_code}`\n\n"
-                 f"To join, click the button or send /join {game_code}\n"
-                 f"To watch, click Watch Game or send /watch {game_code}",
+            text=f"🎮 *Game Started!*\n\n"
+                 f"To join, click the button below\n"
+                 f"To watch, click Watch Game",
             reply_markup=keyboard,
             parse_mode="Markdown")
         await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
     except Exception as e:
         print(f"Error creating game: {e}")
 
-async def update_game_interface(game_code: str, context: CallbackContext, text: str = None):
-    if game_code not in cricket_games:
+async def update_game_interface(game_id: int, context: CallbackContext, text: str = None):
+    if game_id not in cricket_games:
         return
 
-    game = cricket_games[game_code]
+    game = cricket_games[game_id]
     if not text:
         batter_name = (await context.bot.get_chat(game["batter"])).first_name
         bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
@@ -143,11 +134,11 @@ async def update_game_interface(game_code: str, context: CallbackContext, text: 
     keyboard = []
     row = []
     for i in range(1, 7):
-        row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_code}_{i}"))
+        row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}"))
         if len(row) == 3:
             keyboard.append(row)
             row = []
-    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_code}")])
+    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_id}")])
 
     # Update message for all participants
     recipients = list(game["spectators"]) + [game["player1"], game["player2"]]
@@ -187,20 +178,21 @@ async def update_game_interface(game_code: str, context: CallbackContext, text: 
 async def handle_join_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_code = query.data.split('_')
+    _, game_id = query.data.split('_')
+    game_id = int(game_id)
     
     # Check if the user has started the bot
     if not await check_user_started_bot(update, context):
         return  # Exit if the user hasn't started the bot
     
-    logger.info(f"Cricket Game - Join Button: User {user_id} attempted to join game {game_code}")
+    logger.info(f"Cricket Game - Join Button: User {user_id} attempted to join game {game_id}")
 
-    if game_code not in cricket_games:
-        logger.warning(f"Cricket Game - Join Button: Game {game_code} not found")
+    if game_id not in cricket_games:
+        logger.warning(f"Cricket Game - Join Button: Game {game_id} not found")
         await query.answer("Game not found or expired!")
         return
 
-    game = cricket_games[game_code]
+    game = cricket_games[game_id]
     
     if user_id == game["player1"]:
         logger.info(f"Cricket Game - Join Button: User {user_id} tried to join their own game")
@@ -208,19 +200,19 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
         return
 
     if game["player2"]:
-        logger.info(f"Cricket Game - Join Button: Game {game_code} is already full")
+        logger.info(f"Cricket Game - Join Button: Game {game_id} is already full")
         await query.answer("Game full!")
         return
 
     game["player2"] = user_id
-    logger.info(f"Cricket Game - Join Button: User {user_id} successfully joined game {game_code}")
+    logger.info(f"Cricket Game - Join Button: User {user_id} successfully joined game {game_id}")
     await context.bot.send_message(
         chat_id=game["group_chat_id"],
         text=f"🎉 {query.from_user.first_name} joined the game!")
 
     keyboard = [[
-        InlineKeyboardButton("Heads", callback_data=f"toss_{game_code}_heads"),
-        InlineKeyboardButton("Tails", callback_data=f"toss_{game_code}_tails")
+        InlineKeyboardButton("Heads", callback_data=f"toss_{game_id}_heads"),
+        InlineKeyboardButton("Tails", callback_data=f"toss_{game_id}_tails")
     ]]
     
     for player_id in [game["player1"], game["player2"]]:
@@ -236,17 +228,18 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
 async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_code = query.data.split('_')
+    _, game_id = query.data.split('_')
+    game_id = int(game_id)
 
     # Check if the user has started the bot
     if not await check_user_started_bot(update, context):
         return  # Exit if the user hasn't started the bot
 
-    if game_code not in cricket_games:
+    if game_id not in cricket_games:
         await query.answer("Game not found or expired!")
         return
 
-    game = cricket_games[game_code]
+    game = cricket_games[game_id]
     
     # Check if user is already a player
     if user_id in [game["player1"], game["player2"]]:
@@ -260,7 +253,7 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     player2_name = "Waiting for opponent" if not game["player2"] else (await context.bot.get_chat(game["player2"])).first_name
     
     await query.message.reply_text(
-        f"🎮 You're now watching match: {game_code}\n"
+        f"🎮 You're now watching the cricket match!\n"
         f"🧑 Player 1: {player1_name}\n"
         f"🧑 Player 2: {player2_name}\n\n"
         f"Match updates will appear shortly!"
@@ -268,7 +261,7 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     
     # If game is already in progress, update the interface for the spectator
     if game["player2"] and "batter" in game and game["batter"]:
-        await update_game_interface(game_code, context)
+        await update_game_interface(game_id, context)
 
 async def toss_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
