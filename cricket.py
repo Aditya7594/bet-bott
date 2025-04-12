@@ -266,22 +266,25 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
 async def toss_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_code, choice = query.data.split('_')
+    _, game_id_str, choice = query.data.split('_')
+    
+    # Convert game_id to integer since chat_ids are integers
+    game_id = int(game_id_str)
     
     # Check if the user has started the bot
     if not await check_user_started_bot(update, context):
         return  # Exit if the user hasn't started the bot
     
-    logger.info(f"Cricket Game - Toss Button: User {user_id} chose {choice} for game {game_code}")
+    logger.info(f"Cricket Game - Toss Button: User {user_id} chose {choice} for game {game_id}")
 
-    if game_code not in cricket_games:
-        logger.warning(f"Cricket Game - Toss Button: Game {game_code} not found")
+    if game_id not in cricket_games:
+        logger.warning(f"Cricket Game - Toss Button: Game {game_id} not found")
         await query.answer("Game expired!")
         return
 
-    game = cricket_games[game_code]
+    game = cricket_games[game_id]
     if game["toss_winner"]:
-        logger.info(f"Cricket Game - Toss Button: Toss already completed for game {game_code}")
+        logger.info(f"Cricket Game - Toss Button: Toss already completed for game {game_id}")
         await query.answer("Toss done!")
         return
 
@@ -292,35 +295,40 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
 
     winner_name = (await context.bot.get_chat(game["toss_winner"])).first_name
     keyboard = [[
-        InlineKeyboardButton("🏏 Bat", callback_data=f"choose_{game_code}_bat"),
-        InlineKeyboardButton("🎯 Bowl", callback_data=f"choose_{game_code}_bowl")
+        InlineKeyboardButton("🏏 Bat", callback_data=f"choose_{game_id}_bat"),
+        InlineKeyboardButton("🎯 Bowl", callback_data=f"choose_{game_id}_bowl")
     ]]
 
     for player_id in [game["player1"], game["player2"]]:
-        await context.bot.edit_message_text(
-            chat_id=player_id,
-            message_id=game["message_id"][player_id],
-            text=f"{winner_name} won toss!",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
+        try:
+            await context.bot.edit_message_text(
+                chat_id=player_id,
+                message_id=game["message_id"][player_id],
+                text=f"{winner_name} won toss!",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except Exception as e:
+            logger.error(f"Error updating toss result for player {player_id}: {e}")
 async def choose_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_code, choice = query.data.split('_')
+    _, game_id_str, choice = query.data.split('_')
+    
+    # Convert game_id to integer
+    game_id = int(game_id_str)
     
     # Check if the user has started the bot
     if not await check_user_started_bot(update, context):
         return  # Exit if the user hasn't started the bot
     
-    logger.info(f"Cricket Game - Choose Button: User {user_id} chose to {choice} for game {game_code}")
+    logger.info(f"Cricket Game - Choose Button: User {user_id} chose to {choice} for game {game_id}")
 
-    if game_code not in cricket_games:
-        logger.warning(f"Cricket Game - Choose Button: Game {game_code} not found")
+    if game_id not in cricket_games:
+        logger.warning(f"Cricket Game - Choose Button: Game {game_id} not found")
         await query.answer("Game expired!")
         return
 
-    game = cricket_games[game_code]
+    game = cricket_games[game_id]
     if user_id != game["toss_winner"]:
         logger.info(f"Cricket Game - Choose Button: User {user_id} tried to choose when not toss winner")
         await query.answer("Not your choice!")
@@ -337,28 +345,32 @@ async def choose_button(update: Update, context: CallbackContext) -> None:
         "current_players": {"batter": batter, "bowler": bowler}
     })
     
-    logger.info(f"Cricket Game - Choose Button: Game {game_code} setup - Batter: {batter}, Bowler: {bowler}")
+    logger.info(f"Cricket Game - Choose Button: Game {game_id} setup - Batter: {batter}, Bowler: {bowler}")
 
-    await update_game_interface(game_code, context)
+    await update_game_interface(game_id, context)
+
 
 async def play_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_code, number = query.data.split('_')
+    _, game_id_str, number = query.data.split('_')
+    
+    # Convert game_id and number to integers
+    game_id = int(game_id_str)
     number = int(number)
     
     # Check if the user has started the bot
     if not await check_user_started_bot(update, context):
         return  # Exit if the user hasn't started the bot
     
-    logger.info(f"Cricket Game - Play Button: User {user_id} chose number {number} for game {game_code}")
+    logger.info(f"Cricket Game - Play Button: User {user_id} chose number {number} for game {game_id}")
 
-    if game_code not in cricket_games:
-        logger.warning(f"Cricket Game - Play Button: Game {game_code} not found")
+    if game_id not in cricket_games:
+        logger.warning(f"Cricket Game - Play Button: Game {game_id} not found")
         await query.answer("Game expired!")
         return
 
-    game = cricket_games[game_code]
+    game = cricket_games[game_id]
     
     # Validate player turn
     if user_id == game["current_players"]["batter"] and game["batter_choice"] is None:
