@@ -3,7 +3,7 @@ import random
 import logging,re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext, MessageHandler, filters
-from datetime import datetime
+from datetime import datetime,timedelta
 
 # Set up logging
 logging.basicConfig(
@@ -17,6 +17,10 @@ client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?r
 db = client['telegram_bot']
 user_collection = db["users"]
 cricket_games = {}
+reminder_sent = {}
+
+# Track game activity
+game_activity = {}
 
 def generate_game_code():
     return str(random.randint(100, 999))
@@ -856,43 +860,80 @@ async def chat_command(update: Update, context: CallbackContext) -> None:
     else:
         await update.message.reply_text("❌ You are not in an active cricket game.")
 
-async def start(update: Update, context: CallbackContext) -> None:
-    """Handle the /start command."""
-    user = update.effective_user
-    user_id = str(user.id)
-    
+def update_game_activity(game_id):
+    """Update the last activity timestamp for a game."""
+    game_activity[game_id] = datetime.now()
 
-    # Check if user exists in database
-    user_data = user_collection.find_one({"user_id": user_id})
+async def check_inactive_games(context: CallbackContext):
+    """Check for inactive games and send reminders."""
+    current_time = datetime.now()
     
-    if not user_data:
-        # Create new user data
-        user_collection.insert_one({
-            "user_id": user_id,
-            "username": user.username,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "credits": 1000,  # Starting credits
-            "created_at": datetime.now()
-        })
-        
-        await update.message.reply_text(
-            f"👋 Welcome {user.first_name}!\n\n"
-            "🎮 You've been given 1000 credits to start playing.\n"
-            "Use /profile to check your balance and stats.\n"
-            "Use /help to see available commands."
-        )
-    else:
-        await update.message.reply_text(
-            f"👋 Welcome back {user.first_name}!\n\n"
-            "Use /profile to check your balance and stats.\n"
-            "Use /help to see available commands."
-        )
-
+    for game_id, game in list(cricket_games.items()):
+        # Skip if game doesn't exist anymore or has both players
+        if game_id not in game_activity or game["player2"] is not None:
+            continue
+            
+        # Calculate time since last activity
+        last_activity = game_activity.get(game_id)
+        if not last_activity:
+            continue
+            
+        # If more than 5 minutes passed since creation and no reminder sent
+        if (current_time - last_activity > timedelta(seconds=20) and 
+                game_id not in reminder_sent):
+            
+            # Get player name who created the game
+            try:
+                player_name = (await context.bot.get_chat(game["player1"])).first_name
+                
+                # Get bot's username for direct link
+                bot_username = (await context.bot.get_me()).username
+                bot_link = f"https://t.me/{bot_username}"
+                
+                # Create reminder message
+                reminder_text = (
+                    f"🏏 *Cricket Game Reminder* 🏏\n\n"
+                    f"{player_name}'s cricket game is still waiting for an opponent!\n"
+                    f"Anyone want to join? Click the button below:"
+                )
+                
+                # Create keyboard with direct link to bot
+                keyboard = [[InlineKeyboardButton("🎮 Join Cricket Game", url=bot_link)]]
+                
+                await context.bot.send_message(
+                    chat_id=game["group_chat_id"],
+                    text=reminder_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode="Markdown"
+                )
+                
+                # Mark reminder as sent
+                reminder_sent[game_id] = True
+                
+            except Exception as e:
+                logger.error(f"Error sending game reminder: {e}")
+                
+        # If more than 15 minutes with no activity, end the game
+        elif current_time - last_activity > timedelta(minutes=15):
+            try:
+                # Notify the group
+                await context.bot.send_message(
+                    chat_id=game["group_chat_id"],
+                    text="🏏 The cricket game has been cancelled due to inactivity."
+                )
+                
+                # Clean up
+                if game_id in reminder_sent:
+                    del reminder_sent[game_id]
+                if game_id in game_activity:
+                    del game_activity[game_id]
+                del cricket_games[game_id]
+                
+            except Exception as e:
+                logger.error(f"Error cleaning up inactive game: {e}")
 def get_cricket_handlers():
     """Return all cricket game handlers."""
     return [
-        CommandHandler("start", start),
         CallbackQueryHandler(toss_button, pattern="^toss_"),
         CallbackQueryHandler(choose_button, pattern="^choose_"),
         CallbackQueryHandler(play_button, pattern="^play_"),
