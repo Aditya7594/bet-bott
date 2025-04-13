@@ -1052,120 +1052,6 @@ async def check_inactive_games(context: CallbackContext):
                 
             except Exception as e:
                 logger.error(f"Error cleaning up inactive game: {e}")
-
-async def stats(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    user_id = str(user.id)
-    
-    user_data = user_collection.find_one({"user_id": user_id})
-    if not user_data:
-        await update.message.reply_text("You need to start the bot first!")
-        return
-    
-    stats_data = user_collection.find_one({"user_id": user_id}, {"_id": 0, "stats": 1})
-    if not stats_data or "stats" not in stats_data:
-        await update.message.reply_text("No statistics available yet. Play some games to see your stats!")
-        return
-    
-    stats = stats_data["stats"]
-    games_played = stats.get('wins', 0) + stats.get('losses', 0)
-    
-    accuracy = 0
-    if games_played > 0:
-        accuracy = round((stats.get('wins', 0) / games_played) * 100)
-    
-    text = f"📊 *Your Statistics:*\n\n"
-    text += f"🏏 *Games*\n"
-    text += f"▫️ Played: {games_played}\n"
-    text += f"▫️ Wins: {stats.get('wins', 0)}\n"
-    text += f"▫️ Losses: {stats.get('losses', 0)}\n"
-    text += f"▫️ Win Rate: {accuracy}%\n\n"
-    text += f"🏃 *Performance*\n"
-    text += f"▫️ Total Runs: {stats.get('runs', 0)}\n"
-    text += f"▫️ Wickets Taken: {stats.get('wickets', 0)}\n"
-    
-    keyboard = [[InlineKeyboardButton("🏆 View Achievements", callback_data="view_achievements")]]
-    
-    await update.message.reply_text(
-        text, 
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-async def achievements_command(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    user_id = str(user.id)
-    
-    user_data = user_collection.find_one({"user_id": user_id})
-    if not user_data:
-        await update.message.reply_text("You need to start the bot first!")
-        return
-    
-    user_achievements = achievements_collection.find_one({"user_id": user_id})
-    earned_ids = user_achievements.get("achievements", []) if user_achievements else []
-    
-    earned_count = len(earned_ids)
-    total_count = len(ACHIEVEMENTS)
-    
-    text = f"🏆 *Your Achievements ({earned_count}/{total_count})*\n\n"
-    
-    if not earned_ids:
-        text += "You haven't earned any achievements yet. Keep playing to unlock them!"
-    else:
-        categories = {
-            "Batting": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "runs"],
-            "Bowling": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "wickets"],
-            "Matches": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["matches", "wins"]],
-            "Performance": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["accuracy", "streak", "special"]]
-        }
-        
-        for category, category_achievements in categories.items():
-            category_earned = [a for a in category_achievements if a["id"] in earned_ids]
-            if category_earned:
-                text += f"*{category}:*\n"
-                for achievement in category_earned[:3]:
-                    text += f"• {achievement['name']} - {achievement['description']}\n"
-                
-                if len(category_earned) > 3:
-                    text += f"  _...and {len(category_earned) - 3} more {category.lower()} achievements_\n"
-                text += "\n"
-    
-    keyboard = [
-        [InlineKeyboardButton("🔒 View Locked Achievements", callback_data="locked_achievements")],
-        [InlineKeyboardButton("🏆 View Leaderboard", callback_data="view_leaderboard")]
-    ]
-    
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
-
-async def achievements_button(update: Update, context: CallbackContext) -> None:
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "view_achievements":
-        # Instead of setting effective_message, use query.message to update the message
-        await achievements_command(update, context)
-    elif query.data == "locked_achievements":
-        await locked_achievements_button(update, context)
-    elif query.data == "view_leaderboard":
-        # Use query.message to update the message
-        await leaderboard(update, context)
-
-async def leaderboard(update: Update, context: CallbackContext) -> None:
-    top_players = user_collection.find({}, {"_id": 0, "user_id": 1, "first_name": 1, "stats": 1}) \
-                                .sort([("stats.wins", -1), ("stats.runs", -1)]) \
-                                .limit(10)
-    
-    text = "🏆 *Leaderboard:*\n\n"
-    for idx, player in enumerate(top_players, 1):
-        stats = player.get("stats", {})
-        text += f"{idx}. {player.get('first_name', 'Unknown')} - Wins: {stats.get('wins', 0)}, Runs: {stats.get('runs', 0)}\n"
-    
-    await update.message.reply_text(text, parse_mode="Markdown")
-
 async def game_chat(update: Update, context: CallbackContext) -> None:
     if not context.args:
         await update.message.reply_text("Usage: /chat <message>")
@@ -1252,6 +1138,166 @@ async def game_history(update: Update, context: CallbackContext) -> None:
         logger.error(f"Error retrieving game history: {e}")
         await update.message.reply_text("An error occurred while retrieving your game history. Please try again later.")
 
+async def stats(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    user_data = user_collection.find_one({"user_id": user_id})
+    if not user_data:
+        await update.message.reply_text("You need to start the bot first!")
+        return
+    
+    stats_data = user_collection.find_one({"user_id": user_id}, {"_id": 0, "stats": 1})
+    if not stats_data or "stats" not in stats_data:
+        await update.message.reply_text("No statistics available yet. Play some games to see your stats!")
+        return
+    
+    stats = stats_data["stats"]
+    games_played = stats.get('wins', 0) + stats.get('losses', 0)
+    
+    accuracy = 0
+    if games_played > 0:
+        accuracy = round((stats.get('wins', 0) / games_played) * 100)
+    
+    text = f"📊 *Your Statistics:*\n\n"
+    text += f"🏏 *Games*\n"
+    text += f"▫️ Played: {games_played}\n"
+    text += f"▫️ Wins: {stats.get('wins', 0)}\n"
+    text += f"▫️ Losses: {stats.get('losses', 0)}\n"
+    text += f"▫️ Win Rate: {accuracy}%\n\n"
+    text += f"🏃 *Performance*\n"
+    text += f"▫️ Total Runs: {stats.get('runs', 0)}\n"
+    text += f"▫️ Wickets Taken: {stats.get('wickets', 0)}\n"
+    
+    keyboard = [[InlineKeyboardButton("🏆 View Achievements", callback_data="view_achievements")]]
+    
+    await update.message.reply_text(
+        text, 
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def achievements_command(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    user_data = user_collection.find_one({"user_id": user_id})
+    if not user_data:
+        await update.message.reply_text("You need to start the bot first!")
+        return
+    
+    await display_earned_achievements(update, context, user_id)
+
+async def leaderboard_callback(update: Update, context: CallbackContext) -> None:
+    """Handle leaderboard button callback"""
+    query = update.callback_query
+    
+    top_players = user_collection.find({}, {"_id": 0, "user_id": 1, "first_name": 1, "stats": 1}) \
+                                .sort([("stats.wins", -1), ("stats.runs", -1)]) \
+                                .limit(10)
+    
+    text = "🏆 *Leaderboard:*\n\n"
+    player_list = list(top_players)  # Convert cursor to list to prevent cursor timeout
+    
+    for idx, player in enumerate(player_list, 1):
+        stats = player.get("stats", {})
+        text += f"{idx}. {player.get('first_name', 'Unknown')} - Wins: {stats.get('wins', 0)}, Runs: {stats.get('runs', 0)}\n"
+    
+    keyboard = [[InlineKeyboardButton("🔙 Back to Achievements", callback_data="view_achievements")]]
+    
+    await query.edit_message_text(
+        text, 
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def leaderboard(update: Update, context: CallbackContext) -> None:
+    """Handle the /leaderboard command"""
+    top_players = user_collection.find({}, {"_id": 0, "user_id": 1, "first_name": 1, "stats": 1}) \
+                                .sort([("stats.wins", -1), ("stats.runs", -1)]) \
+                                .limit(10)
+    
+    text = "🏆 *Leaderboard:*\n\n"
+    player_list = list(top_players)  # Convert cursor to list to prevent cursor timeout
+    
+    for idx, player in enumerate(player_list, 1):
+        stats = player.get("stats", {})
+        text += f"{idx}. {player.get('first_name', 'Unknown')} - Wins: {stats.get('wins', 0)}, Runs: {stats.get('runs', 0)}\n"
+    
+    keyboard = [[InlineKeyboardButton("🏆 View Achievements", callback_data="view_achievements")]]
+    
+    await update.message.reply_text(
+        text, 
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def achievements_command(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    user_data = user_collection.find_one({"user_id": user_id})
+    if not user_data:
+        await update.message.reply_text("You need to start the bot first!")
+        return
+    
+    user_achievements = achievements_collection.find_one({"user_id": user_id})
+    earned_ids = user_achievements.get("achievements", []) if user_achievements else []
+    
+    earned_count = len(earned_ids)
+    total_count = len(ACHIEVEMENTS)
+    
+    text = f"🏆 *Your Achievements ({earned_count}/{total_count})*\n\n"
+    
+    if not earned_ids:
+        text += "You haven't earned any achievements yet. Keep playing to unlock them!"
+    else:
+        categories = {
+            "Batting": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "runs"],
+            "Bowling": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "wickets"],
+            "Matches": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["matches", "wins"]],
+            "Performance": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["accuracy", "streak", "special"]]
+        }
+        
+        for category, category_achievements in categories.items():
+            category_earned = [a for a in category_achievements if a["id"] in earned_ids]
+            if category_earned:
+                text += f"*{category}:*\n"
+                for achievement in category_earned[:3]:
+                    text += f"• {achievement['name']} - {achievement['description']}\n"
+                
+                if len(category_earned) > 3:
+                    text += f"  _...and {len(category_earned) - 3} more {category.lower()} achievements_\n"
+                text += "\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("🔒 View Locked Achievements", callback_data="locked_achievements")],
+        [InlineKeyboardButton("🏆 View Leaderboard", callback_data="view_leaderboard")]
+    ]
+    
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+async def achievements_button(update: Update, context: CallbackContext) -> None:
+    """Handle all achievement-related button callbacks"""
+    query = update.callback_query
+    await query.answer()  # Acknowledge the button press
+    
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    if query.data == "view_achievements":
+        await display_earned_achievements(update, context, user_id)
+    elif query.data == "locked_achievements":
+        await display_locked_achievements(update, context, user_id)
+    elif query.data == "view_leaderboard":
+        await leaderboard_callback(update, context)
+
+
 async def check_achievements(user_id, context=None):
     user_id_str = str(user_id)
     
@@ -1327,6 +1373,10 @@ async def check_special_achievement(game_id, achievement_type, context, user_id=
                 await check_special_achievement(game_id, "tie", context, game["player1"])
                 await check_special_achievement(game_id, "tie", context, game["player2"])
                 return
+        elif achievement_type == "comeback":
+            # Example logic: if player was behind by 20+ runs in first innings but won
+            if game["innings"] == 2 and game["score2"] >= game["target"] and (game["target"] - game["score1"]) >= 20:
+                user_id = game["player2"]
     
     if not user_id:
         return
@@ -1358,59 +1408,98 @@ async def check_special_achievement(game_id, achievement_type, context, user_id=
     except Exception as e:
         logger.error(f"Error sending special achievement notification: {e}")
 
-async def locked_achievements_button(update: Update, context: CallbackContext) -> None:
-    query = update.callback_query
-    await query.answer()
-    
-    user = update.effective_user
-    user_id = str(user.id)
-    
+async def display_locked_achievements(update: Update, context: CallbackContext, user_id: str) -> None:
+    """Display locked achievements with proper message handling"""
     user_achievements = achievements_collection.find_one({"user_id": user_id})
     earned_ids = user_achievements.get("achievements", []) if user_achievements else []
     
     locked = [a for a in ACHIEVEMENTS if a["id"] not in earned_ids]
     
     if not locked:
-        await query.edit_message_text(
-            "🎉 Congratulations! You've unlocked all achievements!",
-            parse_mode="Markdown"
-        )
-        return
-    
-    categories = {
-        "Batting": [a for a in locked if a["requirement"]["type"] == "runs"],
-        "Bowling": [a for a in locked if a["requirement"]["type"] == "wickets"],
-        "Matches": [a for a in locked if a["requirement"]["type"] in ["matches", "wins"]],
-        "Performance": [a for a in locked if a["requirement"]["type"] in ["accuracy", "streak", "special"]]
-    }
-    
-    text = "🔒 *Locked Achievements*\n\n"
-    
-    for category, category_achievements in categories.items():
-        if category_achievements:
-            text += f"*{category}:*\n"
-            for achievement in category_achievements[:3]:
-                text += f"• {achievement['name']} - {achievement['description']}\n"
-            
-            if len(category_achievements) > 3:
-                text += f"  _...and {len(category_achievements) - 3} more {category.lower()} achievements_\n"
-            text += "\n"
+        text = "🎉 Congratulations! You've unlocked all achievements!"
+    else:
+        categories = {
+            "Batting": [a for a in locked if a["requirement"]["type"] == "runs"],
+            "Bowling": [a for a in locked if a["requirement"]["type"] == "wickets"],
+            "Matches": [a for a in locked if a["requirement"]["type"] in ["matches", "wins"]],
+            "Performance": [a for a in locked if a["requirement"]["type"] in ["accuracy", "streak", "special"]]
+        }
+        
+        text = "🔒 *Locked Achievements*\n\n"
+        
+        for category, category_achievements in categories.items():
+            if category_achievements:
+                text += f"*{category}:*\n"
+                for achievement in category_achievements[:3]:
+                    text += f"• {achievement['name']} - {achievement['description']}\n"
+                
+                if len(category_achievements) > 3:
+                    text += f"  _...and {len(category_achievements) - 3} more {category.lower()} achievements_\n"
+                text += "\n"
     
     keyboard = [[InlineKeyboardButton("🏆 View Earned Achievements", callback_data="view_achievements")]]
     
     try:
-        await query.edit_message_text(
+        await update.callback_query.edit_message_text(
             text,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
     except Exception as e:
         logger.error(f"Error displaying locked achievements: {e}")
-        await query.edit_message_text(
+        await update.callback_query.edit_message_text(
             "Error displaying all locked achievements. You have many more to unlock!",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
+async def display_earned_achievements(update: Update, context: CallbackContext, user_id: str) -> None:
+    """Display earned achievements with proper message handling for both command and callback"""
+    user_achievements = achievements_collection.find_one({"user_id": user_id})
+    earned_ids = user_achievements.get("achievements", []) if user_achievements else []
+    
+    earned_count = len(earned_ids)
+    total_count = len(ACHIEVEMENTS)
+    
+    text = f"🏆 *Your Achievements ({earned_count}/{total_count})*\n\n"
+    
+    if not earned_ids:
+        text += "You haven't earned any achievements yet. Keep playing to unlock them!"
+    else:
+        categories = {
+            "Batting": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "runs" and a["id"] in earned_ids],
+            "Bowling": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "wickets" and a["id"] in earned_ids],
+            "Matches": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["matches", "wins"] and a["id"] in earned_ids],
+            "Performance": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["accuracy", "streak", "special"] and a["id"] in earned_ids]
+        }
+        
+        for category, category_achievements in categories.items():
+            if category_achievements:
+                text += f"*{category}:*\n"
+                for achievement in category_achievements[:3]:
+                    text += f"• {achievement['name']} - {achievement['description']}\n"
+                
+                if len(category_achievements) > 3:
+                    text += f"  _...and {len(category_achievements) - 3} more {category.lower()} achievements_\n"
+                text += "\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("🔒 View Locked Achievements", callback_data="locked_achievements")],
+        [InlineKeyboardButton("🏆 View Leaderboard", callback_data="view_leaderboard")]
+    ]
+    
+    # Handle both direct command and callback query
+    if hasattr(update, 'callback_query') and update.callback_query:
+        await update.callback_query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
 def setup_jobs(application):
     job_queue = application.job_queue
     job_queue.run_repeating(check_inactive_games, interval=30, first=10)
