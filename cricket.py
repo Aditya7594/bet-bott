@@ -167,7 +167,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Join Game", callback_data=f"join_{game_id}")],
         [InlineKeyboardButton("Watch Game", callback_data=f"watch_{game_id}")],
-        [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"<url id="" type="url" status="" title="" wc="">https://t.me/</url> {bot_username}")]
+        [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/{bot_username}")]
     ])
     sent_message = await context.bot.send_message(
         chat_id=chat_id,
