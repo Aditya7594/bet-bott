@@ -399,12 +399,16 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
 async def toss_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id_str, choice = query.data.split('_')
-    game_id = int(game_id_str)
-    
+
+    # ✅ Safe split
+    parts = query.data.split("_")
+    action = parts[0]  # "toss"
+    game_id = "_".join(parts[1:-1])  # everything except last is game_id
+    choice = parts[-1]  # last part is 'heads' or 'tails'
+
     if not await check_user_started_bot(update, context):
         return
-    
+
     logger.info(f"Cricket Game - Toss Button: User {user_id} chose {choice} for game {game_id}")
 
     if game_id not in cricket_games:
@@ -419,8 +423,10 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
         return
 
     toss_result = random.choice(['heads', 'tails'])
-    game["toss_winner"] = user_id if choice == toss_result else game["player2"] if user_id == game["player1"] else game["player1"]
-    
+    game["toss_winner"] = user_id if choice == toss_result else (
+        game["player2"] if user_id == game["player1"] else game["player1"]
+    )
+
     logger.info(f"Cricket Game - Toss Button: Toss result was {toss_result}, winner is {game['toss_winner']}")
 
     winner_name = (await context.bot.get_chat(game["toss_winner"])).first_name
@@ -434,7 +440,8 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
             await context.bot.edit_message_text(
                 chat_id=player_id,
                 message_id=game["message_id"][player_id],
-                text=f"{winner_name} won toss!",
+                text=f"🪙 Toss result: *{toss_result.upper()}*\n\n🎉 {winner_name} won the toss!",
+                parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         except Exception as e:
@@ -443,12 +450,16 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
 async def choose_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id_str, choice = query.data.split('_')
-    game_id = int(game_id_str)
-    
+
+    # ✅ Safe unpack
+    parts = query.data.split("_")
+    action = parts[0]  # "choose"
+    game_id = "_".join(parts[1:-1])  # everything except the last
+    choice = parts[-1]  # "bat" or "bowl"
+
     if not await check_user_started_bot(update, context):
         return
-    
+
     logger.info(f"Cricket Game - Choose Button: User {user_id} chose to {choice} for game {game_id}")
 
     if game_id not in cricket_games:
@@ -472,16 +483,19 @@ async def choose_button(update: Update, context: CallbackContext) -> None:
         "bowler": bowler,
         "current_players": {"batter": batter, "bowler": bowler}
     })
-    
-    logger.info(f"Cricket Game - Choose Button: Game {game_id} setup - Batter: {batter}, Bowler: {bowler}")
 
+    logger.info(f"Cricket Game - Choose Button: Game {game_id} setup - Batter: {batter}, Bowler: {bowler}")
     await update_game_interface(game_id, context)
+
 
 async def play_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id_str, number = query.data.split('_')
-    game_id = int(game_id_str)
+    parts = query.data.split("_")
+    action = parts[0]
+    game_id,number = "_".join(parts[1:-1])
+    extra = parts[-1]  # optional
+
     number = int(number)
     
     if not await check_user_started_bot(update, context):
