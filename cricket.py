@@ -281,23 +281,32 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     _, game_id_str, choice = query.data.split('_')
+    
+    # Convert game_id to integer since chat_ids are integers
     game_id = int(game_id_str)
     
+    # Check if the user has started the bot
     if not await check_user_started_bot(update, context):
-        return
+        return  # Exit if the user hasn't started the bot
     
+    logger.info(f"Cricket Game - Toss Button: User {user_id} chose {choice} for game {game_id}")
+
     if game_id not in cricket_games:
+        logger.warning(f"Cricket Game - Toss Button: Game {game_id} not found")
         await query.answer("Game expired!")
         return
 
     game = cricket_games[game_id]
     if game["toss_winner"]:
+        logger.info(f"Cricket Game - Toss Button: Toss already completed for game {game_id}")
         await query.answer("Toss done!")
         return
 
     toss_result = random.choice(['heads', 'tails'])
     game["toss_winner"] = user_id if choice == toss_result else game["player2"] if user_id == game["player1"] else game["player1"]
     
+    logger.info(f"Cricket Game - Toss Button: Toss result was {toss_result}, winner is {game['toss_winner']}")
+
     winner_name = (await context.bot.get_chat(game["toss_winner"])).first_name
     keyboard = [[
         InlineKeyboardButton("🏏 Bat", callback_data=f"choose_{game_id}_bat"),
@@ -314,22 +323,28 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
             )
         except Exception as e:
             logger.error(f"Error updating toss result for player {player_id}: {e}")
-
 async def choose_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     _, game_id_str, choice = query.data.split('_')
+    
+    # Convert game_id to integer
     game_id = int(game_id_str)
     
+    # Check if the user has started the bot
     if not await check_user_started_bot(update, context):
-        return
+        return  # Exit if the user hasn't started the bot
     
+    logger.info(f"Cricket Game - Choose Button: User {user_id} chose to {choice} for game {game_id}")
+
     if game_id not in cricket_games:
+        logger.warning(f"Cricket Game - Choose Button: Game {game_id} not found")
         await query.answer("Game expired!")
         return
 
     game = cricket_games[game_id]
     if user_id != game["toss_winner"]:
+        logger.info(f"Cricket Game - Choose Button: User {user_id} tried to choose when not toss winner")
         await query.answer("Not your choice!")
         return
 
@@ -344,40 +359,42 @@ async def choose_button(update: Update, context: CallbackContext) -> None:
         "current_players": {"batter": batter, "bowler": bowler}
     })
     
+    logger.info(f"Cricket Game - Choose Button: Game {game_id} setup - Batter: {batter}, Bowler: {bowler}")
+
     await update_game_interface(game_id, context)
+
 
 async def play_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     _, game_id_str, number = query.data.split('_')
+    
+    # Convert game_id and number to integers
     game_id = int(game_id_str)
     number = int(number)
     
+    # Check if the user has started the bot
     if not await check_user_started_bot(update, context):
-        return
+        return  # Exit if the user hasn't started the bot
     
+    logger.info(f"Cricket Game - Play Button: User {user_id} chose number {number} for game {game_id}")
+
     if game_id not in cricket_games:
+        logger.warning(f"Cricket Game - Play Button: Game {game_id} not found")
         await query.answer("Game expired!")
         return
 
     game = cricket_games[game_id]
-    update_game_activity(game_id)  # Update activity timestamp
     
+    # Validate player turn
     if user_id == game["current_players"]["batter"] and game["batter_choice"] is None:
-        if number < 1 or number > 6:
-            await query.answer("Invalid choice! Please choose a number between 1-6.")
-            return
-            
         game["batter_choice"] = number
+        logger.info(f"Cricket Game - Play Button: Batter {user_id} chose {number}")
         await query.answer(f"Your choice: {number}")
         
-        try:
-            batter_name = (await context.bot.get_chat(game["batter"])).first_name
-            bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
-        except Exception:
-            await query.answer("Error retrieving player information.")
-            return
-
+        # Update game interface after batter's choice - DON'T REVEAL BATTER'S CHOICE
+        batter_name = (await context.bot.get_chat(game["batter"])).first_name
+        bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
         score = game['score1'] if game['innings'] == 1 else game['score2']
         spectator_count = len(game["spectators"])
         spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
@@ -394,6 +411,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         
         text += "\n\n⚡ Batter has chosen. Now bowler's turn."
         
+        # Send updated interface to spectators
         for spectator_id in game["spectators"]:
             try:
                 await context.bot.edit_message_text(
@@ -402,8 +420,9 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                     text=text
                 )
             except Exception as e:
-                logger.error(f"Error updating spectator {spectator_id}: {e}")
+                print(f"Error updating for spectator {spectator_id}: {e}")
         
+        # Send updated interface to players with appropriate buttons
         for player_id in [game["player1"], game["player2"]]:
             player_text = text
             if player_id == game["current_players"]["batter"]:
@@ -411,6 +430,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
             else:
                 player_text += f"\n\n⚡ {bowler_name}, choose a number (1-6):"
             
+            # Create keyboard for bowler only
             keyboard = []
             if player_id == game["current_players"]["bowler"]:
                 row = []
@@ -429,40 +449,38 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                     reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
                 )
             except Exception as e:
-                logger.error(f"Error updating player {player_id}: {e}")
+                print(f"Error updating for player {player_id}: {e}")
         
     elif user_id == game["current_players"]["bowler"] and game["bowler_choice"] is None:
-        if number < 1 or number > 6:
-            await query.answer("Invalid choice! Please choose a number between 1-6.")
-            return
-            
         game["bowler_choice"] = number
+        logger.info(f"Cricket Game - Play Button: Bowler {user_id} chose {number}")
         await query.answer(f"Your choice: {number}")
         
-        try:
-            batter_choice = game["batter_choice"]
-            bowler_choice = number
-        except Exception:
-            await query.answer("Error processing ball result.")
-            return
+        # Process the result now that both players have chosen
+        batter_choice = game["batter_choice"]
+        bowler_choice = number
+        
+        logger.info(f"Cricket Game - Play Button: Ball result - Batter: {batter_choice}, Bowler: {bowler_choice}")
+        
+        # Reset choices for next ball
+        game["batter_choice"] = None
+        game["bowler_choice"] = None
 
-        try:
-            batter_name = (await context.bot.get_chat(game["batter"])).first_name
-            bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
-        except Exception:
-            await query.answer("Error retrieving player information.")
-            return
-
+        # Get player names
+        batter_name = (await context.bot.get_chat(game["batter"])).first_name
+        bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
         score = game['score1'] if game['innings'] == 1 else game['score2']
         target = game['target'] if game['innings'] == 2 else None
         spectator_count = len(game["spectators"])
         spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
 
+        # Process ball result
         if batter_choice == bowler_choice:
             result_text = f"🎯 Ball Result: WICKET!\nBatter: {batter_choice} | Bowler: {bowler_choice}"
             game["wickets"] += 1
             game["match_details"].append((game["over"], game["ball"], 0, True))
             
+            # Update interface with wicket result
             text = (
                 f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
                 f"🔸 Batting: {batter_name}\n"
@@ -471,6 +489,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                 f"{result_text}"
             )
             
+            # Update all participants with result
             for participant_id in list(game["spectators"]) + [game["player1"], game["player2"]]:
                 try:
                     await context.bot.edit_message_text(
@@ -479,12 +498,9 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                         text=text
                     )
                 except Exception as e:
-                    logger.error(f"Error updating participant {participant_id}: {e}")
+                    print(f"Error updating participant {participant_id}: {e}")
             
-            # Reset choices after processing this ball
-            game["batter_choice"] = None
-            game["bowler_choice"] = None
-            
+            # Handle wicket
             await handle_wicket(game_id, context)
             return
         else:
@@ -496,12 +512,16 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                 game["score2"] += runs
             game["match_details"].append((game["over"], game["ball"], runs, False))
             
+            # Update ball count
             game["ball"] += 1
             if game["ball"] == 6:
                 game["over"] += 1
                 game["ball"] = 0
 
+            # Check end conditions
             if game["innings"] == 2 and game["score2"] >= game["target"]:
+                # Update score first
+                score = game['score1'] if game['innings'] == 1 else game['score2']
                 text = (
                     f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
                     f"🔸 Batting: {batter_name}\n"
@@ -510,6 +530,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                     f"{result_text}"
                 )
                 
+                # Update all participants with result
                 for participant_id in list(game["spectators"]) + [game["player1"], game["player2"]]:
                     try:
                         await context.bot.edit_message_text(
@@ -518,15 +539,13 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                             text=text
                         )
                     except Exception as e:
-                        logger.error(f"Error updating participant {participant_id}: {e}")
-                
-                # Reset choices before ending the game
-                game["batter_choice"] = None
-                game["bowler_choice"] = None
+                        print(f"Error updating participant {participant_id}: {e}")
                 
                 await declare_winner(game_id, context)
                 return
             elif game["over"] >= game["max_overs"]:
+                # Update score first
+                score = game['score1'] if game['innings'] == 1 else game['score2']
                 text = (
                     f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
                     f"🔸 Batting: {batter_name}\n"
@@ -535,6 +554,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                     f"{result_text}"
                 )
                 
+                # Update all participants with result
                 for participant_id in list(game["spectators"]) + [game["player1"], game["player2"]]:
                     try:
                         await context.bot.edit_message_text(
@@ -543,17 +563,15 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                             text=text
                         )
                     except Exception as e:
-                        logger.error(f"Error updating participant {participant_id}: {e}")
-                
-                # Reset choices before ending innings
-                game["batter_choice"] = None
-                game["bowler_choice"] = None
+                        print(f"Error updating participant {participant_id}: {e}")
                 
                 await end_innings(game_id, context)
                 return
 
+        # Update score after runs
         score = game['score1'] if game['innings'] == 1 else game['score2']
         
+        # Build updated interface
         text = (
             f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
             f"🔸 Batting: {batter_name}\n"
@@ -566,10 +584,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         
         text += f"\n\n{result_text}\n\n⚡ {batter_name}, choose a number (1-6):"
         
-        # Reset choices after processing this ball
-        game["batter_choice"] = None
-        game["bowler_choice"] = None
-        
+        # Create keyboard for batter
         keyboard = []
         row = []
         for i in range(1, 7):
@@ -579,11 +594,13 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                 row = []
         keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_id}")])
         
+        # Update all participants
         for participant_id in list(game["spectators"]) + [game["player1"], game["player2"]]:
             try:
                 participant_text = text
                 participant_keyboard = None
                 
+                # Only show action buttons to the current batter
                 if participant_id == game["current_players"]["batter"]:
                     participant_keyboard = InlineKeyboardMarkup(keyboard)
                     
@@ -594,9 +611,11 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                     reply_markup=participant_keyboard
                 )
             except Exception as e:
-                logger.error(f"Error updating participant {participant_id}: {e}")
+                print(f"Error updating participant {participant_id}: {e}")
     else:
+        logger.info(f"Cricket Game - Play Button: User {user_id} tried to play out of turn")
         await query.answer("Not your turn!")
+        return
 
 async def handle_wicket(game_id: int, context: CallbackContext):
     if game_id not in cricket_games:
