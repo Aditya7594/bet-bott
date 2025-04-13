@@ -111,11 +111,6 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     for old_game_id, old_game in list(cricket_games.items()):
      if old_game.get("player1") == user.id and old_game.get("player2") is None:
         try:
-        
-        
-            await context.bot.send_message(
-                chat_id=old_game.get("group_chat_id"),
-                text="⚠️ This cricket game has expired as the creator started a new game.")
             
             # Clean up old game data
             if old_game_id in reminder_sent:
