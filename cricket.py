@@ -953,8 +953,8 @@ def get_cricket_handlers():
     return [
         CommandHandler("stats", stats),
         CommandHandler("leaderboard", leaderboard),
-        CommandHandler("chat", game_chat),
-        CommandHandler("history", game_history),
+        CommandHandler("chat", chat),
+        CommandHandler("history", history),
         CallbackQueryHandler(toss_button, pattern="^toss_"),
         CallbackQueryHandler(choose_button, pattern="^choose_"),
         CallbackQueryHandler(play_button, pattern="^play_"),
