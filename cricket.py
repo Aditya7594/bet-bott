@@ -297,18 +297,21 @@ async def update_game_interface(game_id: int, context: CallbackContext, text: st
 async def handle_join_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id = query.data.split('_')
-    game_id = int(game_id)
-    
+
+    # ✅ Split properly
+    parts = query.data.split("_")
+    action = parts[0]
+    game_id = "_".join(parts[1:])  # preserve full game_id
+
     if not await check_user_started_bot(update, context):
         return
-    
+
     if game_id not in cricket_games:
         await query.answer("Game not found or expired!")
         return
 
     game = cricket_games[game_id]
-    
+
     if user_id == game["player1"]:
         await query.answer("You can't join your own game!")
         return
@@ -318,42 +321,45 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
         return
 
     game["player2"] = user_id
-    
+
     bot_username = (await context.bot.get_me()).username
     keyboard = [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/{bot_username}")]
-    
+
     try:
         await context.bot.send_message(
             chat_id=game["group_chat_id"],
             text=f"🎉 {query.from_user.first_name} joined the game!\n\n"
                  f"Players should open the bot to continue the game:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup([keyboard])
         )
     except Exception as e:
         logger.error(f"Error sending join confirmation to group chat: {e}")
         await query.answer("Error sending join confirmation!")
         return
-    
+
     toss_keyboard = [[
         InlineKeyboardButton("Heads", callback_data=f"toss_{game_id}_heads"),
         InlineKeyboardButton("Tails", callback_data=f"toss_{game_id}_tails")
     ]]
-    
+
     for player_id in [game["player1"], game["player2"]]:
         try:
             msg = await context.bot.send_message(
                 chat_id=player_id,
                 text="⚡ Toss Time!",
-                reply_markup=InlineKeyboardMarkup(toss_keyboard))
+                reply_markup=InlineKeyboardMarkup(toss_keyboard)
+            )
             game["message_id"][player_id] = msg.message_id
         except Exception as e:
             logger.error(f"Error sending toss message to {player_id}: {e}")
-
 async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id = query.data.split('_')
-    game_id = int(game_id)
+
+    # ✅ Proper split
+    parts = query.data.split("_")
+    action = parts[0]
+    game_id = "_".join(parts[1:])
 
     if not await check_user_started_bot(update, context):
         return
@@ -363,19 +369,21 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
         return
 
     game = cricket_games[game_id]
-    
+
     if user_id in [game["player1"], game["player2"]]:
         await query.answer("You're already playing in this game!")
         return
-    
+
     game["spectators"].add(user_id)
-    
+
     player1_name = (await context.bot.get_chat(game["player1"])).first_name
-    player2_name = "Waiting for opponent" if not game["player2"] else (await context.bot.get_chat(game["player2"])).first_name
-    
+    player2_name = "Waiting for opponent"
+    if game["player2"]:
+        player2_name = (await context.bot.get_chat(game["player2"])).first_name
+
     bot_username = (await context.bot.get_me()).username
     keyboard = [[InlineKeyboardButton("🔄 Open Bot to Watch Live", url=f"https://t.me/{bot_username}")]]
-    
+
     await query.message.reply_text(
         f"👁️ You're now watching the cricket match!\n"
         f"🧑 Player 1: {player1_name}\n"
@@ -383,9 +391,10 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
         f"Open the bot to view live match updates:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    
-    if game["player2"] and "batter" in game and game["batter"]:
+
+    if game.get("player2") and game.get("batter"):
         await update_game_interface(game_id, context)
+
 
 async def toss_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -1504,6 +1513,7 @@ async def display_earned_achievements(update: Update, context: CallbackContext, 
 def setup_jobs(application):
     job_queue = application.job_queue
     job_queue.run_repeating(check_inactive_games, interval=30, first=10)
+    
     job_queue.run_repeating(send_inactive_player_reminder, interval=5, first=5)
 
 def get_cricket_handlers():
