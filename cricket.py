@@ -350,16 +350,23 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
 
     game["player2"] = user_id
     
-    bot_username = (await context.bot.get_me()).username
-    keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
+    # Send confirmation to group chat
+    try:
+        bot_username = (await context.bot.get_me()).username
+        keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
+        
+        await context.bot.send_message(
+            chat_id=game["group_chat_id"],
+            text=f"🎉 {query.from_user.first_name} joined the game!\n\n"
+                 f"Players should open the bot to continue the game:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logger.error(f"Error sending join confirmation to group chat: {e}")
+        await query.answer("Error sending join confirmation!")
+        return
     
-    await context.bot.send_message(
-        chat_id=game["group_chat_id"],
-        text=f"🎉 {query.from_user.first_name} joined the game!\n\n"
-             f"Players should open the bot to continue the game:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    
+    # Send toss message to both players
     toss_keyboard = [[
         InlineKeyboardButton("Heads", callback_data=f"toss_{game_id}_heads"),
         InlineKeyboardButton("Tails", callback_data=f"toss_{game_id}_tails")
