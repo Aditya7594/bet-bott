@@ -827,8 +827,8 @@ async def declare_winner(game_id: int, context: CallbackContext):
             )
 
         
-       try:
-        game_collection.insert_one({
+        try:
+           game_collection.insert_one({
             "timestamp": datetime.now(),
             "participants": [str(game["player1"]), str(game["player2"])],  # Convert to strings
             "scores": {"player1": game["score1"], "player2": game["score2"]},
