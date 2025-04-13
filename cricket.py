@@ -12,17 +12,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-# Add this near the top of your file with other MongoDB setup
+# MongoDB setup
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority')
 db = client['telegram_bot']
 user_collection = db["users"]
 game_collection = db["games"]
-       
+achievements_collection = db["achievements"]  # Add this line
 
+# Game state
 cricket_games = {}
 reminder_sent = {}
 game_activity = {}
+
 ACHIEVEMENTS = [
     # Batting achievements
     {"id": "first_run", "name": "First Run", "description": "Score your first run", "requirement": {"type": "runs", "value": 1}},
@@ -71,9 +72,6 @@ ACHIEVEMENTS = [
     {"id": "hat_trick", "name": "Hat-Trick", "description": "Take 3 wickets in 3 consecutive balls", "requirement": {"type": "special", "value": "hat_trick"}},
 ]
 
-def generate_game_code():
-    return str(random.randint(100, 999))
-
 async def check_user_started_bot(update: Update, context: CallbackContext) -> bool:
     user = update.effective_user
     user_id = str(user.id)
@@ -109,20 +107,16 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         return
     max_overs = 100  
     max_wickets = 1 
-    
     if context.args:
         try:
             if len(context.args) >= 1:
                 max_overs = int(context.args[0])
             if len(context.args) >= 2:
                 max_wickets = int(context.args[1])
-                
-            # Validate inputs
             if max_overs < 1:
                 max_overs = 1
             if max_wickets < 1:
                 max_wickets = 1
-                
         except ValueError:
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -153,12 +147,11 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "max_overs": max_overs,
         "spectators": set(),
         "last_move": datetime.utcnow(),
-        "last_reminder": None  # Track when the last reminder was sent
+        "last_reminder": None
     }
     
     update_game_activity(game_id)
     
-    # Create game description with overs/wickets
     game_desc = f"🏏 *Cricket Game Started!*\n\n"
     game_desc += f"Started by: {user.first_name}\n"
     game_desc += f"Format: {max_overs} over{'s' if max_overs > 1 else ''}, {max_wickets} wicket{'s' if max_wickets > 1 else ''}\n\n"
@@ -179,46 +172,24 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         parse_mode="Markdown")
     await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
 
-
-    cricket_games[game_id]["original_message_id"] = sent_message.message_id
-    
-
-    try:
-        sent_message = await context.bot.send_message(
-            chat_id=chat_id,
-            text=game_desc,
-            reply_markup=keyboard,
-            parse_mode="Markdown")
-        await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
-    except Exception as e:
-        logger.error(f"Error creating game: {e}")
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚠️ Error creating the game. Please try again later.")
-
 async def send_inactive_player_reminder(context: CallbackContext) -> None:
-    """Send reminders to inactive players during games"""
     current_time = datetime.utcnow()
     
     for game_id, game in list(cricket_games.items()):
-        # Skip games that are waiting for a second player
         if game["player2"] is None:
             continue
             
-        # Skip games that don't have an active turn in progress
         if game["batter"] is None or game["bowler"] is None:
             continue
             
-        # Determine which player should make a move
         current_player_id = None
         if game["batter_choice"] is None:
             current_player_id = game["current_players"]["batter"]
         elif game["bowler_choice"] is None:
             current_player_id = game["current_players"]["bowler"]
         else:
-            continue  # No pending moves
+            continue
         
-        # Check if it's been at least 10 seconds since last activity and no reminder sent in last 10 seconds
         last_activity = game_activity.get(game_id, datetime.utcnow())
         last_reminder = game.get("last_reminder")
         
@@ -226,10 +197,7 @@ async def send_inactive_player_reminder(context: CallbackContext) -> None:
                 last_reminder is None or (current_time - last_reminder).total_seconds() >= 10):
             
             try:
-                # Get player names
                 player_name = (await context.bot.get_chat(current_player_id)).first_name
-                
-                # Send DM reminder
                 waiting_for = "batting" if game["batter_choice"] is None else "bowling"
                 
                 reminder_text = (
@@ -243,16 +211,13 @@ async def send_inactive_player_reminder(context: CallbackContext) -> None:
                     parse_mode="Markdown"
                 )
                 
-                # Update reminder timestamp
                 game["last_reminder"] = current_time
                 
             except Exception as e:
                 logger.error(f"Error sending play reminder: {e}")
 
-# Update the update_game_activity function to include last move
 def update_game_activity(game_id):
     game_activity[game_id] = datetime.utcnow()
-    
     if game_id in cricket_games:
         cricket_games[game_id]["last_move"] = datetime.utcnow()
 
@@ -278,7 +243,7 @@ async def update_game_interface(game_id: int, context: CallbackContext, text: st
         spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
         
         text = (
-            f"⏳ Over: {game['over']}.{game['ball']}    {spectator_text}\n"
+            f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
             f"🔸 Batting: {batter_name}\n"
             f"🔹 Bowling: {bowler_name}\n"
             f"📊 Score: {score}/{game['wickets']}"
@@ -350,11 +315,10 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
 
     game["player2"] = user_id
     
-    # Send confirmation to group chat
+    bot_username = (await context.bot.get_me()).username
+    keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
+    
     try:
-        bot_username = (await context.bot.get_me()).username
-        keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
-        
         await context.bot.send_message(
             chat_id=game["group_chat_id"],
             text=f"🎉 {query.from_user.first_name} joined the game!\n\n"
@@ -366,7 +330,6 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
         await query.answer("Error sending join confirmation!")
         return
     
-    # Send toss message to both players
     toss_keyboard = [[
         InlineKeyboardButton("Heads", callback_data=f"toss_{game_id}_heads"),
         InlineKeyboardButton("Tails", callback_data=f"toss_{game_id}_tails")
@@ -424,13 +387,10 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     _, game_id_str, choice = query.data.split('_')
-    
-    # Convert game_id to integer since chat_ids are integers
     game_id = int(game_id_str)
     
-    # Check if the user has started the bot
     if not await check_user_started_bot(update, context):
-        return  # Exit if the user hasn't started the bot
+        return
     
     logger.info(f"Cricket Game - Toss Button: User {user_id} chose {choice} for game {game_id}")
 
@@ -466,17 +426,15 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
             )
         except Exception as e:
             logger.error(f"Error updating toss result for player {player_id}: {e}")
+
 async def choose_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     _, game_id_str, choice = query.data.split('_')
-    
-    # Convert game_id to integer
     game_id = int(game_id_str)
     
-    # Check if the user has started the bot
     if not await check_user_started_bot(update, context):
-        return  # Exit if the user hasn't started the bot
+        return
     
     logger.info(f"Cricket Game - Choose Button: User {user_id} chose to {choice} for game {game_id}")
 
@@ -506,19 +464,15 @@ async def choose_button(update: Update, context: CallbackContext) -> None:
 
     await update_game_interface(game_id, context)
 
-
 async def play_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     _, game_id_str, number = query.data.split('_')
-    
-    # Convert game_id and number to integers
     game_id = int(game_id_str)
     number = int(number)
     
-    # Check if the user has started the bot
     if not await check_user_started_bot(update, context):
-        return  # Exit if the user hasn't started the bot
+        return
     
     logger.info(f"Cricket Game - Play Button: User {user_id} chose number {number} for game {game_id}")
 
@@ -529,16 +483,13 @@ async def play_button(update: Update, context: CallbackContext) -> None:
 
     game = cricket_games[game_id]
     
-    # Update activity timestamp when a move is made
     update_game_activity(game_id)
     
-    # Validate player turn
     if user_id == game["current_players"]["batter"] and game["batter_choice"] is None:
         game["batter_choice"] = number
         logger.info(f"Cricket Game - Play Button: Batter {user_id} chose {number}")
         await query.answer(f"Your choice: {number}")
         
-        # Update game interface after batter's choice - DON'T REVEAL BATTER'S CHOICE
         batter_name = (await context.bot.get_chat(game["batter"])).first_name 
         bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
         score = game['score1'] if game['innings'] == 1 else game['score2']
@@ -557,7 +508,6 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         
         text += "\n\n⚡ Batter has chosen. Now bowler's turn."
         
-        # Send updated interface to spectators
         for spectator_id in game["spectators"]:
             try:
                 await context.bot.edit_message_text(
@@ -568,7 +518,6 @@ async def play_button(update: Update, context: CallbackContext) -> None:
             except Exception as e:
                 print(f"Error updating for spectator {spectator_id}: {e}")
         
-        # Send updated interface to players with appropriate buttons
         for player_id in [game["player1"], game["player2"]]:
             player_text = text
             if player_id == game["current_players"]["batter"]:
@@ -576,7 +525,6 @@ async def play_button(update: Update, context: CallbackContext) -> None:
             else:
                 player_text += f"\n\n⚡ {bowler_name}, choose a number (1-6):"
             
-            # Create keyboard for bowler only
             keyboard = []
             if player_id == game["current_players"]["bowler"]:
                 row = []
@@ -602,17 +550,14 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         logger.info(f"Cricket Game - Play Button: Bowler {user_id} chose {number}")
         await query.answer(f"Your choice: {number}")
         
-        # Process the result now that both players have chosen
         batter_choice = game["batter_choice"]
         bowler_choice = number
         
         logger.info(f"Cricket Game - Play Button: Ball result - Batter: {batter_choice}, Bowler: {bowler_choice}")
         
-        # Reset choices for next ball
         game["batter_choice"] = None
         game["bowler_choice"] = None
 
-        # Get player names
         batter_name = (await context.bot.get_chat(game["batter"])).first_name
         bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
         score = game['score1'] if game['innings'] == 1 else game['score2']
@@ -620,13 +565,11 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         spectator_count = len(game["spectators"])
         spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
 
-        # Process ball result
         if batter_choice == bowler_choice:
             result_text = f"🎯 Ball Result: WICKET!\nBatter: {batter_choice} | Bowler: {bowler_choice}"
             game["wickets"] += 1
             game["match_details"].append((game["over"], game["ball"], 0, True))
             
-            # Update interface with wicket result
             text = (
                 f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
                 f"🔸 Batting: {batter_name}\n"
@@ -635,7 +578,6 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                 f"{result_text}"
             )
             
-            # Update all participants with result
             for participant_id in list(game["spectators"]) + [game["player1"], game["player2"]]:
                 try:
                     await context.bot.edit_message_text(
@@ -646,7 +588,6 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                 except Exception as e:
                     print(f"Error updating participant {participant_id}: {e}")
             
-            # Handle wicket
             await handle_wicket(game_id, context)
             return
         else:
@@ -658,15 +599,12 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                 game["score2"] += runs
             game["match_details"].append((game["over"], game["ball"], runs, False))
             
-            # Update ball count
             game["ball"] += 1
             if game["ball"] == 6:
                 game["over"] += 1
                 game["ball"] = 0
 
-            # Check end conditions
             if game["innings"] == 2 and game["score2"] >= game["target"]:
-                # Update score first
                 score = game['score1'] if game['innings'] == 1 else game['score2']
                 text = (
                     f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
@@ -676,7 +614,6 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                     f"{result_text}"
                 )
                 
-                # Update all participants with result
                 for participant_id in list(game["spectators"]) + [game["player1"], game["player2"]]:
                     try:
                         await context.bot.edit_message_text(
@@ -690,7 +627,6 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                 await declare_winner(game_id, context)
                 return
             elif game["over"] >= game["max_overs"]:
-                # Update score first
                 score = game['score1'] if game['innings'] == 1 else game['score2']
                 text = (
                     f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
@@ -700,7 +636,6 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                     f"{result_text}"
                 )
                 
-                # Update all participants with result
                 for participant_id in list(game["spectators"]) + [game["player1"], game["player2"]]:
                     try:
                         await context.bot.edit_message_text(
@@ -714,10 +649,8 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                 await end_innings(game_id, context)
                 return
 
-        # Update score after runs
         score = game['score1'] if game['innings'] == 1 else game['score2']
         
-        # Build updated interface
         text = (
             f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
             f"🔸 Batting: {batter_name}\n"
@@ -730,7 +663,6 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         
         text += f"\n\n{result_text}\n\n⚡ {batter_name}, choose a number (1-6):"
         
-        # Create keyboard for batter
         keyboard = []
         row = []
         for i in range(1, 7):
@@ -740,13 +672,11 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                 row = []
         keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_id}")])
         
-        # Update all participants
         for participant_id in list(game["spectators"]) + [game["player1"], game["player2"]]:
             try:
                 participant_text = text
                 participant_keyboard = None
                 
-                # Only show action buttons to the current batter
                 if participant_id == game["current_players"]["batter"]:
                     participant_keyboard = InlineKeyboardMarkup(keyboard)
                     
@@ -768,7 +698,7 @@ async def handle_wicket(game_id: int, context: CallbackContext):
         return
 
     game = cricket_games[game_id]
-    update_game_activity(game_id)  # Update activity timestamp
+    update_game_activity(game_id)
     
     game["ball"] += 1
     if game["ball"] == 6:
@@ -776,7 +706,6 @@ async def handle_wicket(game_id: int, context: CallbackContext):
         game["ball"] = 0
 
     if game["wickets"] >= game["max_wickets"] or game["over"] >= game["max_overs"]:
-        # Reset choices before ending innings
         game["batter_choice"] = None
         game["bowler_choice"] = None
         await end_innings(game_id, context)
@@ -808,7 +737,6 @@ async def handle_wicket(game_id: int, context: CallbackContext):
     
     text += "\n\n⚡ Next ball. Batter, choose a number (1-6):"
     
-    # Ensure choices are reset
     game["batter_choice"] = None
     game["bowler_choice"] = None
     
@@ -850,7 +778,7 @@ async def end_innings(game_id: int, context: CallbackContext):
         text = (
             f"🔥 *INNINGS BREAK* 🔥\n\n"
             f"First innings score: {game['score1']}\n"
-            f"Target: {game['target']} runs\n\n"
+            f"Target: {game['target']} runs\n"
             f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
             f"🔸 Now batting: {batter_name}\n"
             f"🔹 Now bowling: {bowler_name}\n\n"
@@ -870,7 +798,6 @@ async def declare_winner(game_id: int, context: CallbackContext):
 
     game = cricket_games[game_id]
     
-    # Get player names
     try:
         p1 = (await context.bot.get_chat(game["player1"])).first_name
         p2 = (await context.bot.get_chat(game["player2"])).first_name
@@ -879,15 +806,11 @@ async def declare_winner(game_id: int, context: CallbackContext):
         p1 = "Player 1"
         p2 = "Player 2"
 
-    # Determine result
     if game["score1"] == game["score2"]:
         result = "🤝 Match Drawn!"
         winner_id = None
         loser_id = None
-        
-        # Award "tied match" achievement to both players
         await check_special_achievement(game_id, "tie", context)
-        
     elif game["innings"] == 2:
         if game["score2"] >= game["target"]:
             winner_id = game["batter"]
@@ -898,10 +821,8 @@ async def declare_winner(game_id: int, context: CallbackContext):
                 winner = "Player"
             result = f"🏅 {winner} won by {game['max_wickets'] - game['wickets']} wicket(s)!"
             
-            # Check for perfect match achievement
             if game["wickets"] == 0:
                 await check_special_achievement(game_id, "perfect_match", context, winner_id)
-                
         else:
             winner_id = game["bowler"]
             loser_id = game["batter"]
@@ -916,7 +837,6 @@ async def declare_winner(game_id: int, context: CallbackContext):
         winner_id = None
         loser_id = None
 
-    # Format the result message
     result_message = (
         f"🏆 *GAME OVER!*\n\n"
         f"📜 *Match Summary:*\n"
@@ -925,7 +845,6 @@ async def declare_winner(game_id: int, context: CallbackContext):
         f"{result}"
     )
 
-    # Send result to group chat
     try:
         await context.bot.send_message(
             chat_id=game["group_chat_id"],
@@ -935,7 +854,6 @@ async def declare_winner(game_id: int, context: CallbackContext):
     except Exception as e:
         logger.error(f"Error sending result to group chat: {e}")
 
-    # Send result to all participants
     participants = list(game["spectators"]) + [game["player1"], game["player2"]]
     for player_id in participants:
         try:
@@ -945,29 +863,21 @@ async def declare_winner(game_id: int, context: CallbackContext):
                 parse_mode="Markdown"
             )
             
-            # Try to delete game interface message
-            try:
-                if player_id in game["message_id"]:
-                    await context.bot.deleteMessage(
-                        chat_id=player_id,
-                        message_id=game["message_id"].get(player_id)
-                    )
-            except Exception as e:
-                logger.error(f"Error deleting game message for {player_id}: {e}")
-                
+            if player_id in game["message_id"]:
+                await context.bot.deleteMessage(
+                    chat_id=player_id,
+                    message_id=game["message_id"].get(player_id)
+                )
         except Exception as e:
             logger.error(f"Error sending result to {player_id}: {e}")
 
-    # Update player statistics if a winner is determined
     if winner_id and loser_id:
         winner_id_str = str(winner_id)
         loser_id_str = str(loser_id)
         
-        # Get scores for winner and loser
         winner_runs = game['score2'] if winner_id == game["batter"] else game['score1']
         loser_runs = game['score1'] if winner_id == game["batter"] else game['score2']
         
-        # Update winner's stats
         winner_stats = user_collection.find_one({"user_id": winner_id_str}, {"_id": 0, "stats": 1})
         if winner_stats and "stats" in winner_stats:
             user_collection.update_one(
@@ -978,12 +888,6 @@ async def declare_winner(game_id: int, context: CallbackContext):
                     "stats.current_streak": 1
                 },
                 "$set": {"stats.last_result": "win"}}
-            )
-            
-            # Reset losing streak if any
-            user_collection.update_one(
-                {"user_id": winner_id_str},
-                {"$set": {"stats.losing_streak": 0}}
             )
         else:
             user_collection.update_one(
@@ -1001,7 +905,6 @@ async def declare_winner(game_id: int, context: CallbackContext):
                 upsert=True
             )
         
-        # Update loser's stats
         loser_stats = user_collection.find_one({"user_id": loser_id_str}, {"_id": 0, "stats": 1})
         if loser_stats and "stats" in loser_stats:
             user_collection.update_one(
@@ -1031,11 +934,9 @@ async def declare_winner(game_id: int, context: CallbackContext):
                 upsert=True
             )
         
-        # Check for achievements for both players
         await check_achievements(winner_id, context)
         await check_achievements(loser_id, context)
 
-        # Store game in history
         try:
             game_collection.insert_one({
                 "timestamp": datetime.now(),
@@ -1051,7 +952,6 @@ async def declare_winner(game_id: int, context: CallbackContext):
         except Exception as e:
             logger.error(f"Error saving game history: {e}")
 
-    # Clean up game data
     if game_id in reminder_sent:
         del reminder_sent[game_id]
     if game_id in game_activity:
@@ -1124,11 +1024,7 @@ async def check_inactive_games(context: CallbackContext):
                     f"Anyone want to join? Click the button below:"
                 )
                 
-                # In the check_inactive_games function, modify the keyboard creation:
-                keyboard = [[InlineKeyboardButton("🎮 Join Cricket Game", 
-                                url=f"https://t.me/{bot_username}?start=game_{game_id}"
-                                if game.get("player2") is None else
-                                f"https://t.me/c/{str(game['group_chat_id'])[4:]}/{game.get('original_message_id')}")]]
+                keyboard = [[InlineKeyboardButton("🎮 Join Cricket Game", url=f"https://t.me/{bot_username}?start=game_{game_id}")]]
                 
                 await context.bot.send_message(
                     chat_id=game["group_chat_id"],
@@ -1166,22 +1062,18 @@ async def stats(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("You need to start the bot first!")
         return
     
-    # Fetch player statistics
     stats_data = user_collection.find_one({"user_id": user_id}, {"_id": 0, "stats": 1})
     if not stats_data or "stats" not in stats_data:
         await update.message.reply_text("No statistics available yet. Play some games to see your stats!")
         return
     
-    # Get stats data
     stats = stats_data["stats"]
     games_played = stats.get('wins', 0) + stats.get('losses', 0)
     
-    # Calculate accuracy as win percentage
     accuracy = 0
     if games_played > 0:
         accuracy = round((stats.get('wins', 0) / games_played) * 100)
     
-    # Create stats message
     text = f"📊 *Your Statistics:*\n\n"
     text += f"🏏 *Games*\n"
     text += f"▫️ Played: {games_played}\n"
@@ -1192,10 +1084,6 @@ async def stats(update: Update, context: CallbackContext) -> None:
     text += f"▫️ Total Runs: {stats.get('runs', 0)}\n"
     text += f"▫️ Wickets Taken: {stats.get('wickets', 0)}\n"
     
-    # Add recent achievements
-    await check_achievements(user_id, context)
-    
-    # Create keyboard with achievements button
     keyboard = [[InlineKeyboardButton("🏆 View Achievements", callback_data="view_achievements")]]
     
     await update.message.reply_text(
@@ -1204,24 +1092,70 @@ async def stats(update: Update, context: CallbackContext) -> None:
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+async def achievements_command(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    user_data = user_collection.find_one({"user_id": user_id})
+    if not user_data:
+        await update.message.reply_text("You need to start the bot first!")
+        return
+    
+    user_achievements = achievements_collection.find_one({"user_id": user_id})
+    earned_ids = user_achievements.get("achievements", []) if user_achievements else []
+    
+    earned_count = len(earned_ids)
+    total_count = len(ACHIEVEMENTS)
+    
+    text = f"🏆 *Your Achievements ({earned_count}/{total_count})*\n\n"
+    
+    if not earned_ids:
+        text += "You haven't earned any achievements yet. Keep playing to unlock them!"
+    else:
+        categories = {
+            "Batting": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "runs"],
+            "Bowling": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "wickets"],
+            "Matches": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["matches", "wins"]],
+            "Performance": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["accuracy", "streak", "special"]]
+        }
+        
+        for category, category_achievements in categories.items():
+            category_earned = [a for a in category_achievements if a["id"] in earned_ids]
+            if category_earned:
+                text += f"*{category}:*\n"
+                for achievement in category_earned[:3]:
+                    text += f"• {achievement['name']} - {achievement['description']}\n"
+                
+                if len(category_earned) > 3:
+                    text += f"  _...and {len(category_earned) - 3} more {category.lower()} achievements_\n"
+                text += "\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("🔒 View Locked Achievements", callback_data="locked_achievements")],
+        [InlineKeyboardButton("🏆 View Leaderboard", callback_data="view_leaderboard")]
+    ]
+    
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
 async def achievements_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
     
     if query.data == "view_achievements":
-        # Reuse the achievements command logic
         update.effective_message = query.message
         update.effective_user = query.from_user
         await achievements_command(update, context)
     elif query.data == "locked_achievements":
         await locked_achievements_button(update, context)
     elif query.data == "view_leaderboard":
-        # Handle leaderboard button
         update.effective_message = query.message
         await leaderboard(update, context)
 
 async def leaderboard(update: Update, context: CallbackContext) -> None:
-    # Fetch top players
     top_players = user_collection.find({}, {"_id": 0, "user_id": 1, "first_name": 1, "stats": 1}) \
                                 .sort([("stats.wins", -1), ("stats.runs", -1)]) \
                                 .limit(10)
@@ -1241,7 +1175,6 @@ async def game_chat(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     message = " ".join(context.args)
     
-    # Find the active game for this user
     active_game = None
     for game_id, game in cricket_games.items():
         if user.id in [game["player1"], game["player2"]]:
@@ -1252,7 +1185,6 @@ async def game_chat(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("You are not in an active game.")
         return
     
-    # Send message to all participants
     participants = active_game.get("participants", [])
     for participant_id in participants:
         try:
@@ -1265,21 +1197,16 @@ async def game_chat(update: Update, context: CallbackContext) -> None:
 
 async def game_history(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
-    user_id = str(user.id)  # Ensure user_id is a string
+    user_id = str(user.id)
     
-    # Add game_collection definition if it doesn't exist already
     try:
-        from pymongo import MongoClient
-        db = client['telegram_bot']
-        game_collection = db["games"]
-        
-        # Fetch game history with proper query
         history = list(game_collection.find(
             {"$or": [
                 {"participants": {"$in": [user_id]}},
                 {"player1_opponent": user_id},
                 {"player2_opponent": user_id}
-            ]}
+            ]},
+            {"_id": 0}
         ).sort("timestamp", -1).limit(5))
         
         if not history:
@@ -1288,10 +1215,8 @@ async def game_history(update: Update, context: CallbackContext) -> None:
         
         text = "📜 *Your Game History:*\n\n"
         for idx, game in enumerate(history, 1):
-            # Format timestamp
             timestamp_str = game.get('timestamp', datetime.now()).strftime("%Y-%m-%d %H:%M")
             
-            # Determine opponent
             participants = game.get('participants', [])
             opponent_id = None
             for participant in participants:
@@ -1299,34 +1224,28 @@ async def game_history(update: Update, context: CallbackContext) -> None:
                     opponent_id = participant
                     break
             
-            # If we didn't find opponent in participants, check the dedicated fields
             if not opponent_id:
                 if game.get('player1_opponent') == user_id:
                     opponent_id = game.get('player1')
                 elif game.get('player2_opponent') == user_id:
                     opponent_id = game.get('player2')
             
-            # Try to get opponent's name from database or use default
             opponent_name = "Unknown"
             if opponent_id:
                 opponent_data = user_collection.find_one({"user_id": opponent_id})
                 if opponent_data:
                     opponent_name = opponent_data.get('first_name', 'Unknown')
             
-            # Get scores
             scores = game.get('scores', {})
             user_score = scores.get('player1', 0) if user_id == game.get('participants', [])[0] else scores.get('player2', 0)
             opponent_score = scores.get('player2', 0) if user_id == game.get('participants', [])[0] else scores.get('player1', 0)
-            
-            # Format result
-            result = game.get('result', 'No result')
             
             text += f"*Game {idx}:*\n"
             text += f"📅 Date: {timestamp_str}\n"
             text += f"👤 Opponent: {opponent_name}\n"
             text += f"🏏 Your Score: {user_score}\n"
             text += f"🏏 Opponent Score: {opponent_score}\n"
-            text += f"📝 Result: {result}\n\n"
+            text += f"📝 Result: {game.get('result', 'No result')}\n\n"
         
         await update.message.reply_text(text, parse_mode="Markdown")
         
@@ -1335,42 +1254,35 @@ async def game_history(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("An error occurred while retrieving your game history. Please try again later.")
 
 async def check_achievements(user_id, context=None):
-    """Check and award achievements for a user based on their stats"""
     user_id_str = str(user_id)
     
-    # Get user stats
     user_data = user_collection.find_one({"user_id": user_id_str}, {"stats": 1})
     if not user_data or "stats" not in user_data:
         return []
     
     stats = user_data["stats"]
     
-    # Get user achievements
     user_achievements = achievements_collection.find_one({"user_id": user_id_str})
     if not user_achievements:
         user_achievements = {"user_id": user_id_str, "achievements": []}
         achievements_collection.insert_one(user_achievements)
     
-    # List of earned achievements to be returned
+    earned_ids = user_achievements.get("achievements", [])
     newly_earned = []
     
-    # Calculate matches played (for accuracy)
     matches_played = stats.get("wins", 0) + stats.get("losses", 0)
     accuracy = 0
     if matches_played > 0:
         accuracy = round((stats.get("wins", 0) / matches_played) * 100)
     
-    # Check each achievement
     for achievement in ACHIEVEMENTS:
-        # Skip if already earned
-        if achievement["id"] in user_achievements.get("achievements", []):
+        if achievement["id"] in earned_ids:
             continue
         
         achieved = False
         req_type = achievement["requirement"]["type"]
         req_value = achievement["requirement"]["value"]
         
-        # Check if achievement conditions are met
         if req_type == "runs" and stats.get("runs", 0) >= req_value:
             achieved = True
         elif req_type == "wickets" and stats.get("wickets", 0) >= req_value:
@@ -1381,11 +1293,8 @@ async def check_achievements(user_id, context=None):
             achieved = True
         elif req_type == "accuracy" and accuracy >= req_value and matches_played >= 5:
             achieved = True
-        # Special achievements are handled separately during game events
         
-        # Award achievement if earned
         if achieved:
-            # Add to user's achievements
             achievements_collection.update_one(
                 {"user_id": user_id_str},
                 {"$addToSet": {"achievements": achievement["id"]}}
@@ -1393,7 +1302,6 @@ async def check_achievements(user_id, context=None):
             
             newly_earned.append(achievement)
             
-            # Send notification if context provided
             if context and hasattr(context, "bot"):
                 try:
                     await context.bot.send_message(
@@ -1405,22 +1313,17 @@ async def check_achievements(user_id, context=None):
                     logger.error(f"Error sending achievement notification: {e}")
     
     return newly_earned
+
 async def check_special_achievement(game_id, achievement_type, context, user_id=None):
-    """Award special achievements that occur during gameplay"""
     if game_id not in cricket_games:
         return
     
     game = cricket_games[game_id]
     
     if not user_id:
-        # Determine which player earned the achievement based on type
         if achievement_type == "perfect_match":
             user_id = game["batter"] if game["innings"] == 2 and game["score2"] >= game["target"] and game["wickets"] == 0 else None
-        elif achievement_type == "comeback":
-            # Logic for comeback achievement
-            pass
         elif achievement_type == "tie":
-            # Both players get achievement for a tie
             if game["score1"] == game["score2"]:
                 await check_special_achievement(game_id, "tie", context, game["player1"])
                 await check_special_achievement(game_id, "tie", context, game["player2"])
@@ -1431,26 +1334,22 @@ async def check_special_achievement(game_id, achievement_type, context, user_id=
         
     user_id_str = str(user_id)
     
-    # Check if user already has this achievement
     user_achievements = achievements_collection.find_one({"user_id": user_id_str})
     if not user_achievements:
         user_achievements = {"user_id": user_id_str, "achievements": []}
         achievements_collection.insert_one(user_achievements)
     
-    # Find the achievement details
     achievement = next((a for a in ACHIEVEMENTS if a["requirement"]["type"] == "special" 
                        and a["requirement"]["value"] == achievement_type), None)
     
     if not achievement or achievement["id"] in user_achievements.get("achievements", []):
         return
     
-    # Award the achievement
     achievements_collection.update_one(
         {"user_id": user_id_str},
         {"$addToSet": {"achievements": achievement["id"]}}
     )
     
-    # Send notification
     try:
         await context.bot.send_message(
             chat_id=user_id,
@@ -1460,60 +1359,6 @@ async def check_special_achievement(game_id, achievement_type, context, user_id=
     except Exception as e:
         logger.error(f"Error sending special achievement notification: {e}")
 
-# Function to handle achievements button
-async def achievements_command(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    user_id = str(user.id)
-    
-    # Get user data
-    user_data = user_collection.find_one({"user_id": user_id})
-    if not user_data:
-        await update.message.reply_text("You need to start the bot first!")
-        return
-    
-    # Get user achievements
-    user_achievements = achievements_collection.find_one({"user_id": user_id})
-    earned_ids = user_achievements.get("achievements", []) if user_achievements else []
-    
-    # Count earned achievements and total
-    earned_count = len(earned_ids)
-    total_count = len(ACHIEVEMENTS)
-    
-    # Build message
-    text = f"🏆 *Your Achievements ({earned_count}/{total_count})*\n\n"
-    
-    if not earned_ids:
-        text += "You haven't earned any achievements yet. Keep playing to unlock them!"
-    else:
-        # Group achievements by category for better organization
-        categories = {
-            "Batting": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "runs"],
-            "Bowling": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "wickets"],
-            "Matches": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["matches", "wins"]],
-            "Performance": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["accuracy", "streak", "special"]]
-        }
-        
-        for category, category_achievements in categories.items():
-            category_earned = [a for a in category_achievements if a["id"] in earned_ids]
-            if category_earned:
-                text += f"*{category}:*\n"
-                for achievement in category_earned:
-                    text += f"• {achievement['name']} - {achievement['description']}\n"
-                text += "\n"
-    
-    # Create "locked achievements" view
-    keyboard = [
-        [InlineKeyboardButton("🔒 View Locked Achievements", callback_data=f"locked_achievements")],
-        [InlineKeyboardButton("🏆 View Leaderboard", callback_data="view_leaderboard")]
-    ]
-    
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
-
-# Handler for locked achievements button
 async def locked_achievements_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
@@ -1521,11 +1366,9 @@ async def locked_achievements_button(update: Update, context: CallbackContext) -
     user = update.effective_user
     user_id = str(user.id)
     
-    # Get user achievements
     user_achievements = achievements_collection.find_one({"user_id": user_id})
     earned_ids = user_achievements.get("achievements", []) if user_achievements else []
     
-    # Get locked achievements
     locked = [a for a in ACHIEVEMENTS if a["id"] not in earned_ids]
     
     if not locked:
@@ -1535,7 +1378,6 @@ async def locked_achievements_button(update: Update, context: CallbackContext) -
         )
         return
     
-    # Group achievements by category
     categories = {
         "Batting": [a for a in locked if a["requirement"]["type"] == "runs"],
         "Bowling": [a for a in locked if a["requirement"]["type"] == "wickets"],
@@ -1548,7 +1390,7 @@ async def locked_achievements_button(update: Update, context: CallbackContext) -
     for category, category_achievements in categories.items():
         if category_achievements:
             text += f"*{category}:*\n"
-            for achievement in category_achievements[:3]:  # Limit to 3 per category to avoid message too long
+            for achievement in category_achievements[:3]:
                 text += f"• {achievement['name']} - {achievement['description']}\n"
             
             if len(category_achievements) > 3:
@@ -1571,17 +1413,14 @@ async def locked_achievements_button(update: Update, context: CallbackContext) -
         )
 
 def setup_jobs(application):
-    # Check for inactive games every 30 seconds
     job_queue = application.job_queue
     job_queue.run_repeating(check_inactive_games, interval=30, first=10)
-    
-    # Send reminders to inactive players every 5 seconds
     job_queue.run_repeating(send_inactive_player_reminder, interval=5, first=5)
 
 def get_cricket_handlers():
     return [
         CommandHandler("stats", stats),
-        CommandHandler("achievements", achievements_command),  # New command
+        CommandHandler("achievements", achievements_command),
         CommandHandler("leaderboard", leaderboard),
         CommandHandler("history", game_history),
         CommandHandler("chat", chat_command),
