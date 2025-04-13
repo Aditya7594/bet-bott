@@ -1215,7 +1215,7 @@ async def leaderboard(update: Update, context: CallbackContext) -> None:
     """Handle the /leaderboard command"""
     top_players = user_collection.find({}, {"_id": 0, "user_id": 1, "first_name": 1, "stats": 1}) \
                                 .sort([("stats.wins", -1), ("stats.runs", -1)]) \
-                                .limit(10)
+                                .limit(25)
     
     text = "🏆 *Leaderboard:*\n\n"
     player_list = list(top_players)  # Convert cursor to list to prevent cursor timeout
