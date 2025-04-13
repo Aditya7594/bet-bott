@@ -79,7 +79,7 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
 
     if not user_data:
         bot_username = (await context.bot.get_me()).username
-        keyboard = [[InlineKeyboardButton("Start Bot", url=f"<url id="" type="url" status="" title="" wc="">https://t.me/</url> {bot_username}?start=start")]]
+        keyboard = [[InlineKeyboardButton("🚀 Start Bot", url=f"https://t.me/{bot_username}?start=start")]]            
 
         user_tag = f"@{user.username}" if user.username else user.first_name if user.first_name else user_id
 
