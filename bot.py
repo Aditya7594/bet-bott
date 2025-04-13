@@ -21,8 +21,8 @@ from cricket import (
     end_innings,
     declare_winner,
     update_game_interface,
-    get_cricket_handlers)
-from cricket import get_cricket_handlers
+    get_cricket_handlers
+)
 from claim import get_claim_handlers, daily
 from bank import store, withdraw, bank, get_bank_handlers
 from hilo_game import start_hilo, hilo_click, hilo_cashout, get_hilo_handlers
@@ -36,9 +36,9 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot') 
+client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority')
 db = client['telegram_bot']
-users_collection = db['users']
+user_collection = db['users']
 genshin_collection = db['genshin_users']
 
 # Global variable for tracking last interaction time
@@ -63,13 +63,12 @@ async def timeout_task(context: CallbackContext) -> None:
                 dummy_query.message = None
                 await handle_timeout(dummy_query, game)
 
-
 # MongoDB management functions
 def get_user_by_id(user_id):
-    return users_collection.find_one({"user_id": user_id})
+    return user_collection.find_one({"user_id": user_id})
 
 def save_user(user_data):
-    users_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
+    user_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
 
 def get_genshin_user_by_id(user_id):
     return genshin_collection.find_one({"user_id": user_id})
@@ -90,10 +89,10 @@ async def start(update: Update, context: CallbackContext) -> None:
     user_id = str(user.id)
     
     # Check if user exists in database
-    user_data = users_collection.find_one({"user_id": user_id})
+    user_data = user_collection.find_one({"user_id": user_id})
     if not user_data:
         # Create new user
-        users_collection.insert_one({
+        user_collection.insert_one({
             "user_id": user_id,
             "username": user.username,
             "first_name": user.first_name,
@@ -107,7 +106,7 @@ async def start(update: Update, context: CallbackContext) -> None:
         )
     else:
         # Update last active
-        users_collection.update_one(
+        user_collection.update_one(
             {"user_id": user_id},
             {"$set": {"last_active": datetime.utcnow()}}
         )
@@ -196,7 +195,7 @@ async def add_credits(update: Update, context: CallbackContext) -> None:
     credits_to_add = None
 
     # Check if the user is the owner
-    if user_id != OWNER_ID:  # Ensure OWNER_ID is a single integer
+    if user_id != OWNER_ID:
         await update.message.reply_text("You don't have permission to use this command.")
         return
 
@@ -221,7 +220,6 @@ async def add_credits(update: Update, context: CallbackContext) -> None:
 
     # Send confirmation message
     await update.message.reply_text(f"Successfully added {credits_to_add} credits to user {target_user_id}. New balance: {new_credits} credits.")
-
 
 async def reset_confirmation(update: Update, context: CallbackContext) -> None:
     """Handle reset confirmation callback."""
@@ -294,13 +292,13 @@ async def reach(update: Update, context: CallbackContext):
 
     try:
         # Fetch total users
-        total_users = users_collection.count_documents({})
+        total_users = user_collection.count_documents({})
 
         # Fetch total Genshin users
         total_genshin_users = genshin_collection.count_documents({})
 
         # Fetch total credits in the game
-        total_credits_result = users_collection.aggregate([
+        total_credits_result = user_collection.aggregate([
             {"$group": {"_id": None, "total_credits": {"$sum": "$credits"}}}
         ])
         total_credits_value = next(total_credits_result, {}).get("total_credits", 0)
@@ -338,8 +336,8 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
     broadcast_message = " ".join(context.args)
 
     # Fetch all users and groups from the database
-    users = users_collection.find({}, {"user_id": 1})
-    groups = []  
+    users = user_collection.find({}, {"user_id": 1})
+    groups = []  # Assuming you have a 'groups' collection
 
     # Counters for tracking
     successful_users = 0
@@ -441,7 +439,6 @@ async def give(update: Update, context: CallbackContext) -> None:
         text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
     )
 
-
 async def universal_handler(update: Update, context: CallbackContext):
     try:
         if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
@@ -479,6 +476,7 @@ async def universal_handler(update: Update, context: CallbackContext):
         logger.error(f"Universal handler error: {str(e)}")
         if update.effective_chat.type == ChatType.PRIVATE:
             await update.message.reply_text("❌ An error occurred while processing your message.")
+
 async def handle_message(update: Update, context: CallbackContext):
     if not update.message or not update.message.text:
         return
@@ -592,8 +590,6 @@ async def handle_mines_message(update: Update, context: CallbackContext, game: d
 
 async def handle_timeout(query: CallbackQuery, game: dict) -> None:
     """Handle game timeout for any game type."""
-
-    """Handle game timeout for any game type."""
     game_type = game.get("game_type", "unknown")
     game_id = game.get("_id", game.get("game_code", "unknown"))
     
@@ -636,9 +632,6 @@ async def handle_timeout(query: CallbackQuery, game: dict) -> None:
             if user_data:
                 user_data["credits"] += game["bet"]
                 save_user(user_data)
-
-
-            
 
 async def dm_forwarder(update: Update, context: CallbackContext) -> None:
     """Forward messages between users in cricket games."""
@@ -697,7 +690,7 @@ async def chat_command_cricket(update: Update, context: CallbackContext) -> None
         try:
             # Send the message to the other player's DM
             await context.bot.send_message(
-                chat_id=int(other_player_id),  # Convert to integer
+                chat_id=other_player_id,
                 text=formatted_message
             )
             # Delete the command message in private chat
@@ -707,13 +700,10 @@ async def chat_command_cricket(update: Update, context: CallbackContext) -> None
             await update.message.reply_text("❌ Failed to send message to the other player.")
     else:
         await update.message.reply_text("❌ You are not in an active cricket game.")
-    
 
 def main() -> None:
     application = Application.builder().token(token).build()
 
-
-    
     # Add all handlers inside the main function
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("profile", profile))
@@ -723,10 +713,10 @@ def main() -> None:
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("daily", daily))
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
-    application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("help", help_command))
+    
     for handler in get_claim_handlers():        
-      application.add_handler(handler)
+        application.add_handler(handler)
     
     application.add_handler(CommandHandler("addcredits", add_credits))    
 
@@ -739,8 +729,8 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))    
     application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))    
     application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))    
-    application.add_handler(CallbackQueryHandler(handle_join_button, pattern="^join_"))    
-    application.add_handler(CallbackQueryHandler(handle_watch_button, pattern="^watch_"))
+    application.add_handler(CallbackQueryHandler(handle_join_button, pattern=r"^join_"))    
+    application.add_handler(CallbackQueryHandler(handle_watch_button, pattern=r"^watch_"))
 
     # Add cricket game deep link handlers    
     application.add_handler(MessageHandler(        
@@ -754,15 +744,15 @@ def main() -> None:
 
     # Add game handlers    
     for handler in get_xox_handlers():        
-      application.add_handler(handler)    
+        application.add_handler(handler)    
     for handler in get_hilo_handlers():        
-      application.add_handler(handler)    
+        application.add_handler(handler)    
     for handler in get_mines_handlers():        
-      application.add_handler(handler)    
+        application.add_handler(handler)    
     for handler in get_genshin_handlers():        
-      application.add_handler(handler)    
+        application.add_handler(handler)    
     for handler in get_bank_handlers():        
-      application.add_handler(handler)
+        application.add_handler(handler)
 
     # Add the /c command handler before the universal message handler    
     application.add_handler(CommandHandler("c", chat_command_cricket))    
