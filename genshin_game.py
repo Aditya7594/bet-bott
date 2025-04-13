@@ -723,7 +723,7 @@ def get_genshin_handlers():
     return [
         CommandHandler("pull", pull),  # Handle the /pull command
         CommandHandler("bag", bag),  # Handle the /bag command
-        CommandHandler("leaderboard", leaderboard),  # Handle the /leaderboard command
+        CommandHandler("primo_leaderboard", primo_leaderboard),  # Handle the /leaderboard command
         CommandHandler("resetbag", reset_bag_data),  # Handle the /resetbag command
         CommandHandler("drop", drop_primos),  # Handle the /drop command
         CommandHandler("setthreshold", set_threshold),  # Handle the /setthreshold command
