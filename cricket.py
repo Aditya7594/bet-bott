@@ -88,8 +88,8 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "group_chat_id": chat_id,
         "match_details": [],
         "wickets": 0,
-        "max_wickets": 10,
-        "max_overs": 20,
+        "max_wickets": 1,
+        "max_overs": 100,
         "spectators": set(),
         "last_move": datetime.utcnow()
     }
