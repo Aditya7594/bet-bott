@@ -5,7 +5,7 @@ from pymongo import MongoClient
 from telegram.constants import ParseMode
 
 # MongoDB client to store user data
-client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
+client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority')
 db = client['telegram_bot']
 users_collection = db['users']
 
@@ -26,7 +26,7 @@ async def Mines(update: Update, context: CallbackContext):
     user_data = get_user_by_id(user_id)
     
     # Check if the user already has an active game
-    if user_id in current_mines_games:
+    if any(game for game in current_mines_games.values() if game['user_id'] == user_id):
         await update.message.reply_text("You already have an ongoing game! Please finish your current game first.")
         return
     
@@ -63,7 +63,7 @@ async def Mines(update: Update, context: CallbackContext):
         save_user(user_data)
 
     except Exception as e:
-        await update.message.reply_text('/Mines <bet amount> <bombs count>')
+        await update.message.reply_text('/Mines <bet amount> <bomb count>')
         return
 
     # Generate a grid of size 5x5
@@ -74,8 +74,12 @@ async def Mines(update: Update, context: CallbackContext):
         row, col = divmod(bomb, grid_size)
         grid[row][col] = "💣"
 
+    # Generate a unique game ID
+    game_id = str(random.randint(100000, 999999))
+    
     # Set up the game state with bet and bomb values
     game_state = {
+        'game_id': game_id,
         'bet': bet,
         'grid': grid,
         'revealed': set(),
@@ -83,21 +87,23 @@ async def Mines(update: Update, context: CallbackContext):
         'user_id': user_id,
         'multiplier': 1,
         'mines_hit': False,
-        'total_bombs': total_bombs,  # Store the bomb count for later use
-        'in_progress': True  # Mark the game as in progress
+        'total_bombs': total_bombs,
+        'in_progress': True,
+        'players': {user_id: {'name': update.effective_user.first_name, 'credits': bet}}
     }
 
-    current_mines_games[user_id] = game_state
+    current_mines_games[game_id] = game_state
 
     # Set up the buttons
     keyboard = []
     for row in range(grid_size):
-        keyboard.append([InlineKeyboardButton("❓", callback_data=str(row * grid_size + col)) for col in range(grid_size)])
+        keyboard.append([InlineKeyboardButton("❓", callback_data=f"mines_{game_id}_{row * grid_size + col}") for col in range(grid_size)])
 
-    keyboard.append([InlineKeyboardButton('CashOut', callback_data='MinesCashOut')])
+    keyboard.append([InlineKeyboardButton('CashOut', callback_data=f"mines_cashout_{game_id}")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     text = f"<b><u>💎 Mines Game 💎</u></b>\n\n"
+    text += f"Game ID: {game_id}\n"
     text += f"Bet amount: {bet} 👾\n"
     text += f"Current multiplier: {game_state['multiplier']}x\n"
     text += f"Safe tiles: {grid_size * grid_size - total_bombs}\n\n"
@@ -105,21 +111,26 @@ async def Mines(update: Update, context: CallbackContext):
 
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
 
-
 async def Mines_click(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
-    game_state = current_mines_games.get(user_id)
+    _, game_id, position = query.data.split('_')
+    position = int(position)
+    game_state = current_mines_games.get(game_id)
 
     if not game_state or not game_state.get('in_progress', False):
         await query.answer("No active game found. Start a new game with /Mines <bet_amount> <bomb_count>.", show_alert=True)
+        return
+
+    if user_id != game_state['user_id']:
+        await query.answer("This is not your game!", show_alert=True)
         return
 
     bet = game_state['bet']
     grid = game_state['grid']
     revealed = game_state['revealed']
     mines_hit = game_state['mines_hit']
-    row, col = divmod(int(query.data), 5)
+    row, col = divmod(position, 5)
 
     # If the user has already revealed this tile, ignore the click
     if (row, col) in revealed:
@@ -138,11 +149,12 @@ async def Mines_click(update: Update, context: CallbackContext):
                     grid[r][c] = "💣"  # Show all bombs
 
         text = f"<b><u>💎 Mines Game 💎</u></b>\n\n"
+        text += f"Game ID: {game_id}\n"
         text += f"Bet amount: {bet} 👾\n"
         text += f"Current multiplier: {game_state['multiplier']}x\n"
         text += f"<b>You hit a bomb! Game Over!</b>\n"
         text += f"Total amount lost: {bet} 👾"
-        
+
         # Notify the user about the game over and refund the credits
         user_data = get_user_by_id(user_id)
         user_data["credits"] += bet
@@ -150,14 +162,14 @@ async def Mines_click(update: Update, context: CallbackContext):
 
         # End the game session and update in-progress status
         game_state['in_progress'] = False
-        del current_mines_games[user_id]
+        del current_mines_games[game_id]
 
         await query.edit_message_text(text, parse_mode=ParseMode.HTML)
         return
 
     # Reveal the tile
     grid[row][col] = "💎"  # Safe tile revealed
-    
+
     # Calculate multiplier based on the number of safe tiles revealed
     revealed_tiles = len(revealed)
     safe_tiles = (5 * 5) - len(game_state['mines'])  # Total safe tiles
@@ -169,12 +181,13 @@ async def Mines_click(update: Update, context: CallbackContext):
     # Prepare the grid display
     keyboard = []
     for i in range(5):
-        keyboard.append([InlineKeyboardButton(grid[i][j] if (i, j) in revealed else "❓", callback_data=str(i * 5 + j)) for j in range(5)])
+        keyboard.append([InlineKeyboardButton(grid[i][j] if (i, j) in revealed else "❓", callback_data=f"mines_{game_id}_{i * 5 + j}") for j in range(5)])
 
-    keyboard.append([InlineKeyboardButton('CashOut', callback_data='MinesCashOut')])
+    keyboard.append([InlineKeyboardButton('CashOut', callback_data=f"mines_cashout_{game_id}")])
 
     # Update game info and send it
     text = f"<b><u>💎 Mines Game 💎</u></b>\n\n"
+    text += f"Game ID: {game_id}\n"
     text += f"Bet amount: {bet} 👾\n"
     text += f"Current multiplier: {game_state['multiplier']}x\n"
     text += f"Safe tiles remaining: {(5 * 5) - len(revealed) - len(game_state['mines'])}\n"
@@ -186,10 +199,15 @@ async def Mines_click(update: Update, context: CallbackContext):
 async def Mines_CashOut(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = update.effective_user.id
-    game_state = current_mines_games.get(user_id)
+    _, game_id = query.data.split('_')
+    game_state = current_mines_games.get(game_id)
 
     if not game_state or not game_state.get('in_progress', False):
         await query.answer("No active game found. Start a new game with /Mines <bet_amount> <bomb_count>.", show_alert=True)
+        return
+
+    if user_id != game_state['user_id']:
+        await query.answer("This is not your game!", show_alert=True)
         return
 
     bet = game_state['bet']
@@ -207,9 +225,10 @@ async def Mines_CashOut(update: Update, context: CallbackContext):
 
     # End the game session and update in-progress status
     game_state['in_progress'] = False
-    del current_mines_games[user_id]
+    del current_mines_games[game_id]
 
     text = f"<b><u>💎 Mines Game 💎</u></b>\n\n"
+    text += f"Game ID: {game_id}\n"
     text += f"Bet amount: {bet} 👾\n"
     text += f"Current multiplier: {game_state['multiplier']}x\n"
     text += f"<b>You cashed out and won: {winnings} 👾</b>"
@@ -220,6 +239,6 @@ def get_mines_handlers():
     """Return all Mines game handlers."""
     return [
         CommandHandler("Mines", Mines),
-        CallbackQueryHandler(Mines_click, pattern="^[0-9]+$"),
-        CallbackQueryHandler(Mines_CashOut, pattern="^MinesCashOut$")
+        CallbackQueryHandler(Mines_click, pattern="^mines_"),
+        CallbackQueryHandler(Mines_CashOut, pattern="^mines_cashout_")
     ]
