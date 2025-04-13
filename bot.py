@@ -114,31 +114,6 @@ async def start(update: Update, context: CallbackContext) -> None:
             f"👋 Welcome back {user.first_name}! Use /chatcricket in a group to start a new game!"
         )
 
-async def help_command(update: Update, context: CallbackContext) -> None:
-    """Handle the /help command."""
-    help_text = (
-        "🎮 *Cricket Game Bot Commands:*\n\n"
-        "/start - Start the bot\n"
-        "/help - Show this help message\n"
-        "/chatcricket - Start a new cricket game (group only)\n"
-        "/join [code] - Join an existing game\n"
-        "/watch [code] - Watch an existing game\n\n"
-        "*How to Play:*\n"
-        "1. Start a game with /chatcricket in a group\n"
-        "2. Share the game code with your opponent\n"
-        "3. Join the game using the code\n"
-        "4. Play the toss and choose to bat or bowl\n"
-        "5. Take turns choosing numbers (1-6)\n"
-        "6. Score runs or take wickets!\n\n"
-        "*Game Rules:*\n"
-        "• 5 overs per innings\n"
-        "• 10 wickets per innings\n"
-        "• Choose numbers 1-6 for runs\n"
-        "• Matching numbers = wicket\n"
-        "• Different numbers = runs (batter's choice)"
-    )
-    await update.message.reply_text(help_text, parse_mode="Markdown")
-
 async def error_handler(update: Update, context: CallbackContext) -> None:
     """Log Errors caused by Updates."""
     logger.warning(f'Update "{update}" caused error "{context.error}"')
@@ -752,6 +727,8 @@ def main() -> None:
     for handler in get_genshin_handlers():        
         application.add_handler(handler)    
     for handler in get_bank_handlers():        
+        application.add_handler(handler)
+    for handler in get_cricket_handlers():        
         application.add_handler(handler)
 
     # Add the /c command handler before the universal message handler    
