@@ -838,7 +838,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
             "player1_opponent": str(game["player2"]),
             "player2_opponent": str(game["player1"])
         })
-    except Exception as e:
+        except Exception as e:
         logger.error(f"Error saving game history: {e}")
     # Clean up game data
     if game_id in reminder_sent:
@@ -846,6 +846,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
     if game_id in game_activity:
         del game_activity[game_id]
     del cricket_games[game_id]
+    
 
 async def chat_command(update: Update, context: CallbackContext) -> None:
     if not context.args:
