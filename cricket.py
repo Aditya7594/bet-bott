@@ -797,7 +797,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
         return
 
     game = cricket_games[game_id]
-    
+
     try:
         p1 = (await context.bot.get_chat(game["player1"])).first_name
         p2 = (await context.bot.get_chat(game["player2"])).first_name
@@ -806,10 +806,11 @@ async def declare_winner(game_id: int, context: CallbackContext):
         p1 = "Player 1"
         p2 = "Player 2"
 
+    winner_id = None
+    loser_id = None
+
     if game["score1"] == game["score2"]:
         result = "🤝 Match Drawn!"
-        winner_id = None
-        loser_id = None
         await check_special_achievement(game_id, "tie", context)
     elif game["innings"] == 2:
         if game["score2"] >= game["target"]:
@@ -820,7 +821,6 @@ async def declare_winner(game_id: int, context: CallbackContext):
             except:
                 winner = "Player"
             result = f"🏅 {winner} won by {game['max_wickets'] - game['wickets']} wicket(s)!"
-            
             if game["wickets"] == 0:
                 await check_special_achievement(game_id, "perfect_match", context, winner_id)
         else:
@@ -834,8 +834,6 @@ async def declare_winner(game_id: int, context: CallbackContext):
             result = f"🏅 {winner} won by {diff} runs!"
     else:
         result = "Match ended unexpectedly!"
-        winner_id = None
-        loser_id = None
 
     result_message = (
         f"🏆 *GAME OVER!*\n\n"
@@ -862,7 +860,6 @@ async def declare_winner(game_id: int, context: CallbackContext):
                 text=result_message,
                 parse_mode="Markdown"
             )
-            
             if player_id in game["message_id"]:
                 await context.bot.deleteMessage(
                     chat_id=player_id,
@@ -874,66 +871,42 @@ async def declare_winner(game_id: int, context: CallbackContext):
     if winner_id and loser_id:
         winner_id_str = str(winner_id)
         loser_id_str = str(loser_id)
-        
+
         winner_runs = game['score2'] if winner_id == game["batter"] else game['score1']
         loser_runs = game['score1'] if winner_id == game["batter"] else game['score2']
-        
-        winner_stats = user_collection.find_one({"user_id": winner_id_str}, {"_id": 0, "stats": 1})
-        if winner_stats and "stats" in winner_stats:
-            user_collection.update_one(
-                {"user_id": winner_id_str},
-                {"$inc": {
-                    "stats.wins": 1,
-                    "stats.runs": winner_runs,
-                    "stats.current_streak": 1
-                },
-                "$set": {"stats.last_result": "win"}}
-            )
-        else:
-            user_collection.update_one(
-                {"user_id": winner_id_str},
-                {"$set": {
-                    "stats": {
-                        "wins": 1, 
-                        "losses": 0, 
-                        "runs": winner_runs, 
-                        "wickets": 0, 
-                        "current_streak": 1,
-                        "last_result": "win"
-                    }
-                }},
-                upsert=True
-            )
-        
-        loser_stats = user_collection.find_one({"user_id": loser_id_str}, {"_id": 0, "stats": 1})
-        if loser_stats and "stats" in loser_stats:
-            user_collection.update_one(
-                {"user_id": loser_id_str},
-                {"$inc": {
-                    "stats.losses": 1,
-                    "stats.runs": loser_runs
-                },
-                "$set": {
-                    "stats.current_streak": 0,
-                    "stats.last_result": "loss"
-                }}
-            )
-        else:
-            user_collection.update_one(
-                {"user_id": loser_id_str},
-                {"$set": {
-                    "stats": {
-                        "wins": 0, 
-                        "losses": 1, 
-                        "runs": loser_runs, 
-                        "wickets": 0, 
-                        "current_streak": 0,
-                        "last_result": "loss"
-                    }
-                }},
-                upsert=True
-            )
-        
+
+        # 🏏 Wickets taken
+        wickets_taken_by_winner = game["wickets"] if winner_id == game["bowler"] else 0
+        wickets_taken_by_loser = game["wickets"] if loser_id == game["bowler"] else 0
+
+        # 🟢 Winner stats
+        user_collection.update_one(
+            {"user_id": winner_id_str},
+            {"$inc": {
+                "stats.wins": 1,
+                "stats.runs": winner_runs,
+                "stats.wickets": wickets_taken_by_winner,
+                "stats.current_streak": 1
+            },
+            "$set": {"stats.last_result": "win"}},
+            upsert=True
+        )
+
+        # 🔴 Loser stats
+        user_collection.update_one(
+            {"user_id": loser_id_str},
+            {"$inc": {
+                "stats.losses": 1,
+                "stats.runs": loser_runs,
+                "stats.wickets": wickets_taken_by_loser
+            },
+            "$set": {
+                "stats.current_streak": 0,
+                "stats.last_result": "loss"
+            }},
+            upsert=True
+        )
+
         await check_achievements(winner_id, context)
         await check_achievements(loser_id, context)
 
@@ -947,7 +920,8 @@ async def declare_winner(game_id: int, context: CallbackContext):
                 "result": result,
                 "innings": game["innings"],
                 "player1_opponent": str(game["player2"]),
-                "player2_opponent": str(game["player1"])
+                "player2_opponent": str(game["player1"]),
+                "wickets": game["wickets"]
             })
         except Exception as e:
             logger.error(f"Error saving game history: {e}")
