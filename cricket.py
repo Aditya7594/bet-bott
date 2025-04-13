@@ -320,7 +320,7 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
     game["player2"] = user_id
     
     bot_username = (await context.bot.get_me()).username
-    keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"<url id="" type="url" status="" title="" wc="">https://t.me/</url> {bot_username}")]]
+    keyboard = [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/{bot_username}")]
     
     try:
         await context.bot.send_message(
