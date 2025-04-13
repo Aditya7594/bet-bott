@@ -826,27 +826,26 @@ async def declare_winner(game_id: int, context: CallbackContext):
                 upsert=True
             )
 
-        
         try:
-           game_collection.insert_one({
-            "timestamp": datetime.now(),
-            "participants": [str(game["player1"]), str(game["player2"])],  # Convert to strings
-            "scores": {"player1": game["score1"], "player2": game["score2"]},
-            "result": result,
-            "innings": game["innings"],
-            # Store opponent info for each player
-            "player1_opponent": str(game["player2"]),
-            "player2_opponent": str(game["player1"])
-        })
+            game_collection.insert_one({
+                "timestamp": datetime.now(),
+                "participants": [str(game["player1"]), str(game["player2"])],  # Convert to strings
+                "scores": {"player1": game["score1"], "player2": game["score2"]},
+                "result": result,
+                "innings": game["innings"],
+                # Store opponent info for each player
+                "player1_opponent": str(game["player2"]),
+                "player2_opponent": str(game["player1"])
+            })
         except Exception as e:
-        logger.error(f"Error saving game history: {e}")
+            logger.error(f"Error saving game history: {e}")
+
     # Clean up game data
     if game_id in reminder_sent:
         del reminder_sent[game_id]
     if game_id in game_activity:
         del game_activity[game_id]
     del cricket_games[game_id]
-    
 
 async def chat_command(update: Update, context: CallbackContext) -> None:
     if not context.args:
