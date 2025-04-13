@@ -201,47 +201,39 @@ async def send_inactive_player_reminder(context: CallbackContext) -> None:
         if game["player2"] is None:
             continue
             
-        if game["batter"] is None or game["bowler"] is None:
-            continue
+        if game["batter_choice"] is None or game["bowler_choice"] is None:
+            current_player_id = game["current_players"]["batter"] if game["batter_choice"] is None else game["current_players"]["bowler"]
             
-        current_player_id = None
-        if game["batter_choice"] is None:
-            current_player_id = game["current_players"]["batter"]
-        elif game["bowler_choice"] is None:
-            current_player_id = game["current_players"]["bowler"]
-        else:
-            continue
-        
-        last_activity = game_activity.get(game_id, datetime.utcnow())
-        last_reminder = game.get("last_reminder")
-        
-        if (current_time - last_activity).total_seconds() >= 10 and (
-                last_reminder is None or (current_time - last_reminder).total_seconds() >= 10):
+            last_activity = game.get("last_move", datetime.utcnow())
+            last_reminder = game.get("last_reminder")
             
-            try:
-                player_name = (await context.bot.get_chat(current_player_id)).first_name
-                waiting_for = "batting" if game["batter_choice"] is None else "bowling"
+            if (current_time - last_activity).total_seconds() >= 10 and (
+                    last_reminder is None or (current_time - last_reminder).total_seconds() >= 10):
                 
-                reminder_text = (
-                    f"⏰ *Reminder!* It's your turn to play cricket!\n\n"
-                    f"You're currently {waiting_for}. Please make your move."
-                )
-                
-                await context.bot.send_message(
-                    chat_id=current_player_id,
-                    text=reminder_text,
-                    parse_mode="Markdown"
-                )
-                
-                game["last_reminder"] = current_time
-                
-            except Exception as e:
-                logger.error(f"Error sending play reminder: {e}")
+                try:
+                    player_name = (await context.bot.get_chat(current_player_id)).first_name
+                    waiting_for = "batting" if game["batter_choice"] is None else "bowling"
+                    
+                    reminder_text = (
+                        f"⏰ *Reminder!* It's your turn to {waiting_for}!\n\n"
+                        f"Please make your move in the bot."
+                    )
+                    
+                    await context.bot.send_message(
+                        chat_id=current_player_id,
+                        text=reminder_text,
+                        parse_mode="Markdown"
+                    )
+                    
+                    game["last_reminder"] = current_time
+                    
+                except Exception as e:
+                    logger.error(f"Error sending play reminder: {e}")
 
 def update_game_activity(game_id):
-    game_activity[game_id] = datetime.utcnow()
+    game_activity[game_id] = datetime.now()
     if game_id in cricket_games:
-        cricket_games[game_id]["last_move"] = datetime.utcnow()
+        cricket_games[game_id]["last_move"] = datetime.now()
 
 async def update_game_interface(game_id: int, context: CallbackContext, text: str = None):
     if game_id not in cricket_games:
@@ -1023,58 +1015,6 @@ async def chat_command(update: Update, context: CallbackContext) -> None:
 def update_game_activity(game_id):
     game_activity[game_id] = datetime.now()
 
-async def check_inactive_games(context: CallbackContext):
-    current_time = datetime.now()
-    
-    for game_id, game in list(cricket_games.items()):
-        if game_id not in game_activity or game["player2"] is not None:
-            continue
-            
-        last_activity = game_activity.get(game_id)
-        if not last_activity:
-            continue
-            
-        if (current_time - last_activity > timedelta(seconds=20) and 
-                game_id not in reminder_sent):
-            
-            try:
-                player_name = (await context.bot.get_chat(game["player1"])).first_name
-                bot_username = (await context.bot.get_me()).username
-                
-                reminder_text = (
-                    f"🏏 *Cricket Game Reminder* 🏏\n\n"
-                    f"{player_name}'s cricket game is still waiting for an opponent!\n"
-                    f"Anyone want to join? Click the button below:"
-                )
-                
-                keyboard = [[InlineKeyboardButton("🎮 Join Cricket Game", url=f"https://t.me/{bot_username}?start=game_{game_id}")]]
-                
-                await context.bot.send_message(
-                    chat_id=game["group_chat_id"],
-                    text=reminder_text,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode="Markdown"
-                )
-                
-                reminder_sent[game_id] = True
-            except Exception as e:
-                logger.error(f"Error sending game reminder: {e}")
-                
-        elif current_time - last_activity > timedelta(minutes=15):
-            try:
-                await context.bot.send_message(
-                    chat_id=game["group_chat_id"],
-                    text="The cricket game has been cancelled due to inactivity."
-                )
-                
-                if game_id in reminder_sent:
-                    del reminder_sent[game_id]
-                if game_id in game_activity:
-                    del game_activity[game_id]
-                del cricket_games[game_id]
-                
-            except Exception as e:
-                logger.error(f"Error cleaning up inactive game: {e}")
 async def game_chat(update: Update, context: CallbackContext) -> None:
     if not context.args:
         await update.message.reply_text("Usage: /chat <message>")
@@ -1525,7 +1465,6 @@ async def display_earned_achievements(update: Update, context: CallbackContext, 
         )
 def setup_jobs(application):
     job_queue = application.job_queue
-    job_queue.run_repeating(check_inactive_games, interval=30, first=10)
     job_queue.run_repeating(send_inactive_player_reminder, interval=5, first=5)
 
 def get_cricket_handlers():
