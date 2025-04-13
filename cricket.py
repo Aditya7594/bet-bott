@@ -176,49 +176,57 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         parse_mode="Markdown")
     await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
 
+MAX_REMINDERS = 3  # Maximum reminders per player per game
+
 async def send_inactive_player_reminder(context: CallbackContext) -> None:
     current_time = datetime.utcnow()
-    
+
     for game_id, game in list(cricket_games.items()):
-        if game["player2"] is None:
+        if game.get("player2") is None:
             continue
-            
-        if game["batter"] is None or game["bowler"] is None:
+
+        if game.get("batter") is None or game.get("bowler") is None:
             continue
-            
+
         current_player_id = None
-        if game["batter_choice"] is None:
+        if game.get("batter_choice") is None:
             current_player_id = game["current_players"]["batter"]
-        elif game["bowler_choice"] is None:
+        elif game.get("bowler_choice") is None:
             current_player_id = game["current_players"]["bowler"]
         else:
             continue
-        
+
         last_activity = game_activity.get(game_id, datetime.utcnow())
         last_reminder = game.get("last_reminder")
-        
+        reminder_count = game.get("reminder_count", 0)
+
+        if reminder_count >= MAX_REMINDERS:
+            continue  # Skip if already reminded 3 times
+
         if (current_time - last_activity).total_seconds() >= 10 and (
                 last_reminder is None or (current_time - last_reminder).total_seconds() >= 10):
             
             try:
                 player_name = (await context.bot.get_chat(current_player_id)).first_name
                 waiting_for = "batting" if game["batter_choice"] is None else "bowling"
-                
+
                 reminder_text = (
                     f"⏰ *Reminder!* It's your turn to play cricket!\n\n"
                     f"You're currently {waiting_for}. Please make your move."
                 )
-                
+
                 await context.bot.send_message(
                     chat_id=current_player_id,
                     text=reminder_text,
                     parse_mode="Markdown"
                 )
-                
+
                 game["last_reminder"] = current_time
-                
+                game["reminder_count"] = reminder_count + 1  # increment reminder count
+
             except Exception as e:
                 logger.error(f"Error sending play reminder: {e}")
+
 
 def update_game_activity(game_id):
     game_activity[game_id] = datetime.utcnow()
@@ -1042,45 +1050,6 @@ async def chat_command(update: Update, context: CallbackContext) -> None:
 def update_game_activity(game_id):
     game_activity[game_id] = datetime.now()
 
-reminder_sent = set()  # Store game_ids with reminders already sent
-
-async def check_inactive_games(context: CallbackContext):
-    current_time = datetime.now()
-
-    for game_id, game in list(cricket_games.items()):
-        if game_id not in game_activity:
-            continue
-
-        last_activity = game_activity.get(game_id)
-        if not last_activity:
-            continue
-
-        # If more than 20 seconds of inactivity and reminder not yet sent
-        if (current_time - last_activity).total_seconds() > 20 and game_id not in reminder_sent:
-            try:
-                player = await context.bot.get_chat(game["player1"])
-                bot = await context.bot.get_me()
-
-                reminder_text = (
-                    f"🏏 *Cricket Game Reminder* 🏏\n\n"
-                    f"{player.first_name}'s cricket game is still waiting for an opponent!\n"
-                    f"Anyone want to join? Click the button below:"
-                )
-
-                keyboard = [[InlineKeyboardButton("🎮 Join Cricket Game", url=f"https://t.me/{bot.username}?start=game_{game_id}")]]
-                
-                await context.bot.send_message(
-                    chat_id=game["group_chat_id"],
-                    text=reminder_text,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode="Markdown"
-                )
-
-                reminder_sent.add(game_id)  # Mark this game as reminded
-
-            except Exception as e:
-                logger.error(f"Error sending game reminder: {e}")
-
 
 async def game_chat(update: Update, context: CallbackContext) -> None:
     if not context.args:
@@ -1266,51 +1235,50 @@ async def leaderboard(update: Update, context: CallbackContext) -> None:
 async def achievements_command(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
-    
+
     user_data = user_collection.find_one({"user_id": user_id})
     if not user_data:
         await update.message.reply_text("You need to start the bot first!")
         return
-    
+
     user_achievements = achievements_collection.find_one({"user_id": user_id})
     earned_ids = user_achievements.get("achievements", []) if user_achievements else []
-    
+
     earned_count = len(earned_ids)
     total_count = len(ACHIEVEMENTS)
-    
+
     text = f"🏆 *Your Achievements ({earned_count}/{total_count})*\n\n"
-    
+
     if not earned_ids:
         text += "You haven't earned any achievements yet. Keep playing to unlock them!"
     else:
+        # Group by category
         categories = {
             "Batting": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "runs"],
             "Bowling": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "wickets"],
             "Matches": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["matches", "wins"]],
-            "Performance": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["accuracy", "streak", "special"]]
+            "Performance": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["accuracy", "streak", "special"]],
         }
-        
-        for category, category_achievements in categories.items():
-            category_earned = [a for a in category_achievements if a["id"] in earned_ids]
-            if category_earned:
+
+        for category, achievements in categories.items():
+            earned = [a for a in achievements if a["id"] in earned_ids]
+            if earned:
                 text += f"*{category}:*\n"
-                for achievement in category_earned[:3]:
-                    text += f"• {achievement['name']} - {achievement['description']}\n"
-                
-                if len(category_earned) > 3:
-                    text += f"  _...and {len(category_earned) - 3} more {category.lower()} achievements_\n"
+                for a in earned:
+                    text += f"• {a['name']} - {a['description']}\n"
                 text += "\n"
-    
+
     keyboard = [
         [InlineKeyboardButton("🔒 View Locked Achievements", callback_data="locked_achievements")],
         [InlineKeyboardButton("🏆 View Leaderboard", callback_data="view_leaderboard")]
     ]
-    
+
     await update.message.reply_text(
-        text,
+        text.strip(),
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
+
 
 async def achievements_button(update: Update, context: CallbackContext) -> None:
     """Handle all achievement-related button callbacks"""
@@ -1532,8 +1500,6 @@ async def display_earned_achievements(update: Update, context: CallbackContext, 
         )
 def setup_jobs(application):
     job_queue = application.job_queue
-    job_queue.run_repeating(check_inactive_games, interval=30, first=10)
-    
     job_queue.run_repeating(send_inactive_player_reminder, interval=5, first=5)
 
 def get_cricket_handlers():
