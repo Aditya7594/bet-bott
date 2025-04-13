@@ -1092,5 +1092,4 @@ def get_cricket_handlers():
         CallbackQueryHandler(play_button, pattern="^play_"),
         CallbackQueryHandler(handle_join_button, pattern=r"^join_"),
         CallbackQueryHandler(handle_watch_button, pattern=r"^watch_"),
-        CallbackQueryHandler(cancel_button, pattern=r"^cancel_")  # Add this handler for cancel button
     ]
