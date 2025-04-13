@@ -1146,13 +1146,12 @@ async def achievements_button(update: Update, context: CallbackContext) -> None:
     await query.answer()
     
     if query.data == "view_achievements":
-        update.effective_message = query.message
-        update.effective_user = query.from_user
+        # Instead of setting effective_message, use query.message to update the message
         await achievements_command(update, context)
     elif query.data == "locked_achievements":
         await locked_achievements_button(update, context)
     elif query.data == "view_leaderboard":
-        update.effective_message = query.message
+        # Use query.message to update the message
         await leaderboard(update, context)
 
 async def leaderboard(update: Update, context: CallbackContext) -> None:
