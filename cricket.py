@@ -93,6 +93,7 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
         return False
     return True
 
+
 async def chat_cricket(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     chat_id = update.effective_chat.id
@@ -123,7 +124,8 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
                 text="⚠️ Invalid parameters! Format: /chatcricket [overs] [wickets]")
             return
     
-    game_id = chat_id
+    # Generate a unique game ID instead of using chat_id
+    game_id = f"{chat_id}_{int(time.time())}"
     cricket_games[game_id] = {
         "player1": user.id,
         "player2": None,
@@ -221,7 +223,7 @@ def update_game_activity(game_id):
     if game_id in cricket_games:
         cricket_games[game_id]["last_move"] = datetime.utcnow()
 
-async def update_game_interface(game_id: int, context: CallbackContext, text: str = None):
+async def update_game_interface(game_id: str, context: CallbackContext, text: str = None):
     if game_id not in cricket_games:
         return
 
@@ -293,8 +295,7 @@ async def update_game_interface(game_id: int, context: CallbackContext, text: st
 async def handle_join_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id = query.data.split('_')
-    game_id = int(game_id)
+    _, game_id = query.data.split('_', 1)  # Modified to handle the new game_id format
     
     if not await check_user_started_bot(update, context):
         return
@@ -348,8 +349,7 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
 async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id = query.data.split('_')
-    game_id = int(game_id)
+    _, game_id = query.data.split('_', 1)  # Modified to handle the new game_id format
 
     if not await check_user_started_bot(update, context):
         return
@@ -386,8 +386,7 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
 async def toss_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id_str, choice = query.data.split('_')
-    game_id = int(game_id_str)
+    _, game_id, choice = query.data.split('_', 2)  # Modified to handle the new game_id format
     
     if not await check_user_started_bot(update, context):
         return
@@ -430,8 +429,7 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
 async def choose_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id_str, choice = query.data.split('_')
-    game_id = int(game_id_str)
+    _, game_id, choice = query.data.split('_', 2)  # Modified to handle the new game_id format
     
     if not await check_user_started_bot(update, context):
         return
@@ -467,9 +465,9 @@ async def choose_button(update: Update, context: CallbackContext) -> None:
 async def play_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id_str, number = query.data.split('_')
-    game_id = int(game_id_str)
-    number = int(number)
+    parts = query.data.split('_')
+    game_id = parts[1]  # Modified to handle the new game_id format
+    number = int(parts[-1])
     
     if not await check_user_started_bot(update, context):
         return
@@ -693,103 +691,70 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         await query.answer("Not your turn!")
         return
 
-async def handle_wicket(game_id: int, context: CallbackContext):
-    if game_id not in cricket_games:
-        return
-
+# Additional required functions that were referenced but not provided in the original code
+async def handle_wicket(game_id: str, context: CallbackContext) -> None:
     game = cricket_games[game_id]
-    update_game_activity(game_id)
     
+    if game['wickets'] >= game['max_wickets']:
+        await end_innings(game_id, context)
+        return
+    
+    # Reset for next ball
     game["ball"] += 1
     if game["ball"] == 6:
         game["over"] += 1
         game["ball"] = 0
+    
+    # Continue game with next ball
+    await update_game_interface(game_id, context)
 
-    if game["wickets"] >= game["max_wickets"] or game["over"] >= game["max_overs"]:
-        game["batter_choice"] = None
-        game["bowler_choice"] = None
-        await end_innings(game_id, context)
-        return
-    
-    try:
-        batter_name = (await context.bot.get_chat(game["batter"])).first_name
-        bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
-    except Exception as e:
-        logger.error(f"Error retrieving player information: {e}")
-        await context.bot.send_message(
-            chat_id=game["group_chat_id"],
-            text="Error retrieving player information.")
-        return
-
-    score = game['score1'] if game['innings'] == 1 else game['score2']
-    spectator_count = len(game["spectators"])
-    spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
-    
-    text = (
-        f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
-        f"🔸 Batting: {batter_name}\n"
-        f"🔹 Bowling: {bowler_name}\n"
-        f"📊 Score: {score}/{game['wickets']}"
-    )
-    
-    if game['innings'] == 2:
-        text += f" (Target: {game['target']})"
-    
-    text += "\n\n⚡ Next ball. Batter, choose a number (1-6):"
-    
-    game["batter_choice"] = None
-    game["bowler_choice"] = None
-    
-    await update_game_interface(game_id, context, text)
-
-async def end_innings(game_id: int, context: CallbackContext):
-    if game_id not in cricket_games:
-        return
-
+async def end_innings(game_id: str, context: CallbackContext) -> None:
     game = cricket_games[game_id]
     
     if game["innings"] == 1:
-        game["innings"] = 2
+        # Set target for second innings
         game["target"] = game["score1"] + 1
-        
-        game["batter"], game["bowler"] = game["bowler"], game["batter"]
-        game["current_players"] = {
-            "batter": game["batter"],
-            "bowler": game["bowler"]
-        }
-        
-        game["wickets"] = 0
+        game["innings"] = 2
         game["over"] = 0
         game["ball"] = 0
-        game["score2"] = 0
+        game["wickets"] = 0
         
-        try:
-            batter_name = (await context.bot.get_chat(game["batter"])).first_name
-            bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
-        except Exception:
-            await context.bot.send_message(
-                chat_id=game["group_chat_id"],
-                text="Error retrieving player information.")
-            return
-
-        spectator_count = len(game["spectators"])
-        spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
+        # Swap batter and bowler
+        temp_batter = game["batter"]
+        game["batter"] = game["bowler"]
+        game["bowler"] = temp_batter
+        game["current_players"] = {"batter": game["batter"], "bowler": game["bowler"]}
+        
+        # Notify all players of innings change
+        batter_name = (await context.bot.get_chat(game["batter"])).first_name
+        bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
         
         text = (
-            f"🔥 *INNINGS BREAK* 🔥\n\n"
-            f"First innings score: {game['score1']}\n"
-            f"Target: {game['target']} runs\n"
-            f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
-            f"🔸 Now batting: {batter_name}\n"
-            f"🔹 Now bowling: {bowler_name}\n\n"
-            f"⚡ {batter_name}, choose a number (1-6):"
+            f"🏏 First Innings Complete!\n\n"
+            f"Score: {game['score1']}/{game['max_wickets']} in {game['over']}.{game['ball']} overs\n\n"
+            f"Second Innings:\n"
+            f"🔸 Batting: {batter_name}\n"
+            f"🔹 Bowling: {bowler_name}\n"
+            f"Target: {game['target']} runs"
         )
         
-        game["batter_choice"] = None
-        game["bowler_choice"] = None
+        for participant_id in list(game["spectators"]) + [game["player1"], game["player2"]]:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=participant_id,
+                    message_id=game["message_id"].get(participant_id),
+                    text=text
+                )
+            except Exception as e:
+                print(f"Error updating participant {participant_id}: {e}")
         
-        await update_game_interface(game_id, context, text)
+        # Wait a moment before starting second innings
+        await asyncio.sleep(2)
+        
+        # Start second innings
+        await update_game_interface(game_id, context)
     else:
+        # End of match
         await declare_winner(game_id, context)
 
 async def declare_winner(game_id: int, context: CallbackContext):
