@@ -4,6 +4,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext, CallbackQueryHandler, CommandHandler
 from datetime import datetime, timedelta
+import time
 
 # Set up logging
 logging.basicConfig(
@@ -107,7 +108,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         return
     
     # Generate a unique game ID
-    game_id = f"{chat_id}_{datetime.now().timestamp()}"
+    game_id = f"{update.effective_chat.id}_{int(time.time())}"
     
     max_overs = 100
     max_wickets = 1
@@ -127,7 +128,6 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
                 text="⚠️ Invalid parameters! Format: /chatcricket [overs] [wickets]")
             return
     
-    game_id = chat_id
     cricket_games[game_id] = {
         "player1": user.id,
         "player2": None,
@@ -902,8 +902,16 @@ async def declare_winner(game_id: int, context: CallbackContext):
         loser_runs = game['score1'] if winner_id == game["batter"] else game['score2']
 
         # 🏏 Wickets logic
-        wickets_taken_by_winner = game["wickets"] if winner_id == game["bowler"] else 0
-        wickets_taken_by_loser = game["wickets"] if loser_id == game["bowler"] else 0
+        bowler_id_str = str(game["bowler"])
+
+# Always assign wickets to bowler, win or lose
+        if winner_id_str == bowler_id_str:
+            wickets_taken_by_winner = game["wickets"]
+            wickets_taken_by_loser = 0
+        else:
+            wickets_taken_by_loser = game["wickets"]
+            wickets_taken_by_winner = 0
+
 
         # 🟢 Update winner
         user_collection.update_one(
