@@ -1000,28 +1000,31 @@ async def chat_command(update: Update, context: CallbackContext) -> None:
 def update_game_activity(game_id):
     game_activity[game_id] = datetime.now()
 
+reminder_sent = set()  
+
 async def check_inactive_games(context: CallbackContext):
     current_time = datetime.now()
-    
+
     for game_id, game in list(cricket_games.items()):
         if game_id not in game_activity:
             continue
-            
+
         last_activity = game_activity.get(game_id)
         if not last_activity:
             continue
-            
-        if (current_time - last_activity).total_seconds() > 20:
+
+        # If more than 20 seconds of inactivity and reminder not yet sent
+        if (current_time - last_activity).total_seconds() > 20 and game_id not in reminder_sent:
             try:
                 player = await context.bot.get_chat(game["player1"])
                 bot = await context.bot.get_me()
-                
+
                 reminder_text = (
                     f"🏏 *Cricket Game Reminder* 🏏\n\n"
                     f"{player.first_name}'s cricket game is still waiting for an opponent!\n"
                     f"Anyone want to join? Click the button below:"
                 )
-                
+
                 keyboard = [[InlineKeyboardButton("🎮 Join Cricket Game", url=f"https://t.me/{bot.username}?start=game_{game_id}")]]
                 
                 await context.bot.send_message(
@@ -1030,7 +1033,9 @@ async def check_inactive_games(context: CallbackContext):
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode="Markdown"
                 )
-                
+
+                reminder_sent.add(game_id)  # Mark this game as reminded
+
             except Exception as e:
                 logger.error(f"Error sending game reminder: {e}")
 
