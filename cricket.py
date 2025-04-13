@@ -133,7 +133,32 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
 
     # Get user_id from the update
     user_id = user.id  # Use update.effective_user.id to get the user's ID
-    game_id = f"{chat_id}_{user_id}"  # Unique game ID per user in the group
+
+    # Send the game start message to the group chat
+    game_desc = f"🏏 *Cricket Game Started!*\n\n"
+    game_desc += f"Started by: {user.first_name}\n"
+    game_desc += f"Format: {max_overs} over{'s' if max_overs > 1 else ''}, {max_wickets} wicket{'s' if max_wickets > 1 else ''}\n\n"
+    game_desc += f"• To join, click \"Join Game\"\n"
+    game_desc += f"• To watch, click \"Watch Game\"\n"
+    game_desc += f"• For the best experience, open the bot directly"
+    
+    # Get bot username and create an inline keyboard
+    bot_username = (await context.bot.get_me()).username
+    keyboard = InlineKeyboardMarkup([ 
+        [InlineKeyboardButton("Join Game", callback_data=f"join_{chat_id}")],
+        [InlineKeyboardButton("Watch Game", callback_data=f"watch_{chat_id}")],
+        [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/{bot_username}")]
+    ])
+    
+    sent_message = await context.bot.send_message(
+        chat_id=chat_id,
+        text=game_desc,
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    
+    # Use message_id as the unique game_id
+    game_id = str(sent_message.message_id)
 
     # Initialize the game state in a dictionary
     cricket_games[game_id] = {
@@ -141,7 +166,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "player2": None,
         "score1": 0,
         "score2": 0,
-        "message_id": {},
+        "message_id": sent_message.message_id,
         "over": 0,
         "ball": 0,
         "batter": None,
@@ -165,32 +190,9 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     # Call function to update the game activity
     update_game_activity(game_id)
     
-    # Prepare the game description message
-    game_desc = f"🏏 *Cricket Game Started!*\n\n"
-    game_desc += f"Started by: {user.first_name}\n"
-    game_desc += f"Format: {max_overs} over{'s' if max_overs > 1 else ''}, {max_wickets} wicket{'s' if max_wickets > 1 else ''}\n\n"
-    game_desc += f"• To join, click \"Join Game\"\n"
-    game_desc += f"• To watch, click \"Watch Game\"\n"
-    game_desc += f"• For the best experience, open the bot directly"
-    
-    # Get bot username and create an inline keyboard
-    bot_username = (await context.bot.get_me()).username
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Join Game", callback_data=f"join_{game_id}")],
-        [InlineKeyboardButton("Watch Game", callback_data=f"watch_{game_id}")],
-        [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/{bot_username}")]
-    ])
-    
-    # Send the game start message to the group chat
-    sent_message = await context.bot.send_message(
-        chat_id=chat_id,
-        text=game_desc,
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-    
     # Pin the sent message in the group chat
     await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
+
 
 async def send_inactive_player_reminder(context: CallbackContext) -> None:
     current_time = datetime.utcnow()
