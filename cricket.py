@@ -122,7 +122,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
                 chat_id=chat_id,
                 text="⚠️ Invalid parameters! Format: /chatcricket [overs] [wickets]")
             return
-    
+    user_id = query.from_user.id
     game_id = f"{chat_id}_{user_id}"
     cricket_games[game_id] = {
         "player1": user.id,
