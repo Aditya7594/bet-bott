@@ -688,7 +688,6 @@ def main() -> None:
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("daily", daily))
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
-    application.add_handler(CommandHandler("help", help_command))
     
     for handler in get_claim_handlers():        
         application.add_handler(handler)
