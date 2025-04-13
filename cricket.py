@@ -109,8 +109,10 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "last_reminder": None  # Track when the last reminder was sent
     }
     for old_game_id, old_game in list(cricket_games.items()):
-    if old_game.get("player1") == user.id and old_game.get("player2") is None:
+     if old_game.get("player1") == user.id and old_game.get("player2") is None:
         try:
+        
+        
             await context.bot.send_message(
                 chat_id=old_game.get("group_chat_id"),
                 text="⚠️ This cricket game has expired as the creator started a new game.")
@@ -140,15 +142,15 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         [InlineKeyboardButton("Watch Game", callback_data=f"watch_{game_id}")],
         [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/{bot_username}")]
     ])
-        sent_message = await context.bot.send_message(
+    sent_message = await context.bot.send_message(
         chat_id=chat_id,
         text=game_desc,
         reply_markup=keyboard,
         parse_mode="Markdown")
-        await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
+    await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
 
 
-        cricket_games[game_id]["original_message_id"] = sent_message.message_id
+    cricket_games[game_id]["original_message_id"] = sent_message.message_id
     
 
     try:
