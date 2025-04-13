@@ -808,6 +808,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
             )
 
         
+       try:
         game_collection.insert_one({
             "timestamp": datetime.now(),
             "participants": [str(game["player1"]), str(game["player2"])],  # Convert to strings
@@ -820,7 +821,6 @@ async def declare_winner(game_id: int, context: CallbackContext):
         })
     except Exception as e:
         logger.error(f"Error saving game history: {e}")
-
     # Clean up game data
     if game_id in reminder_sent:
         del reminder_sent[game_id]
