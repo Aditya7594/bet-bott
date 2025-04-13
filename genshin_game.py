@@ -666,20 +666,18 @@ def get_all_genshin_users():
     """    
     return list(genshin_collection.find({}, {"_id": 0, "user_id": 1, "primos": 1, "first_name": 1}))
 
-async def leaderboard(update: Update, context: CallbackContext) -> None:
-    users = get_all_genshin_users()
+async def primo_leaderboard(update: Update, context: CallbackContext) -> None:
+    users = list(genshin_collection.find({}, {"_id": 0, "user_id": 1, "first_name": 1, "primos": 1}))
     
     if not users:
         await update.message.reply_text("❗ No users found.")
         return
 
-    # Sort users by primos in descending order
     users.sort(key=lambda x: x.get("primos", 0), reverse=True)
 
-    # Create the leaderboard message
     leaderboard_message = "🔹 **Leaderboard:**\n\n"
-    for idx, user in enumerate(users[:10]):  # Top 10 users
-        first_name = user.get('first_name', 'Unknown')  # Default to 'Unknown' if no name
+    for idx, user in enumerate(users[:10]):
+        first_name = user.get('first_name', 'Unknown')
         primogems = user.get('primos', 0)
         leaderboard_message += (
             f"{idx + 1}. 🏆 {first_name} - **{primogems}** Primogems\n"
