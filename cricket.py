@@ -23,6 +23,53 @@ game_collection = db["games"]
 cricket_games = {}
 reminder_sent = {}
 game_activity = {}
+ACHIEVEMENTS = [
+    # Batting achievements
+    {"id": "first_run", "name": "First Run", "description": "Score your first run", "requirement": {"type": "runs", "value": 1}},
+    {"id": "half_century", "name": "Half Century", "description": "Score 50 runs in total", "requirement": {"type": "runs", "value": 50}},
+    {"id": "century", "name": "Century", "description": "Score 100 runs in total", "requirement": {"type": "runs", "value": 100}},
+    {"id": "double_century", "name": "Double Century", "description": "Score 200 runs in total", "requirement": {"type": "runs", "value": 200}},
+    {"id": "run_machine", "name": "Run Machine", "description": "Score 500 runs in total", "requirement": {"type": "runs", "value": 500}},
+    {"id": "batting_legend", "name": "Batting Legend", "description": "Score 1000 runs in total", "requirement": {"type": "runs", "value": 1000}},
+    
+    # Wicket achievements
+    {"id": "first_wicket", "name": "First Wicket", "description": "Take your first wicket", "requirement": {"type": "wickets", "value": 1}},
+    {"id": "five_wickets", "name": "Five Wicket Haul", "description": "Take 5 wickets in total", "requirement": {"type": "wickets", "value": 5}},
+    {"id": "ten_wickets", "name": "Ten Wicket Club", "description": "Take 10 wickets in total", "requirement": {"type": "wickets", "value": 10}},
+    {"id": "wicket_master", "name": "Wicket Master", "description": "Take 25 wickets in total", "requirement": {"type": "wickets", "value": 25}},
+    {"id": "bowling_legend", "name": "Bowling Legend", "description": "Take 50 wickets in total", "requirement": {"type": "wickets", "value": 50}},
+    
+    # Game achievements
+    {"id": "first_win", "name": "First Victory", "description": "Win your first game", "requirement": {"type": "wins", "value": 1}},
+    {"id": "five_wins", "name": "Winner's Circle", "description": "Win 5 games", "requirement": {"type": "wins", "value": 5}},
+    {"id": "ten_wins", "name": "Champion", "description": "Win 10 games", "requirement": {"type": "wins", "value": 10}},
+    {"id": "twenty_wins", "name": "Cricket Master", "description": "Win 20 games", "requirement": {"type": "wins", "value": 20}},
+    {"id": "fifty_wins", "name": "Legendary Player", "description": "Win 50 games", "requirement": {"type": "wins", "value": 50}},
+    
+    # Match participation achievements
+    {"id": "first_match", "name": "Cricket Debut", "description": "Play your first match", "requirement": {"type": "matches", "value": 1}},
+    {"id": "five_matches", "name": "Regular Player", "description": "Play 5 matches", "requirement": {"type": "matches", "value": 5}},
+    {"id": "ten_matches", "name": "Cricket Enthusiast", "description": "Play 10 matches", "requirement": {"type": "matches", "value": 10}},
+    {"id": "fifty_matches", "name": "Cricket Veteran", "description": "Play 50 matches", "requirement": {"type": "matches", "value": 50}},
+    {"id": "hundred_matches", "name": "Cricket Legend", "description": "Play 100 matches", "requirement": {"type": "matches", "value": 100}},
+    
+    # Accuracy/Win rate achievements
+    {"id": "rising_star", "name": "Rising Star", "description": "Achieve 25% win rate", "requirement": {"type": "accuracy", "value": 25}},
+    {"id": "consistent_player", "name": "Consistent Player", "description": "Achieve 40% win rate", "requirement": {"type": "accuracy", "value": 40}},
+    {"id": "star_player", "name": "Star Player", "description": "Achieve 50% win rate", "requirement": {"type": "accuracy", "value": 50}},
+    {"id": "elite_player", "name": "Elite Player", "description": "Achieve 60% win rate", "requirement": {"type": "accuracy", "value": 60}},
+    {"id": "world_class", "name": "World Class", "description": "Achieve 75% win rate", "requirement": {"type": "accuracy", "value": 75}},
+    
+    # Streaks
+    {"id": "winning_streak_3", "name": "Hot Streak", "description": "Win 3 games in a row", "requirement": {"type": "streak", "value": 3}},
+    {"id": "winning_streak_5", "name": "Unstoppable", "description": "Win 5 games in a row", "requirement": {"type": "streak", "value": 5}},
+    
+    # Special achievements
+    {"id": "perfect_match", "name": "Perfect Match", "description": "Win without conceding a wicket", "requirement": {"type": "special", "value": "perfect_match"}},
+    {"id": "comeback_king", "name": "Comeback King", "description": "Win after being 10+ runs behind", "requirement": {"type": "special", "value": "comeback"}},
+    {"id": "tied_match", "name": "Nail-Biter", "description": "Play a tied match", "requirement": {"type": "special", "value": "tie"}},
+    {"id": "hat_trick", "name": "Hat-Trick", "description": "Take 3 wickets in 3 consecutive balls", "requirement": {"type": "special", "value": "hat_trick"}},
+]
 
 def generate_game_code():
     return str(random.randint(100, 999))
@@ -815,6 +862,8 @@ async def declare_winner(game_id: int, context: CallbackContext):
         return
 
     game = cricket_games[game_id]
+    
+    # Get player names
     try:
         p1 = (await context.bot.get_chat(game["player1"])).first_name
         p2 = (await context.bot.get_chat(game["player2"])).first_name
@@ -823,10 +872,15 @@ async def declare_winner(game_id: int, context: CallbackContext):
         p1 = "Player 1"
         p2 = "Player 2"
 
+    # Determine result
     if game["score1"] == game["score2"]:
         result = "🤝 Match Drawn!"
         winner_id = None
         loser_id = None
+        
+        # Award "tied match" achievement to both players
+        await check_special_achievement(game_id, "tie", context)
+        
     elif game["innings"] == 2:
         if game["score2"] >= game["target"]:
             winner_id = game["batter"]
@@ -836,6 +890,11 @@ async def declare_winner(game_id: int, context: CallbackContext):
             except:
                 winner = "Player"
             result = f"🏅 {winner} won by {game['max_wickets'] - game['wickets']} wicket(s)!"
+            
+            # Check for perfect match achievement
+            if game["wickets"] == 0:
+                await check_special_achievement(game_id, "perfect_match", context, winner_id)
+                
         else:
             winner_id = game["bowler"]
             loser_id = game["batter"]
@@ -850,6 +909,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
         winner_id = None
         loser_id = None
 
+    # Format the result message
     result_message = (
         f"🏆 *GAME OVER!*\n\n"
         f"📜 *Match Summary:*\n"
@@ -858,6 +918,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
         f"{result}"
     )
 
+    # Send result to group chat
     try:
         await context.bot.send_message(
             chat_id=game["group_chat_id"],
@@ -867,6 +928,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
     except Exception as e:
         logger.error(f"Error sending result to group chat: {e}")
 
+    # Send result to all participants
     participants = list(game["spectators"]) + [game["player1"], game["player2"]]
     for player_id in participants:
         try:
@@ -876,6 +938,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
                 parse_mode="Markdown"
             )
             
+            # Try to delete game interface message
             try:
                 if player_id in game["message_id"]:
                     await context.bot.deleteMessage(
@@ -890,42 +953,91 @@ async def declare_winner(game_id: int, context: CallbackContext):
 
     # Update player statistics if a winner is determined
     if winner_id and loser_id:
+        winner_id_str = str(winner_id)
+        loser_id_str = str(loser_id)
+        
+        # Get scores for winner and loser
+        winner_runs = game['score2'] if winner_id == game["batter"] else game['score1']
+        loser_runs = game['score1'] if winner_id == game["batter"] else game['score2']
+        
         # Update winner's stats
-        winner_stats = user_collection.find_one({"user_id": str(winner_id)}, {"_id": 0, "stats": 1})
+        winner_stats = user_collection.find_one({"user_id": winner_id_str}, {"_id": 0, "stats": 1})
         if winner_stats and "stats" in winner_stats:
             user_collection.update_one(
-                {"user_id": str(winner_id)},
-                {"$inc": {"stats.wins": 1, "stats.runs": game['score2'] if winner_id == game["batter"] else game['score1']}}
+                {"user_id": winner_id_str},
+                {"$inc": {
+                    "stats.wins": 1,
+                    "stats.runs": winner_runs,
+                    "stats.current_streak": 1
+                },
+                "$set": {"stats.last_result": "win"}}
+            )
+            
+            # Reset losing streak if any
+            user_collection.update_one(
+                {"user_id": winner_id_str},
+                {"$set": {"stats.losing_streak": 0}}
             )
         else:
             user_collection.update_one(
-                {"user_id": str(winner_id)},
-                {"$set": {"stats": {"wins": 1, "losses": 0, "runs": game['score2'] if winner_id == game["batter"] else game['score1'], "wickets": 0, "accuracy": 0}}},
+                {"user_id": winner_id_str},
+                {"$set": {
+                    "stats": {
+                        "wins": 1, 
+                        "losses": 0, 
+                        "runs": winner_runs, 
+                        "wickets": 0, 
+                        "current_streak": 1,
+                        "last_result": "win"
+                    }
+                }},
                 upsert=True
             )
         
         # Update loser's stats
-        loser_stats = user_collection.find_one({"user_id": str(loser_id)}, {"_id": 0, "stats": 1})
+        loser_stats = user_collection.find_one({"user_id": loser_id_str}, {"_id": 0, "stats": 1})
         if loser_stats and "stats" in loser_stats:
             user_collection.update_one(
-                {"user_id": str(loser_id)},
-                {"$inc": {"stats.losses": 1}}
+                {"user_id": loser_id_str},
+                {"$inc": {
+                    "stats.losses": 1,
+                    "stats.runs": loser_runs
+                },
+                "$set": {
+                    "stats.current_streak": 0,
+                    "stats.last_result": "loss"
+                }}
             )
         else:
             user_collection.update_one(
-                {"user_id": str(loser_id)},
-                {"$set": {"stats": {"wins": 0, "losses": 1, "runs": 0, "wickets": 0, "accuracy": 0}}},
+                {"user_id": loser_id_str},
+                {"$set": {
+                    "stats": {
+                        "wins": 0, 
+                        "losses": 1, 
+                        "runs": loser_runs, 
+                        "wickets": 0, 
+                        "current_streak": 0,
+                        "last_result": "loss"
+                    }
+                }},
                 upsert=True
             )
+        
+        # Check for achievements for both players
+        await check_achievements(winner_id, context)
+        await check_achievements(loser_id, context)
 
+        # Store game in history
         try:
             game_collection.insert_one({
                 "timestamp": datetime.now(),
-                "participants": [str(game["player1"]), str(game["player2"])],  # Convert to strings
+                "participants": [str(game["player1"]), str(game["player2"])],
                 "scores": {"player1": game["score1"], "player2": game["score2"]},
+                "winner": winner_id_str,
+                "loser": loser_id_str,
                 "result": result,
                 "innings": game["innings"],
-                # Store opponent info for each player
                 "player1_opponent": str(game["player2"]),
                 "player2_opponent": str(game["player1"])
             })
@@ -1043,7 +1155,6 @@ async def stats(update: Update, context: CallbackContext) -> None:
     user_id = str(user.id)
     
     user_data = user_collection.find_one({"user_id": user_id})
-
     if not user_data:
         await update.message.reply_text("You need to start the bot first!")
         return
@@ -1054,15 +1165,53 @@ async def stats(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("No statistics available yet. Play some games to see your stats!")
         return
     
+    # Get stats data
     stats = stats_data["stats"]
-    text = f"📊 *Your Statistics:*\n\n"
-    text += f"🏆 Wins: {stats.get('wins', 0)}\n"
-    text += f"-losses: {stats.get('losses', 0)}\n"
-    text += f"🏃 Runs: {stats.get('runs', 0)}\n"
-    text += f"⚾ Wickets: {stats.get('wickets', 0)}\n"
-    text += f"🎯 Accuracy: {stats.get('accuracy', 0)}%"
+    games_played = stats.get('wins', 0) + stats.get('losses', 0)
     
-    await update.message.reply_text(text, parse_mode="Markdown")
+    # Calculate accuracy as win percentage
+    accuracy = 0
+    if games_played > 0:
+        accuracy = round((stats.get('wins', 0) / games_played) * 100)
+    
+    # Create stats message
+    text = f"📊 *Your Statistics:*\n\n"
+    text += f"🏏 *Games*\n"
+    text += f"▫️ Played: {games_played}\n"
+    text += f"▫️ Wins: {stats.get('wins', 0)}\n"
+    text += f"▫️ Losses: {stats.get('losses', 0)}\n"
+    text += f"▫️ Win Rate: {accuracy}%\n\n"
+    text += f"🏃 *Performance*\n"
+    text += f"▫️ Total Runs: {stats.get('runs', 0)}\n"
+    text += f"▫️ Wickets Taken: {stats.get('wickets', 0)}\n"
+    
+    # Add recent achievements
+    await check_achievements(user_id, context)
+    
+    # Create keyboard with achievements button
+    keyboard = [[InlineKeyboardButton("🏆 View Achievements", callback_data="view_achievements")]]
+    
+    await update.message.reply_text(
+        text, 
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def achievements_button(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "view_achievements":
+        # Reuse the achievements command logic
+        update.effective_message = query.message
+        update.effective_user = query.from_user
+        await achievements_command(update, context)
+    elif query.data == "locked_achievements":
+        await locked_achievements_button(update, context)
+    elif query.data == "view_leaderboard":
+        # Handle leaderboard button
+        update.effective_message = query.message
+        await leaderboard(update, context)
 
 async def leaderboard(update: Update, context: CallbackContext) -> None:
     # Fetch top players
@@ -1177,6 +1326,243 @@ async def game_history(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"Error retrieving game history: {e}")
         await update.message.reply_text("An error occurred while retrieving your game history. Please try again later.")
+
+async def check_achievements(user_id, context=None):
+    """Check and award achievements for a user based on their stats"""
+    user_id_str = str(user_id)
+    
+    # Get user stats
+    user_data = user_collection.find_one({"user_id": user_id_str}, {"stats": 1})
+    if not user_data or "stats" not in user_data:
+        return []
+    
+    stats = user_data["stats"]
+    
+    # Get user achievements
+    user_achievements = achievements_collection.find_one({"user_id": user_id_str})
+    if not user_achievements:
+        user_achievements = {"user_id": user_id_str, "achievements": []}
+        achievements_collection.insert_one(user_achievements)
+    
+    # List of earned achievements to be returned
+    newly_earned = []
+    
+    # Calculate matches played (for accuracy)
+    matches_played = stats.get("wins", 0) + stats.get("losses", 0)
+    accuracy = 0
+    if matches_played > 0:
+        accuracy = round((stats.get("wins", 0) / matches_played) * 100)
+    
+    # Check each achievement
+    for achievement in ACHIEVEMENTS:
+        # Skip if already earned
+        if achievement["id"] in user_achievements.get("achievements", []):
+            continue
+        
+        achieved = False
+        req_type = achievement["requirement"]["type"]
+        req_value = achievement["requirement"]["value"]
+        
+        # Check if achievement conditions are met
+        if req_type == "runs" and stats.get("runs", 0) >= req_value:
+            achieved = True
+        elif req_type == "wickets" and stats.get("wickets", 0) >= req_value:
+            achieved = True
+        elif req_type == "wins" and stats.get("wins", 0) >= req_value:
+            achieved = True
+        elif req_type == "matches" and matches_played >= req_value:
+            achieved = True
+        elif req_type == "accuracy" and accuracy >= req_value and matches_played >= 5:
+            achieved = True
+        # Special achievements are handled separately during game events
+        
+        # Award achievement if earned
+        if achieved:
+            # Add to user's achievements
+            achievements_collection.update_one(
+                {"user_id": user_id_str},
+                {"$addToSet": {"achievements": achievement["id"]}}
+            )
+            
+            newly_earned.append(achievement)
+            
+            # Send notification if context provided
+            if context and hasattr(context, "bot"):
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"🏆 *Achievement Unlocked!*\n\n*{achievement['name']}*\n{achievement['description']}",
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending achievement notification: {e}")
+    
+    return newly_earned
+async def check_special_achievement(game_id, achievement_type, context, user_id=None):
+    """Award special achievements that occur during gameplay"""
+    if game_id not in cricket_games:
+        return
+    
+    game = cricket_games[game_id]
+    
+    if not user_id:
+        # Determine which player earned the achievement based on type
+        if achievement_type == "perfect_match":
+            user_id = game["batter"] if game["innings"] == 2 and game["score2"] >= game["target"] and game["wickets"] == 0 else None
+        elif achievement_type == "comeback":
+            # Logic for comeback achievement
+            pass
+        elif achievement_type == "tie":
+            # Both players get achievement for a tie
+            if game["score1"] == game["score2"]:
+                await check_special_achievement(game_id, "tie", context, game["player1"])
+                await check_special_achievement(game_id, "tie", context, game["player2"])
+                return
+    
+    if not user_id:
+        return
+        
+    user_id_str = str(user_id)
+    
+    # Check if user already has this achievement
+    user_achievements = achievements_collection.find_one({"user_id": user_id_str})
+    if not user_achievements:
+        user_achievements = {"user_id": user_id_str, "achievements": []}
+        achievements_collection.insert_one(user_achievements)
+    
+    # Find the achievement details
+    achievement = next((a for a in ACHIEVEMENTS if a["requirement"]["type"] == "special" 
+                       and a["requirement"]["value"] == achievement_type), None)
+    
+    if not achievement or achievement["id"] in user_achievements.get("achievements", []):
+        return
+    
+    # Award the achievement
+    achievements_collection.update_one(
+        {"user_id": user_id_str},
+        {"$addToSet": {"achievements": achievement["id"]}}
+    )
+    
+    # Send notification
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"🏆 *Special Achievement Unlocked!*\n\n*{achievement['name']}*\n{achievement['description']}",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Error sending special achievement notification: {e}")
+
+# Function to handle achievements button
+async def achievements_command(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    # Get user data
+    user_data = user_collection.find_one({"user_id": user_id})
+    if not user_data:
+        await update.message.reply_text("You need to start the bot first!")
+        return
+    
+    # Get user achievements
+    user_achievements = achievements_collection.find_one({"user_id": user_id})
+    earned_ids = user_achievements.get("achievements", []) if user_achievements else []
+    
+    # Count earned achievements and total
+    earned_count = len(earned_ids)
+    total_count = len(ACHIEVEMENTS)
+    
+    # Build message
+    text = f"🏆 *Your Achievements ({earned_count}/{total_count})*\n\n"
+    
+    if not earned_ids:
+        text += "You haven't earned any achievements yet. Keep playing to unlock them!"
+    else:
+        # Group achievements by category for better organization
+        categories = {
+            "Batting": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "runs"],
+            "Bowling": [a for a in ACHIEVEMENTS if a["requirement"]["type"] == "wickets"],
+            "Matches": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["matches", "wins"]],
+            "Performance": [a for a in ACHIEVEMENTS if a["requirement"]["type"] in ["accuracy", "streak", "special"]]
+        }
+        
+        for category, category_achievements in categories.items():
+            category_earned = [a for a in category_achievements if a["id"] in earned_ids]
+            if category_earned:
+                text += f"*{category}:*\n"
+                for achievement in category_earned:
+                    text += f"• {achievement['name']} - {achievement['description']}\n"
+                text += "\n"
+    
+    # Create "locked achievements" view
+    keyboard = [
+        [InlineKeyboardButton("🔒 View Locked Achievements", callback_data=f"locked_achievements")],
+        [InlineKeyboardButton("🏆 View Leaderboard", callback_data="view_leaderboard")]
+    ]
+    
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+# Handler for locked achievements button
+async def locked_achievements_button(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+    
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    # Get user achievements
+    user_achievements = achievements_collection.find_one({"user_id": user_id})
+    earned_ids = user_achievements.get("achievements", []) if user_achievements else []
+    
+    # Get locked achievements
+    locked = [a for a in ACHIEVEMENTS if a["id"] not in earned_ids]
+    
+    if not locked:
+        await query.edit_message_text(
+            "🎉 Congratulations! You've unlocked all achievements!",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # Group achievements by category
+    categories = {
+        "Batting": [a for a in locked if a["requirement"]["type"] == "runs"],
+        "Bowling": [a for a in locked if a["requirement"]["type"] == "wickets"],
+        "Matches": [a for a in locked if a["requirement"]["type"] in ["matches", "wins"]],
+        "Performance": [a for a in locked if a["requirement"]["type"] in ["accuracy", "streak", "special"]]
+    }
+    
+    text = "🔒 *Locked Achievements*\n\n"
+    
+    for category, category_achievements in categories.items():
+        if category_achievements:
+            text += f"*{category}:*\n"
+            for achievement in category_achievements[:3]:  # Limit to 3 per category to avoid message too long
+                text += f"• {achievement['name']} - {achievement['description']}\n"
+            
+            if len(category_achievements) > 3:
+                text += f"  _...and {len(category_achievements) - 3} more {category.lower()} achievements_\n"
+            text += "\n"
+    
+    keyboard = [[InlineKeyboardButton("🏆 View Earned Achievements", callback_data="view_achievements")]]
+    
+    try:
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Error displaying locked achievements: {e}")
+        await query.edit_message_text(
+            "Error displaying all locked achievements. You have many more to unlock!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
 def setup_jobs(application):
     # Check for inactive games every 30 seconds
     job_queue = application.job_queue
@@ -1188,11 +1574,14 @@ def setup_jobs(application):
 def get_cricket_handlers():
     return [
         CommandHandler("stats", stats),
+        CommandHandler("achievements", achievements_command),  # New command
         CommandHandler("leaderboard", leaderboard),
-        CommandHandler("chat", chat_command),  # Use the correct function name
+        CommandHandler("history", game_history),
+        CommandHandler("chat", chat_command),
         CallbackQueryHandler(toss_button, pattern="^toss_"),
         CallbackQueryHandler(choose_button, pattern="^choose_"),
         CallbackQueryHandler(play_button, pattern="^play_"),
         CallbackQueryHandler(handle_join_button, pattern=r"^join_"),
         CallbackQueryHandler(handle_watch_button, pattern=r"^watch_"),
+        CallbackQueryHandler(achievements_button, pattern=r"^view_achievements$|^locked_achievements$|^view_leaderboard$"),
     ]
