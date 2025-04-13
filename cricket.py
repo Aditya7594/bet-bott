@@ -374,7 +374,7 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     player2_name = "Waiting for opponent" if not game["player2"] else (await context.bot.get_chat(game["player2"])).first_name
     
     bot_username = (await context.bot.get_me()).username
-    keyboard = [[InlineKeyboardButton("🔄 Open Bot to Watch Live", url=f"<url id="" type="url" status="" title="" wc="">https://t.me/</url> {bot_username}")]]
+    keyboard = [[InlineKeyboardButton("🔄 Open Bot to Watch Live", url=f"https://t.me/{bot_username}")]]
     
     await query.message.reply_text(
         f"👁️ You're now watching the cricket match!\n"
