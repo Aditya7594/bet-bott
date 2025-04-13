@@ -108,18 +108,6 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "last_move": datetime.utcnow(),
         "last_reminder": None  # Track when the last reminder was sent
     }
-    for old_game_id, old_game in list(cricket_games.items()):
-     if old_game.get("player1") == user.id and old_game.get("player2") is None:
-        try:
-            
-            # Clean up old game data
-            if old_game_id in reminder_sent:
-                del reminder_sent[old_game_id]
-            if old_game_id in game_activity:
-                del game_activity[old_game_id]
-            del cricket_games[old_game_id]
-        except Exception as e:
-            logger.error(f"Error cleaning up old game: {e}")
     
     update_game_activity(game_id)
     
