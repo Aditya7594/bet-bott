@@ -105,8 +105,12 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     
     if not await check_user_started_bot(update, context):
         return
-    max_overs = 100  
-    max_wickets = 1 
+    
+    # Generate a unique game ID
+    game_id = f"{chat_id}_{datetime.now().timestamp()}"
+    
+    max_overs = 100
+    max_wickets = 1
     if context.args:
         try:
             if len(context.args) >= 1:
@@ -956,7 +960,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
     # Clean up memory
     reminder_sent.pop(game_id, None)
     game_activity.pop(game_id, None)
-    cricket_games.pop(game_id, None)
+    del cricket_games[game_id]
 
 
 async def chat_command(update: Update, context: CallbackContext) -> None:
@@ -1005,16 +1009,14 @@ async def check_inactive_games(context: CallbackContext):
     current_time = datetime.now()
     
     for game_id, game in list(cricket_games.items()):
-        if game_id not in game_activity or game["player2"] is not None:
+        if game_id not in game_activity:
             continue
             
         last_activity = game_activity.get(game_id)
         if not last_activity:
             continue
             
-        if (current_time - last_activity > timedelta(seconds=20) and 
-                game_id not in reminder_sent):
-            
+        if (current_time - last_activity).total_seconds() > 20:
             try:
                 player_name = (await context.bot.get_chat(game["player1"])).first_name
                 bot_username = (await context.bot.get_me()).username
@@ -1034,25 +1036,9 @@ async def check_inactive_games(context: CallbackContext):
                     parse_mode="Markdown"
                 )
                 
-                reminder_sent[game_id] = True
             except Exception as e:
                 logger.error(f"Error sending game reminder: {e}")
-                
-        elif current_time - last_activity > timedelta(minutes=15):
-            try:
-                await context.bot.send_message(
-                    chat_id=game["group_chat_id"],
-                    text="The cricket game has been cancelled due to inactivity."
-                )
-                
-                if game_id in reminder_sent:
-                    del reminder_sent[game_id]
-                if game_id in game_activity:
-                    del game_activity[game_id]
-                del cricket_games[game_id]
-                
-            except Exception as e:
-                logger.error(f"Error cleaning up inactive game: {e}")
+
 async def game_chat(update: Update, context: CallbackContext) -> None:
     if not context.args:
         await update.message.reply_text("Usage: /chat <message>")
