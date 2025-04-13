@@ -21,6 +21,7 @@ from cricket import (
     end_innings,
     declare_winner,
     update_game_interface,
+    setup_jobs,
     get_cricket_handlers
 )
 from claim import get_claim_handlers, daily
@@ -742,6 +743,7 @@ def main() -> None:
 
     # Add error handler
     application.add_error_handler(error_handler)
+    setup_jobs(application)
 
     # Run the bot
     application.run_polling()
