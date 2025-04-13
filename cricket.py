@@ -1,12 +1,11 @@
 from pymongo import MongoClient
 import random
 import logging
-import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext, MessageHandler, filters
+from telegram.ext import CallbackContext, CallbackQueryHandler, CommandHandler
 from datetime import datetime, timedelta
-import os
 
+# Set up logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -17,7 +16,6 @@ logger = logging.getLogger(__name__)
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority')
 db = client['telegram_bot']
 user_collection = db["users"]
-game_collection = db["games"]
 
 cricket_games = {}
 reminder_sent = {}
@@ -87,9 +85,10 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "group_chat_id": chat_id,
         "match_details": [],
         "wickets": 0,
-        "max_wickets": 1,
+        "max_wickets": 10,
         "max_overs": 20,
         "spectators": set(),
+        "last_move": datetime.utcnow()
     }
     
     update_game_activity(game_id)
@@ -732,7 +731,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
 
     # Update player statistics
     winner_id = game["batter"] if game["score2"] >= game["target"] else game["bowler"]
-    loser_id = game["bowler"] if game["score2"] >= game["target"] else game["batter"]
+    loser_id = game["bowler"] if game["score2"] >= game["target"] else game["player1"]
     
     # Update winner's stats
     winner_stats = user_collection.find_one({"user_id": str(winner_id)}, {"_id": 0, "stats": 1})
@@ -777,7 +776,7 @@ async def chat_command(update: Update, context: CallbackContext) -> None:
         return
 
     user = update.effective_user
-    user_id = user.id
+    user_id = str(user.id)
     message = " ".join(context.args)
 
     if not await check_user_started_bot(update, context):
@@ -847,7 +846,6 @@ async def check_inactive_games(context: CallbackContext):
                 )
                 
                 reminder_sent[game_id] = True
-                
             except Exception as e:
                 logger.error(f"Error sending game reminder: {e}")
                 
@@ -886,7 +884,7 @@ async def stats(update: Update, context: CallbackContext) -> None:
     stats = stats_data["stats"]
     text = f"📊 *Your Statistics:*\n\n"
     text += f"🏆 Wins: {stats.get('wins', 0)}\n"
-    text += f"铩 Losses: {stats.get('losses', 0)}\n"
+    text += f"-losses: {stats.get('losses', 0)}\n"
     text += f"🏃 Runs: {stats.get('runs', 0)}\n"
     text += f"⚾ Wickets: {stats.get('wickets', 0)}\n"
     text += f"🎯 Accuracy: {stats.get('accuracy', 0)}%"
