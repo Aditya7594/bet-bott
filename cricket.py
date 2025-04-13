@@ -493,8 +493,8 @@ async def play_button(update: Update, context: CallbackContext) -> None:
     user_id = query.from_user.id
     parts = query.data.split("_")
     action = parts[0]
-    game_id,number = "_".join(parts[1:-1])
     extra = parts[-1]  # optional
+    game_id, number = "_".join(parts[1:-1]), parts[-2]
 
     number = int(number)
     
