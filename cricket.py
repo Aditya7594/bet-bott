@@ -1068,7 +1068,6 @@ def get_cricket_handlers():
         CommandHandler("stats", stats),
         CommandHandler("leaderboard", leaderboard),
         CommandHandler("chat", chat_command),  # Use the correct function name
-        CommandHandler("chat_cricket", chat_cricket),  # Add this if not already included
         CallbackQueryHandler(toss_button, pattern="^toss_"),
         CallbackQueryHandler(choose_button, pattern="^choose_"),
         CallbackQueryHandler(play_button, pattern="^play_"),
