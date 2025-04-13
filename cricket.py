@@ -798,6 +798,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
 
     game = cricket_games[game_id]
 
+    # Player name fallback
     try:
         p1 = (await context.bot.get_chat(game["player1"])).first_name
         p2 = (await context.bot.get_chat(game["player2"])).first_name
@@ -809,6 +810,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
     winner_id = None
     loser_id = None
 
+    # Decide winner
     if game["score1"] == game["score2"]:
         result = "🤝 Match Drawn!"
         await check_special_achievement(game_id, "tie", context)
@@ -835,14 +837,32 @@ async def declare_winner(game_id: int, context: CallbackContext):
     else:
         result = "Match ended unexpectedly!"
 
+    # ✅ Accurate name-score mapping
+    score_summary = ""
+    player1_id = str(game["player1"])
+    player2_id = str(game["player2"])
+    scores = {player1_id: game["score1"], player2_id: game["score2"]}
+
+    try:
+        name1 = (await context.bot.get_chat(player1_id)).first_name
+    except:
+        name1 = "Player 1"
+    try:
+        name2 = (await context.bot.get_chat(player2_id)).first_name
+    except:
+        name2 = "Player 2"
+
+    score_summary += f"🧑 {name1}: {scores[player1_id]} runs\n"
+    score_summary += f"🧑 {name2}: {scores[player2_id]} runs\n"
+
     result_message = (
         f"🏆 *GAME OVER!*\n\n"
         f"📜 *Match Summary:*\n"
-        f"🧑 {p1}: {game['score1']} runs\n"
-        f"🧑 {p2}: {game['score2']} runs\n\n"
+        f"{score_summary}\n"
         f"{result}"
     )
 
+    # Send result to group
     try:
         await context.bot.send_message(
             chat_id=game["group_chat_id"],
@@ -852,6 +872,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
     except Exception as e:
         logger.error(f"Error sending result to group chat: {e}")
 
+    # Send result to all players/spectators
     participants = list(game["spectators"]) + [game["player1"], game["player2"]]
     for player_id in participants:
         try:
@@ -868,6 +889,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
         except Exception as e:
             logger.error(f"Error sending result to {player_id}: {e}")
 
+    # ✅ Update stats in DB
     if winner_id and loser_id:
         winner_id_str = str(winner_id)
         loser_id_str = str(loser_id)
@@ -875,11 +897,11 @@ async def declare_winner(game_id: int, context: CallbackContext):
         winner_runs = game['score2'] if winner_id == game["batter"] else game['score1']
         loser_runs = game['score1'] if winner_id == game["batter"] else game['score2']
 
-        # 🏏 Wickets taken
+        # 🏏 Wickets logic
         wickets_taken_by_winner = game["wickets"] if winner_id == game["bowler"] else 0
         wickets_taken_by_loser = game["wickets"] if loser_id == game["bowler"] else 0
 
-        # 🟢 Winner stats
+        # 🟢 Update winner
         user_collection.update_one(
             {"user_id": winner_id_str},
             {"$inc": {
@@ -892,7 +914,7 @@ async def declare_winner(game_id: int, context: CallbackContext):
             upsert=True
         )
 
-        # 🔴 Loser stats
+        # 🔴 Update loser
         user_collection.update_one(
             {"user_id": loser_id_str},
             {"$inc": {
@@ -907,30 +929,35 @@ async def declare_winner(game_id: int, context: CallbackContext):
             upsert=True
         )
 
+        # 🏅 Check achievements
         await check_achievements(winner_id, context)
         await check_achievements(loser_id, context)
 
+        # 🗃️ Save match history
         try:
             game_collection.insert_one({
                 "timestamp": datetime.now(),
-                "participants": [str(game["player1"]), str(game["player2"])],
-                "scores": {"player1": game["score1"], "player2": game["score2"]},
+                "participants": [player1_id, player2_id],
+                "scores": {
+                    "player1": game["score1"],
+                    "player2": game["score2"]
+                },
                 "winner": winner_id_str,
                 "loser": loser_id_str,
                 "result": result,
                 "innings": game["innings"],
-                "player1_opponent": str(game["player2"]),
-                "player2_opponent": str(game["player1"]),
+                "player1_opponent": player2_id,
+                "player2_opponent": player1_id,
                 "wickets": game["wickets"]
             })
         except Exception as e:
             logger.error(f"Error saving game history: {e}")
 
-    if game_id in reminder_sent:
-        del reminder_sent[game_id]
-    if game_id in game_activity:
-        del game_activity[game_id]
-    del cricket_games[game_id]
+    # Clean up memory
+    reminder_sent.pop(game_id, None)
+    game_activity.pop(game_id, None)
+    cricket_games.pop(game_id, None)
+
 
 async def chat_command(update: Update, context: CallbackContext) -> None:
     if not context.args:
