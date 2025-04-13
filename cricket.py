@@ -494,7 +494,13 @@ async def play_button(update: Update, context: CallbackContext) -> None:
     parts = query.data.split("_")
     action = parts[0]
     extra = parts[-1]  # optional
-    game_id, number = "_".join(parts[1:-1]), parts[-2]
+    if len(parts) < 3:
+        logger.error(f"Invalid callback data: {query.data}")
+        await query.answer("Invalid selection.")
+        return
+    game_id = parts[1]
+    number = int(parts[-1])
+
 
     number = int(number)
     
