@@ -60,17 +60,8 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     
     if not await check_user_started_bot(update, context):
         return
-    
-    for game in cricket_games.values():
-        if user.id in [game.get("player1"), game.get("player2")]:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="⚠️ You are already in a game. Please finish it first.")
-            return
-    
-    # Parse arguments for overs and wickets
-    max_overs = 100  # Default: infinite (100 is effectively infinite)
-    max_wickets = 1  # Default: 1 wicket
+    max_overs = 100  
+    max_wickets = 1 
     
     if context.args:
         try:
@@ -117,6 +108,21 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "last_move": datetime.utcnow(),
         "last_reminder": None  # Track when the last reminder was sent
     }
+    for old_game_id, old_game in list(cricket_games.items()):
+    if old_game.get("player1") == user.id and old_game.get("player2") is None:
+        try:
+            await context.bot.send_message(
+                chat_id=old_game.get("group_chat_id"),
+                text="⚠️ This cricket game has expired as the creator started a new game.")
+            
+            # Clean up old game data
+            if old_game_id in reminder_sent:
+                del reminder_sent[old_game_id]
+            if old_game_id in game_activity:
+                del game_activity[old_game_id]
+            del cricket_games[old_game_id]
+        except Exception as e:
+            logger.error(f"Error cleaning up old game: {e}")
     
     update_game_activity(game_id)
     
@@ -134,6 +140,16 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         [InlineKeyboardButton("Watch Game", callback_data=f"watch_{game_id}")],
         [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/{bot_username}")]
     ])
+        sent_message = await context.bot.send_message(
+        chat_id=chat_id,
+        text=game_desc,
+        reply_markup=keyboard,
+        parse_mode="Markdown")
+        await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
+
+
+        cricket_games[game_id]["original_message_id"] = sent_message.message_id
+    
 
     try:
         sent_message = await context.bot.send_message(
@@ -147,6 +163,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         await context.bot.send_message(
             chat_id=chat_id,
             text="⚠️ Error creating the game. Please try again later.")
+
 async def send_inactive_player_reminder(context: CallbackContext) -> None:
     """Send reminders to inactive players during games"""
     current_time = datetime.utcnow()
@@ -1003,7 +1020,11 @@ async def check_inactive_games(context: CallbackContext):
                     f"Anyone want to join? Click the button below:"
                 )
                 
-                keyboard = [[InlineKeyboardButton("🎮 Join Cricket Game", url=f"https://t.me/{bot_username}")]]
+                # In the check_inactive_games function, modify the keyboard creation:
+                keyboard = [[InlineKeyboardButton("🎮 Join Cricket Game", 
+                                url=f"https://t.me/{bot_username}?start=game_{game_id}"
+                                if game.get("player2") is None else
+                                f"https://t.me/c/{str(game['group_chat_id'])[4:]}/{game.get('original_message_id')}")]]
                 
                 await context.bot.send_message(
                     chat_id=game["group_chat_id"],
