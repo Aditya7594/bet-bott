@@ -477,13 +477,13 @@ async def play_button(update: Update, context: CallbackContext) -> None:
     update_game_activity(game_id)
     
     # Validate player turn
-     if user_id == game["current_players"]["batter"] and game["batter_choice"] is None:
+    if user_id == game["current_players"]["batter"] and game["batter_choice"] is None:
         game["batter_choice"] = number
         logger.info(f"Cricket Game - Play Button: Batter {user_id} chose {number}")
         await query.answer(f"Your choice: {number}")
         
         # Update game interface after batter's choice - DON'T REVEAL BATTER'S CHOICE
-        batter_name = (await context.bot.get_chat(game["batter"])).first_name
+        batter_name = (await context.bot.get_chat(game["batter"])).first_name 
         bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
         score = game['score1'] if game['innings'] == 1 else game['score2']
         spectator_count = len(game["spectators"])
