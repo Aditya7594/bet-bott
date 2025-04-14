@@ -342,7 +342,7 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
         InlineKeyboardButton("Tails", callback_data=f"toss_{game_id}_tails")
     ]]
     
-    for player_id in [game["player1"], game["player2"]]:
+        for player_id in [game["player1"], game["player2"]]:
         try:
             msg = await context.bot.send_message(
                 chat_id=player_id,
@@ -351,6 +351,25 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
             game["message_id"][player_id] = msg.message_id
         except Exception as e:
             logger.error(f"Error sending toss message to {player_id}: {e}")
+
+    # ✅ Save the active game to MongoDB so /c or /chat works
+    try:
+        db['cricket_games'].update_one(
+            {"_id": game_id},
+            {
+                "$set": {
+                    "player1": game["player1"],
+                    "player2": game["player2"],
+                    "active": True,
+                    "group_chat_id": game["group_chat_id"],
+                    "created_at": datetime.utcnow()
+                }
+            },
+            upsert=True
+        )
+        logger.info(f"Cricket game {game_id} saved as active in MongoDB")
+    except Exception as e:
+        logger.error(f"Error saving active cricket game to MongoDB: {e}")
 
 async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -943,6 +962,14 @@ async def declare_winner(game_id: str, context: CallbackContext):
     reminder_sent.pop(game_id, None)
     game_activity.pop(game_id, None)
     cricket_games.pop(game_id, None)
+    try:
+        db['cricket_games'].update_one(
+            {"_id": game_id},
+            {"$set": {"active": False}}
+        )
+        logger.info(f"Game {game_id} marked inactive in DB after completion.")
+    except Exception as e:
+        logger.error(f"Error updating game status in DB: {e}")
 
 
 async def chat_command(update: Update, context: CallbackContext) -> None:
