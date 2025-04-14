@@ -342,7 +342,7 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
         InlineKeyboardButton("Tails", callback_data=f"toss_{game_id}_tails")
     ]]
     
-        for player_id in [game["player1"], game["player2"]]:
+    for player_id in [game["player1"], game["player2"]]:
         try:
             msg = await context.bot.send_message(
                 chat_id=player_id,
