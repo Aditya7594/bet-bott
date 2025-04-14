@@ -461,9 +461,14 @@ async def choose_button(update: Update, context: CallbackContext) -> None:
         return
 
     if choice == "bat":
-        batter, bowler = user_id, game["player2"] if user_id == game["player1"] else game["player1"]
+       batter, bowler = user_id, game["player2"] if user_id == game["player1"] else game["player1"]
     else:
-        bowler, batter = user_id, game["player2"] if user_id == game["player1"] else game["player1"]
+       bowler, batter = user_id, game["player2"] if user_id == game["player1"] else game["player1"]
+
+    # Prevent same user as batter and bowler
+    if batter == bowler:
+        await query.answer("Cannot play solo! Please wait for opponent.")
+        return
 
     game.update({
         "batter": batter,
@@ -566,8 +571,9 @@ async def play_button(update: Update, context: CallbackContext) -> None:
 
         if batter_choice is None:
             logger.warning(f"Batter choice was None when bowler moved (game_id={game_id})")
-            await query.answer("Batter hasn't played yet!")
+            await query.answer("Wait! Batter hasn't played yet.")
             return
+
 
         game["bowler_choice"] = number
         logger.info(f"Cricket Game - Play Button: Bowler {user_id} chose {number}")
