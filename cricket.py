@@ -80,7 +80,7 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
 
     if not user_data:
         bot_username = (await context.bot.get_me()).username
-        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/{bot_username}?start=start")]]
+        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/  {bot_username}?start=start")]]
 
         user_tag = f"@{user.username}" if user.username else user.first_name if user.first_name else user_id
 
@@ -93,6 +93,88 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
         )
         return False
     return True
+
+
+async def chat_cricket(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    
+    if update.effective_chat.type == "private":
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ This command can only be used in group chats!")
+        return
+    
+    if not await check_user_started_bot(update, context):
+        return
+    max_overs = 100  
+    max_wickets = 1 
+    if context.args:
+        try:
+            if len(context.args) >= 1:
+                max_overs = int(context.args[0])
+            if len(context.args) >= 2:
+                max_wickets = int(context.args[1])
+            if max_overs < 1:
+                max_overs = 1
+            if max_wickets < 1:
+                max_wickets = 1
+        except ValueError:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Invalid parameters! Format: /chatcricket [overs] [wickets]")
+            return
+    
+    # Generate a unique game ID instead of using chat_id
+    game_id = f"{chat_id}_{int(time.time())}"
+    cricket_games[game_id] = {
+        "player1": user.id,
+        "player2": None,
+        "score1": 0,
+        "score2": 0,
+        "message_id": {},
+        "over": 0,
+        "ball": 0,
+        "batter": None,
+        "bowler": None,
+        "toss_winner": None,
+        "innings": 1,
+        "current_players": {},
+        "batter_choice": None,
+        "bowler_choice": None,
+        "target": None,
+        "group_chat_id": chat_id,
+        "match_details": [],
+        "wickets": 0,
+        "max_wickets": max_wickets,
+        "max_overs": max_overs,
+        "spectators": set(),
+        "last_move": datetime.utcnow(),
+        "last_reminder": None
+    }
+    
+    update_game_activity(game_id)
+    
+    game_desc = f"🏏 *Cricket Game Started!*\n\n"
+    game_desc += f"Started by: {user.first_name}\n"
+    game_desc += f"Format: {max_overs} over{'s' if max_overs > 1 else ''}, {max_wickets} wicket{'s' if max_wickets > 1 else ''}\n\n"
+    game_desc += f"• To join, click \"Join Game\"\n"
+    game_desc += f"• To watch, click \"Watch Game\"\n"
+    game_desc += f"• For the best experience, open the bot directly"
+    
+    bot_username = (await context.bot.get_me()).username
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Join Game", callback_data=f"join_{game_id}")],
+        [InlineKeyboardButton("Watch Game", callback_data=f"watch_{game_id}")],
+        [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/  {bot_username}")]
+    ])
+    sent_message = await context.bot.send_message(
+        chat_id=chat_id,
+        text=game_desc,
+        reply_markup=keyboard,
+        parse_mode="Markdown")
+    await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
+
 async def send_inactive_player_reminder(context: CallbackContext) -> None:
     current_time = datetime.utcnow()
     
@@ -141,89 +223,6 @@ def update_game_activity(game_id):
     game_activity[game_id] = datetime.utcnow()
     if game_id in cricket_games:
         cricket_games[game_id]["last_move"] = datetime.utcnow()
-
-
-async def chat_cricket(update: Update, context: CallbackContext) -> None:
-    user = update.effective_user
-    chat_id = update.effective_chat.id
-    
-    if update.effective_chat.type == "private":
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚠️ This command can only be used in group chats!")
-        return
-    
-    if not await check_user_started_bot(update, context):
-        return
-    
-    max_overs = 100  
-    max_wickets = 1 
-    if context.args:
-        try:
-            if len(context.args) >= 1:
-                max_overs = int(context.args[0])
-            if len(context.args) >= 2:
-                max_wickets = int(context.args[1])
-            if max_overs < 1:
-                max_overs = 1
-            if max_wickets < 1:
-                max_wickets = 1
-        except ValueError:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="⚠️ Invalid parameters! Format: /chatcricket [overs] [wickets]")
-            return
-    
-    # Generate a unique game ID
-    game_id = f"{chat_id}_{int(time.time())}"
-    cricket_games[game_id] = {
-        "player1": user.id,
-        "player2": None,
-        "score1": 0,
-        "score2": 0,
-        "message_id": {},
-        "over": 0,
-        "ball": 0,
-        "batter": None,
-        "bowler": None,
-        "toss_winner": None,
-        "innings": 1,
-        "current_players": {},
-        "batter_choice": None,
-        "bowler_choice": None,
-        "target": None,
-        "group_chat_id": chat_id,
-        "match_details": [],
-        "wickets": 0,
-        "max_wickets": max_wickets,
-        "max_overs": max_overs,
-        "spectators": set(),
-        "last_move": datetime.utcnow(),
-        "last_reminder": None
-    }
-    
-    update_game_activity(game_id)
-    
-    game_desc = f"🏏 *Cricket Game Started!*\n\n"
-    game_desc += f"Started by: {user.first_name}\n"
-    game_desc += f"Format: {max_overs} over{'s' if max_overs > 1 else ''}, {max_wickets} wicket{'s' if max_wickets > 1 else ''}\n\n"
-    game_desc += f"• To join, click \"Join Game\"\n"
-    game_desc += f"• To watch, click \"Watch Game\"\n"
-    game_desc += f"• For the best experience, open the bot directly"
-    
-    bot_username = (await context.bot.get_me()).username
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Join Game", callback_data=f"join_{game_id}")],
-        [InlineKeyboardButton("Watch Game", callback_data=f"watch_{game_id}")],
-        [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/{bot_username}")]
-    ])
-    sent_message = await context.bot.send_message(
-        chat_id=chat_id,
-        text=game_desc,
-        reply_markup=keyboard,
-        parse_mode="Markdown")
-    await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
-
 
 async def update_game_interface(game_id: str, context: CallbackContext, text: str = None):
     if game_id not in cricket_games:
@@ -297,7 +296,7 @@ async def update_game_interface(game_id: str, context: CallbackContext, text: st
 async def handle_join_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id = query.data.split('_', 1)
+    _, game_id = query.data.split('_', 1)  # Modified to handle the new game_id format
     
     if not await check_user_started_bot(update, context):
         return
@@ -319,7 +318,7 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
     game["player2"] = user_id
     
     bot_username = (await context.bot.get_me()).username
-    keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
+    keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/  {bot_username}")]]
     
     try:
         await context.bot.send_message(
@@ -348,7 +347,6 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
         except Exception as e:
             logger.error(f"Error sending toss message to {player_id}: {e}")
 
-
 async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
@@ -373,7 +371,7 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     player2_name = "Waiting for opponent" if not game["player2"] else (await context.bot.get_chat(game["player2"])).first_name
     
     bot_username = (await context.bot.get_me()).username
-    keyboard = [[InlineKeyboardButton("🔄 Open Bot to Watch Live", url=f"https://t.me/{bot_username}")]]
+    keyboard = [[InlineKeyboardButton("🔄 Open Bot to Watch Live", url=f"https://t.me/  {bot_username}")]]
     
     await query.message.reply_text(
         f"👁️ You're now watching the cricket match!\n"
@@ -385,14 +383,17 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     
     if game["player2"] and "batter" in game and game["batter"]:
         await update_game_interface(game_id, context)
+
 async def toss_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id, choice = query.data.split('_', 2)
+    _, game_id, choice = query.data.split('_', 2)  # Modified to handle the new game_id format
     
     if not await check_user_started_bot(update, context):
         return
     
+    logger.info(f"Cricket Game - Toss Button: User {user_id} chose {choice} for game {game_id}")
+
     if game_id not in cricket_games:
         logger.warning(f"Cricket Game - Toss Button: Game {game_id} not found")
         await query.answer("Game expired!")
@@ -425,7 +426,6 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
             )
         except Exception as e:
             logger.error(f"Error updating toss result for player {player_id}: {e}")
-
 
 async def choose_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
