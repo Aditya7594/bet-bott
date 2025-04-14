@@ -83,7 +83,7 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
 
     if not user_data:
         bot_username = (await context.bot.get_me()).username
-        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/{bot_username}?start=start")]]
+        keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
 
         user_tag = f"@{user.username}" if user.username else user.first_name if user.first_name else user_id
 
@@ -184,7 +184,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("Join Game", callback_data=f"join_{game_id}")],
         [InlineKeyboardButton("Watch Game", callback_data=f"watch_{game_id}")],
-        [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/  {bot_username}")]
+        [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/{bot_username}")]
     ])
     sent_message = await context.bot.send_message(
         chat_id=chat_id,
@@ -411,7 +411,7 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     player2_name = "Waiting for opponent" if not game["player2"] else (await context.bot.get_chat(game["player2"])).first_name
     
     bot_username = (await context.bot.get_me()).username
-    keyboard = [[InlineKeyboardButton("🔄 Open Bot to Watch Live", url=f"https://t.me/  {bot_username}")]]
+    keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
     
     await query.message.reply_text(
         f"👁️ You're now watching the cricket match!\n"
