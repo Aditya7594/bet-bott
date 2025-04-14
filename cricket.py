@@ -477,8 +477,9 @@ async def play_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     parts = query.data.split('_')
-    game_id = parts[1]  # Modified to handle the new game_id format
     number = int(parts[-1])
+    game_id = '_'.join(parts[1:-1])
+ 
     
     if not await check_user_started_bot(update, context):
         return
