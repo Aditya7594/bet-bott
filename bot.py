@@ -41,6 +41,7 @@ client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?r
 db = client['telegram_bot']
 user_collection = db['users']
 genshin_collection = db['genshin_users']
+groups_collection = db['groups']  # Collection for tracking groups
 
 # Global variable for tracking last interaction time
 last_interaction_time = {}
@@ -59,10 +60,10 @@ async def timeout_task(context: CallbackContext) -> None:
             if (now - game["last_move"]) > timedelta(minutes=5):
                 # Create a dummy query for timeout
                 class DummyQuery:
-                    pass
+                    def __init__(self):
+                        self.message = None
                 dummy_query = DummyQuery()
-                dummy_query.message = None
-                await handle_timeout(dummy_query, game)
+                await handle_timeout(dummy_query, game, context)
 
 # MongoDB management functions
 def get_user_by_id(user_id):
@@ -76,6 +77,9 @@ def get_genshin_user_by_id(user_id):
 
 def save_genshin_user(user_data):
     genshin_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
+
+def save_group(group_data):
+    groups_collection.update_one({"group_id": group_data["group_id"]}, {"$set": group_data}, upsert=True)
 
 def escape_markdown_v2(text):
     escape_chars = r'\_*[]()~`>#+-=|{}.!'
@@ -91,6 +95,17 @@ async def start(update: Update, context: CallbackContext) -> None:
     
     # Check if user exists in database
     user_data = user_collection.find_one({"user_id": user_id})
+    
+    # Process referral if present in start command
+    referrer_id = None
+    if context.args and len(context.args) > 0 and context.args[0].startswith("ref"):
+        try:
+            referrer_id = context.args[0][3:]  # Remove "ref" prefix
+            if referrer_id == user_id:  # Prevent self-referral
+                referrer_id = None
+        except:
+            referrer_id = None
+    
     if not user_data:
         # Create new user
         user_collection.insert_one({
@@ -99,12 +114,78 @@ async def start(update: Update, context: CallbackContext) -> None:
             "first_name": user.first_name,
             "last_name": user.last_name,
             "created_at": datetime.utcnow(),
-            "last_active": datetime.utcnow()
+            "last_active": datetime.utcnow(),
+            "credits": 5000,  # Default credits for new users
+            "daily": None,
+            "win": 0,
+            "loss": 0,
+            "achievement": [],
+            "faction": "None",
+            "ban": None,
+            "title": "None",
+            "bank": 0,
+            "cards": [],
+            "referrals": 0
         })
-        await update.message.reply_text(
-            f"👋 Welcome {user.first_name}! I'm your cricket game bot.\n\n"
-            f"Use /chatcricket in a group to start a new game!"
-        )
+        
+        # Process referral reward if applicable
+        if referrer_id:
+            referrer_data = get_user_by_id(referrer_id)
+            if referrer_data:
+                # Update referrer's referral count and add credits
+                referrer_data["referrals"] = referrer_data.get("referrals", 0) + 1
+                referrer_data["credits"] = referrer_data.get("credits", 0) + 1000
+                
+                # Add primogems to referrer
+                genshin_referrer = get_genshin_user_by_id(referrer_id)
+                if genshin_referrer:
+                    genshin_referrer["primos"] = genshin_referrer.get("primos", 0) + 1000
+                    save_genshin_user(genshin_referrer)
+                else:
+                    # Create genshin user if not exists
+                    genshin_referrer = {
+                        "user_id": referrer_id,
+                        "primos": 1000,
+                        "bag": {},
+                        "last_primo_reward": None
+                    }
+                    save_genshin_user(genshin_referrer)
+                
+                save_user(referrer_data)
+                
+                # Notify referrer
+                try:
+                    await context.bot.send_message(
+                        chat_id=referrer_id,
+                        text=f"🎉 {user.first_name} joined using your referral link! You received 1000 credits and 1000 Primogems!"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to notify referrer: {e}")
+                
+                # Add primogems to new user
+                genshin_user = {
+                    "user_id": user_id,
+                    "primos": 1000,
+                    "bag": {},
+                    "last_primo_reward": None
+                }
+                save_genshin_user(genshin_user)
+                
+                await update.message.reply_text(
+                    f"👋 Welcome {user.first_name}! I'm your cricket game bot.\n\n"
+                    f"You received 5000 credits to start and 1000 Primogems for joining via a referral!\n\n"
+                    f"Use /chatcricket in a group to start a new game!"
+                )
+            else:
+                await update.message.reply_text(
+                    f"👋 Welcome {user.first_name}! I'm your cricket game bot.\n\n"
+                    f"Use /chatcricket in a group to start a new game!"
+                )
+        else:
+            await update.message.reply_text(
+                f"👋 Welcome {user.first_name}! I'm your cricket game bot.\n\n"
+                f"Use /chatcricket in a group to start a new game!"
+            )
     else:
         # Update last active
         user_collection.update_one(
@@ -114,6 +195,17 @@ async def start(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(
             f"👋 Welcome back {user.first_name}! Use /chatcricket in a group to start a new game!"
         )
+    
+    # If the command was used in a group, add the group to the database
+    if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+        group_id = str(update.effective_chat.id)
+        group_data = {
+            "group_id": group_id,
+            "title": update.effective_chat.title,
+            "added_at": datetime.utcnow(),
+            "last_active": datetime.utcnow()
+        }
+        save_group(group_data)
 
 async def error_handler(update: Update, context: CallbackContext) -> None:
     """Log Errors caused by Updates."""
@@ -152,13 +244,26 @@ async def profile(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("You need to start the bot first by using /start.")
         return  # Exit early if user is not registered
 
-    # Get user's credits
+    # Get user's credits and other profile data
     credits = user_data.get('credits', 0)
+    bank_balance = user_data.get('bank', 0)
+    wins = user_data.get('win', 0)
+    losses = user_data.get('loss', 0)
+    referrals = user_data.get('referrals', 0)
+    
+    # Get Genshin data if available
+    genshin_data = get_genshin_user_by_id(user_id)
+    primos = genshin_data.get('primos', 0) if genshin_data else 0
 
     # Create profile message
     profile_message = (
         f"👤 <b>Profile for {user.first_name}</b>\n\n"
         f"💰 Credits: {credits}\n"
+        f"🏦 Bank: {bank_balance}\n"
+        f"💎 Primogems: {primos}\n"
+        f"🏆 Wins: {wins}\n"
+        f"❌ Losses: {losses}\n"
+        f"👥 Referrals: {referrals}\n"
         f"🆔 User ID: {user_id}\n"
     )
 
@@ -197,20 +302,23 @@ async def add_credits(update: Update, context: CallbackContext) -> None:
     # Send confirmation message
     await update.message.reply_text(f"Successfully added {credits_to_add} credits to user {target_user_id}. New balance: {new_credits} credits.")
 
-async def reset_confirmation(update: Update, context: CallbackContext) -> None:
-    """Handle reset confirmation callback."""
-    query = update.callback_query
-    user_id = query.from_user.id
+async def reset(update: Update, context: CallbackContext) -> None:
+    """Handle the reset command with direct execution or confirmation."""
+    user_id = update.effective_user.id
 
     # Check if the user is the owner
     if user_id != OWNER_ID:
-        await query.answer("You don't have permission to do this.", show_alert=True)
+        await update.message.reply_text("You don't have permission to use this command.")
         return
-
-    # Check the callback data (Yes or No)
-    if query.data == "reset_yes":
+    
+    # Check if force parameter is provided
+    force_reset = False
+    if context.args and context.args[0].lower() == "force":
+        force_reset = True
+    
+    if force_reset:
         # Reset all users' data and set specified values to defaults
-        users_collection.update_many({}, {"$set": {
+        user_collection.update_many({}, {"$set": {
             "credits": 5000,  # Set credits to 5000 after reset
             "daily": None,
             "win": 0,
@@ -226,37 +334,58 @@ async def reset_confirmation(update: Update, context: CallbackContext) -> None:
         }})
         
         # Inform the owner that the reset was successful
-        await query.answer("All user data has been reset to default values, and all users have received 5000 credits.", show_alert=True)
+        await update.message.reply_text("✅ All user data has been reset to default values, and all users have received 5000 credits.")
+    else:
+        # Create inline keyboard for confirmation
+        keyboard = [
+            [
+                InlineKeyboardButton("Yes", callback_data="reset_yes"),
+                InlineKeyboardButton("No", callback_data="reset_no"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-    elif query.data == "reset_no":
-        # Inform the owner that the reset was canceled
-        await query.answer("User data reset was canceled.", show_alert=True)
+        await update.message.reply_text(
+            "⚠️ Are you sure you want to reset all user data? This will wipe all progress!\n\n"
+            "All users will receive 5000 credits, and all other progress will be reset.",
+            reply_markup=reply_markup
+        )
 
-    # Delete the inline keyboard after answering
-    await query.edit_message_reply_markup(reply_markup=None)
-
-async def reset(update: Update, context: CallbackContext) -> None:
-    """Handle the reset command."""
-    user_id = update.effective_user.id
+async def reset_confirmation(update: Update, context: CallbackContext) -> None:
+    """Handle reset confirmation callback."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
 
     # Check if the user is the owner
     if user_id != OWNER_ID:
-        await update.message.reply_text("You don't have permission to use this command.")
+        await query.edit_message_text("You don't have permission to do this.")
         return
 
-    # Create inline keyboard for confirmation
-    keyboard = [
-        [
-            InlineKeyboardButton("Yes", callback_data="reset_yes"),
-            InlineKeyboardButton("No", callback_data="reset_no"),
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    # Check the callback data (Yes or No)
+    if query.data == "reset_yes":
+        # Reset all users' data and set specified values to defaults
+        user_collection.update_many({}, {"$set": {
+            "credits": 5000,  # Set credits to 5000 after reset
+            "daily": None,
+            "win": 0,
+            "loss": 0,
+            "achievement": [],
+            "faction": "None",
+            "ban": None,
+            "title": "None",
+            "primos": 0,
+            "bag": {},
+            "bank": 0,  # Reset bank balance to 0
+            "cards": [],  # Reset cards to 0
+        }})
+        
+        # Inform the owner that the reset was successful
+        await query.edit_message_text("✅ All user data has been reset to default values, and all users have received 5000 credits.")
 
-    await update.message.reply_text(
-        "Are you sure you want to reset all user data? This will wipe all progress!",
-        reply_markup=reply_markup
-    )
+    elif query.data == "reset_no":
+        # Inform the owner that the reset was canceled
+        await query.edit_message_text("❌ User data reset was canceled.")
 
 async def reach(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -278,18 +407,43 @@ async def reach(update: Update, context: CallbackContext):
             {"$group": {"_id": None, "total_credits": {"$sum": "$credits"}}}
         ])
         total_credits_value = next(total_credits_result, {}).get("total_credits", 0)
+        
+        # Fetch total bank deposits
+        total_bank_result = user_collection.aggregate([
+            {"$group": {"_id": None, "total_bank": {"$sum": "$bank"}}}
+        ])
+        total_bank_value = next(total_bank_result, {}).get("total_bank", 0)
 
         # Fetch total groups the bot is in
-        total_groups = db["groups"].count_documents({})  # Assuming you have a 'groups' collection
+        total_groups = groups_collection.count_documents({})
+
+        # Get active users in the last 24 hours
+        yesterday = datetime.utcnow() - timedelta(days=1)
+        active_users = user_collection.count_documents({"last_active": {"$gte": yesterday}})
 
         # Construct the stats message
         stats_message = (
             "<b>🤖 Bot Statistics:</b>\n\n"
             f"👥 Total Users: {total_users}\n"
+            f"👤 Active Users (24h): {active_users}\n"
             f"🌌 Total Genshin Users: {total_genshin_users}\n"
-            f"💰 Total Credits in Game: {total_credits_value}\n"
+            f"💰 Total Credits in Game: {total_credits_value:,}\n"
+            f"🏦 Total Bank Deposits: {total_bank_value:,}\n"
+            f"📊 Total Economy Value: {(total_credits_value + total_bank_value):,}\n"
             f"🏢 Total Groups: {total_groups}\n"
         )
+
+        # Get top 5 richest users
+        richest_users = user_collection.find().sort([("credits", -1)]).limit(5)
+        
+        if richest_users:
+            stats_message += "\n<b>💎 Top 5 Richest Users:</b>\n"
+            position = 1
+            for user in richest_users:
+                user_name = user.get('first_name', 'Unknown')
+                user_credits = user.get('credits', 0)
+                stats_message += f"{position}. {user_name}: {user_credits:,} credits\n"
+                position += 1
 
         await update.message.reply_text(stats_message, parse_mode="HTML")
 
@@ -305,52 +459,105 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
 
     # Check if a message is provided
     if not context.args:
-        await update.message.reply_text("❗ Usage: /broadcast <message>")
+        await update.message.reply_text(
+            "❗ Usage: /broadcast <message>\n\n"
+            "To send to specific audience:\n"
+            "/broadcast -u <message> (Users only)\n"
+            "/broadcast -g <message> (Groups only)\n"
+            "/broadcast -a <message> (All - default)"
+        )
         return
 
+    # Determine the target audience
+    target = "all"  # Default: broadcast to all
+    message_start = 0
+    
+    if context.args[0] == "-u":
+        target = "users"
+        message_start = 1
+    elif context.args[0] == "-g":
+        target = "groups"
+        message_start = 1
+    elif context.args[0] == "-a":
+        target = "all"
+        message_start = 1
+    
     # Combine the arguments into a single message
-    broadcast_message = " ".join(context.args)
-
-    # Fetch all users and groups from the database
-    users = user_collection.find({}, {"user_id": 1})
-    groups = []  # Assuming you have a 'groups' collection
-
+    broadcast_message = " ".join(context.args[message_start:])
+    
+    # Send progress message
+    progress_msg = await update.message.reply_text("🔄 Broadcasting in progress...")
+    
     # Counters for tracking
     successful_users = 0
     failed_users = 0
     successful_groups = 0
     failed_groups = 0
-
-    # Send the message to all users
-    for user in users:
-        user_id = user["user_id"]
-        try:
-            await context.bot.send_message(chat_id=user_id, text=broadcast_message)
-            successful_users += 1
-        except Exception as e:
-            logger.error(f"Failed to send broadcast to user {user_id}: {e}")
-            failed_users += 1
-
-    # Send the message to all groups (if applicable)
-    for group in groups:
-        group_id = group["group_id"]
-        try:
-            await context.bot.send_message(chat_id=group_id, text=broadcast_message)
-            successful_groups += 1
-        except Exception as e:
-            logger.error(f"Failed to send broadcast to group {group_id}: {e}")
-            failed_groups += 1
-
+    
+    # Send to users if requested
+    if target in ["users", "all"]:
+        # Fetch all users from the database
+        users = user_collection.find({}, {"user_id": 1})
+        total_users = user_collection.count_documents({})
+        
+        current_count = 0
+        for user in users:
+            user_id = user["user_id"]
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id, 
+                    text=f"📢 <b>Broadcast Message</b>\n\n{broadcast_message}",
+                    parse_mode="HTML"
+                )
+                successful_users += 1
+            except Exception as e:
+                logger.error(f"Failed to send broadcast to user {user_id}: {e}")
+                failed_users += 1
+            
+            current_count += 1
+            if current_count % 50 == 0:  # Update progress every 50 users
+                try:
+                    await progress_msg.edit_text(f"🔄 Broadcasting in progress... {current_count}/{total_users} users processed")
+                except:
+                    pass
+    
+    # Send to groups if requested
+    if target in ["groups", "all"]:
+        # Fetch all groups from the database
+        groups = groups_collection.find({}, {"group_id": 1})
+        total_groups = groups_collection.count_documents({})
+        
+        current_count = 0
+        for group in groups:
+            group_id = group["group_id"]
+            try:
+                await context.bot.send_message(
+                    chat_id=group_id, 
+                    text=f"📢 <b>Broadcast Message</b>\n\n{broadcast_message}",
+                    parse_mode="HTML"
+                )
+                successful_groups += 1
+            except Exception as e:
+                logger.error(f"Failed to send broadcast to group {group_id}: {e}")
+                failed_groups += 1
+            
+            current_count += 1
+            if current_count % 10 == 0:  # Update progress every 10 groups
+                try:
+                    await progress_msg.edit_text(f"🔄 Broadcasting to groups... {current_count}/{total_groups} groups processed")
+                except:
+                    pass
+    
     # Send a report to the owner
     report_message = (
-        "📢 **Broadcast Report**\n\n"
+        "📊 <b>Broadcast Report</b>\n\n"
         f"✅ Successfully sent to {successful_users} users and {successful_groups} groups.\n"
         f"❌ Failed to send to {failed_users} users and {failed_groups} groups.\n\n"
         f"Total recipients: {successful_users + successful_groups}\n"
         f"Total failures: {failed_users + failed_groups}"
     )
 
-    await update.message.reply_text(report_message)
+    await progress_msg.edit_text(report_message, parse_mode="HTML")
 
 async def give(update: Update, context: CallbackContext) -> None:
     giver = update.effective_user
@@ -360,13 +567,14 @@ async def give(update: Update, context: CallbackContext) -> None:
     # Check if the command is a reply or has a tagged user
     if message.reply_to_message:
         receiver = message.reply_to_message.from_user
+        receiver_id = str(receiver.id)
     elif message.entities and len(message.entities) > 1:
-        receiver = message.parse_entities().get(list(message.entities)[1])
-    else:
-        await update.message.reply_text("Please tag a user or reply to their message to give credits.")
+        # This is more complex and might not work reliably
+        await update.message.reply_text("Please reply to a message from the user you want to give credits to.")
         return
-
-    receiver_id = str(receiver.id)
+    else:
+        await update.message.reply_text("Please reply to a message from the user you want to give credits to.")
+        return
 
     # Ensure the giver and receiver are not the same
     if giver_id == receiver_id:
@@ -375,7 +583,7 @@ async def give(update: Update, context: CallbackContext) -> None:
 
     # Check if an amount was provided
     if len(context.args) != 1 or not context.args[0].isdigit():
-        await update.message.reply_text("Usage: /give <amount> (by tagging or replying to a user).")
+        await update.message.reply_text("Usage: /give <amount> (by replying to a user's message).")
         return
 
     amount = int(context.args[0])
@@ -395,30 +603,55 @@ async def give(update: Update, context: CallbackContext) -> None:
         return
 
     # Check if the giver has enough credits
-    if giver_data['credits'] < amount:
-        await update.message.reply_text(f"You don't have enough credits to give. Your current balance is {giver_data['credits']}.")
+    if giver_data.get('credits', 0) < amount:
+        await update.message.reply_text(f"You don't have enough credits to give. Your current balance is {giver_data.get('credits', 0)}.")
         return
 
     # Update the balances
     giver_data['credits'] -= amount
-    receiver_data['credits'] += amount
+    receiver_data['credits'] = receiver_data.get('credits', 0) + amount
 
     save_user(giver_data)
     save_user(receiver_data)
 
     # Notify both users
     await update.message.reply_text(
-        f"Successfully transferred {amount} credits to {receiver.first_name}. Your new balance is {giver_data['credits']} credits."
+        f"✅ Successfully transferred {amount} credits to {receiver.first_name}. Your new balance is {giver_data['credits']} credits."
     )
-    await context.bot.send_message(
-        chat_id=receiver_id,
-        text=f"You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
-    )
+    
+    # Try to notify the receiver in private if possible
+    try:
+        await context.bot.send_message(
+            chat_id=receiver_id,
+            text=f"💰 You have received {amount} credits from {giver.first_name}! Your new balance is {receiver_data['credits']} credits."
+        )
+    except Exception as e:
+        logger.error(f"Failed to notify receiver {receiver_id}: {e}")
 
 async def universal_handler(update: Update, context: CallbackContext):
     try:
         if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
-            # Only reward primos for text messages
+            # Check if this is a new group for the bot
+            group_id = str(update.effective_chat.id)
+            group = groups_collection.find_one({"group_id": group_id})
+            
+            if not group:
+                # Add new group to database
+                group_data = {
+                    "group_id": group_id,
+                    "title": update.effective_chat.title,
+                    "added_at": datetime.utcnow(),
+                    "last_active": datetime.utcnow()
+                }
+                save_group(group_data)
+            else:
+                # Update last active time for the group
+                groups_collection.update_one(
+                    {"group_id": group_id},
+                    {"$set": {"last_active": datetime.utcnow()}}
+                )
+            
+            # Process message reward for genshin users
             if update.message and update.message.text and not update.message.text.startswith("/"):
                 user_id = str(update.effective_user.id)
                 user_data = get_genshin_user_by_id(user_id)
@@ -438,7 +671,7 @@ async def universal_handler(update: Update, context: CallbackContext):
                 
                 if not last_reward or (current_time - last_reward).total_seconds() > 3600:  # 1 hour cooldown
                     # Add 5 primos
-                    user_data["primos"] += 5
+                    user_data["primos"] = user_data.get("primos", 0) + 5
                     user_data["last_primo_reward"] = current_time
                     save_genshin_user(user_data)
                     
@@ -462,7 +695,6 @@ async def handle_message(update: Update, context: CallbackContext):
     
     chat_id = update.effective_chat.id
 
-    # Check if user is muted
     # Update last interaction time
     last_interaction_time[user_id] = datetime.utcnow()
 
@@ -472,14 +704,18 @@ async def handle_message(update: Update, context: CallbackContext):
         active_game = None
         for game_type in ['xox', 'cricket', 'hilo', 'mines']:
             game = db[f'{game_type}_games'].find_one({
-                "$or": [{"player1": user_id}, {"player2": user_id}],
+                "$or": [
+                    {"player1": user_id}, 
+                    {"player2": user_id},
+                    {"player_id": user_id}  # For single-player games
+                ],
                 "active": True
             })
             if game:
                 active_game = (game_type, game)
                 break
 
-        if active_game:
+       if active_game:
             game_type, game = active_game
             if game_type == 'xox':
                 await handle_xox_message(update, context, game)
@@ -494,84 +730,101 @@ async def handle_cricket_message(update: Update, context: CallbackContext, game:
     """Handle messages during an active Cricket game.
     Deletes user messages and asks them to use the buttons to play
     """
-    """Handle messages during an active Cricket game."""
     user_id = str(update.effective_user.id)
     
     # Check if the message is from a player in the game
-    if user_id not in [game["player1"], game["player2"]]:
+    if user_id not in [game.get("player1", ""), game.get("player2", "")]:
         return
         
     # Check for game timeout
-    if (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
-        await handle_timeout(update.callback_query, game)
+    if "last_move" in game and (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
+        await handle_timeout(update.callback_query, game, context)
         return
         
-    # Ignore messages during active games
-    await update.message.delete()
+    # Instead of deleting, we'll just remind them to use buttons
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="⚠️ Please use the game buttons to play!",
-        delete_after=3
+        text="⚠️ Please use the game buttons to play!"
     )
 
 async def handle_hilo_message(update: Update, context: CallbackContext, game: dict) -> None:
     """Handle messages during an active HiLo game.
-    Deletes user messages and asks them to use the buttons to play
+    Asks them to use the buttons to play
     """
-    
-    """Handle messages during an active HiLo game."""
     user_id = str(update.effective_user.id)
     
     # Check if the message is from a player in the game
-    if user_id != game["player_id"]:
+    if user_id != game.get("player_id", ""):
         return
         
     # Check for game timeout
-    if (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
-        await handle_timeout(update.callback_query, game)
+    if "last_move" in game and (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
+        await handle_timeout(update.callback_query, game, context)
         return
         
-    # Ignore messages during active games
-    await update.message.delete()
+    # Remind them to use buttons
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="⚠️ Please use the game buttons to play!",
-        delete_after=3
+        text="⚠️ Please use the game buttons to play!"
     )
 
 async def handle_mines_message(update: Update, context: CallbackContext, game: dict) -> None:
     """Handle messages during an active Mines game.
-    Deletes user messages and asks them to use the buttons to play
+    Asks them to use the buttons to play
     """
-
-    """Handle messages during an active Mines game."""
     user_id = str(update.effective_user.id)
     
     # Check if the message is from a player in the game
-    if user_id != game["player_id"]:
+    if user_id != game.get("player_id", ""):
         return
         
     # Check for game timeout
-    if (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
-        await handle_timeout(update.callback_query, game)
+    if "last_move" in game and (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
+        await handle_timeout(update.callback_query, game, context)
         return
         
-    # Ignore messages during active games
-    await update.message.delete()
+    # Remind them to use buttons
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="⚠️ Please use the game buttons to play!",
-        delete_after=3
+        text="⚠️ Please use the game buttons to play!"
     )
 
-async def handle_timeout(query: CallbackQuery, game: dict) -> None:
+async def handle_xox_message(update: Update, context: CallbackContext, game: dict) -> None:
+    """Handle messages during an active XOX game.
+    Asks them to use the buttons to play
+    """
+    user_id = str(update.effective_user.id)
+    
+    # Check if the message is from a player in the game
+    if user_id not in [game.get("player1", ""), game.get("player2", "")]:
+        return
+        
+    # Check for game timeout
+    if "last_move" in game and (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
+        await handle_timeout(update.callback_query, game, context)
+        return
+        
+    # Remind them to use buttons
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="⚠️ Please use the game buttons to play!"
+    )
+
+async def handle_timeout(query: CallbackQuery, game: dict, context: CallbackContext) -> None:
     """Handle game timeout for any game type."""
     game_type = game.get("game_type", "unknown")
-    game_id = game.get("_id", game.get("game_code", "unknown"))
+    
+    # Get game ID or code
+    if "_id" in game:
+        game_id = game["_id"]
+    elif "game_code" in game:
+        game_id = game["game_code"]
+    else:
+        game_id = "unknown"
     
     # Update game status in database
     db[f"{game_type}_games"].update_one(
-        {"_id": game_id},
+        {"_id": game_id} if "_id" in game else {"game_code": game_id},
         {"$set": {"active": False}}
     )
     
@@ -583,7 +836,7 @@ async def handle_timeout(query: CallbackQuery, game: dict) -> None:
     )
     
     try:
-        if query and query.message:
+        if query and hasattr(query, 'edit_message_text'):
             await query.edit_message_text(
                 timeout_message,
                 parse_mode="Markdown"
@@ -597,6 +850,19 @@ async def handle_timeout(query: CallbackQuery, game: dict) -> None:
                     text=timeout_message,
                     parse_mode="Markdown"
                 )
+            
+            # Also send a message to the player(s)
+            for player in ["player_id", "player1", "player2"]:
+                player_id = game.get(player)
+                if player_id:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=player_id,
+                            text=timeout_message,
+                            parse_mode="Markdown"
+                        )
+                    except Exception as e:
+                        logger.error(f"Error sending timeout message to player {player_id}: {e}")
     except Exception as e:
         logger.error(f"Error sending timeout message: {e}")
     
@@ -606,15 +872,16 @@ async def handle_timeout(query: CallbackQuery, game: dict) -> None:
         if user_id:
             user_data = get_user_by_id(user_id)
             if user_data:
-                user_data["credits"] += game["bet"]
+                user_data["credits"] = user_data.get("credits", 0) + game["bet"]
                 save_user(user_data)
+                logger.info(f"Refunded {game['bet']} credits to user {user_id} due to game timeout")
 
 async def dm_forwarder(update: Update, context: CallbackContext) -> None:
     """Forward messages between users in cricket games."""
     if not update.message or not update.message.text:
         return
 
-    user_id = update.effective_user.id
+    user_id = str(update.effective_user.id)
     message = update.message.text
 
     # Ignore commands
@@ -629,13 +896,18 @@ async def dm_forwarder(update: Update, context: CallbackContext) -> None:
     
     if game:
         # Get the other player's ID
-        other_player = game["player2"] if user_id == game["player1"] else game["player1"]
+        other_player_id = game["player2"] if user_id == game["player1"] else game["player1"]
         
         # Forward the message to the other player
         try:
             await context.bot.send_message(
-                chat_id=other_player,
+                chat_id=other_player_id,
                 text=f"💬 {update.effective_user.first_name}: {message}"
+            )
+            # Update the last_move timestamp to prevent timeout
+            db['cricket_games'].update_one(
+                {"_id": game["_id"]},
+                {"$set": {"last_move": datetime.utcnow()}}
             )
         except Exception as e:
             logger.error(f"Error forwarding message: {e}")
@@ -669,8 +941,14 @@ async def chat_command_cricket(update: Update, context: CallbackContext) -> None
                 chat_id=other_player_id,
                 text=formatted_message
             )
-            # Delete the command message in private chat
-            await update.message.delete()
+            # Update the last_move timestamp to prevent timeout
+            db['cricket_games'].update_one(
+                {"_id": game["_id"]},
+                {"$set": {"last_move": datetime.utcnow()}}
+            )
+            
+            # Send confirmation to the sender
+            await update.message.reply_text("✅ Message sent!")
         except Exception as e:
             logger.error(f"Error sending chat message: {e}")
             await update.message.reply_text("❌ Failed to send message to the other player.")
@@ -688,6 +966,7 @@ def main() -> None:
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("broadcast", broadcast))
     application.add_handler(CommandHandler("daily", daily))
+    application.add_handler(CommandHandler("give", give))
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
     
     for handler in get_claim_handlers():        
@@ -717,6 +996,11 @@ def main() -> None:
         handle_watch_button    
     ))
 
+    # Add the banking handlers
+    application.add_handler(CommandHandler("bank", bank))
+    application.add_handler(CommandHandler("store", store))
+    application.add_handler(CommandHandler("withdraw", withdraw))
+
     # Add game handlers    
     for handler in get_xox_handlers():        
         application.add_handler(handler)    
@@ -739,10 +1023,14 @@ def main() -> None:
         (filters.TEXT | filters.Sticker.ALL) & ~filters.COMMAND,        
         universal_handler    
     ))
+    
+    # Set up the timeout job to run every minute
     application.job_queue.run_repeating(timeout_task, interval=60, first=10, name='timeout_task')
 
     # Add error handler
     application.add_error_handler(error_handler)
+    
+    # Set up other jobs
     setup_jobs(application)
 
     # Run the bot
