@@ -6,6 +6,7 @@ from telegram.ext import CallbackContext, CallbackQueryHandler, CommandHandler
 from datetime import datetime, timedelta
 import time
 import asyncio
+from telegram import User
 
 
 # Set up logging
@@ -82,7 +83,7 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
 
     if not user_data:
         bot_username = (await context.bot.get_me()).username
-        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/  {bot_username}?start=start")]]
+        keyboard = [[InlineKeyboardButton("Start Bot", url=f"https://t.me/{bot_username}?start=start")]]
 
         user_tag = f"@{user.username}" if user.username else user.first_name if user.first_name else user_id
 
@@ -96,10 +97,25 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
         return False
     return True
 
+async def update_user_profile(user: User):
+    user_data = {
+        "first_name": user.first_name,
+        "username": user.username,
+        "full_name": f"{user.first_name} {user.last_name}" if user.last_name else user.first_name,
+        "last_updated": datetime.utcnow()
+    }
+
+    user_collection.update_one(
+        {"user_id": str(user.id)},
+        {"$set": user_data},
+        upsert=True
+    )
+
 
 async def chat_cricket(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     chat_id = update.effective_chat.id
+    await update_user_profile(user)
     
     if update.effective_chat.type == "private":
         await context.bot.send_message(
