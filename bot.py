@@ -1063,7 +1063,7 @@ def main() -> None:
     ))
     
     # Set up the timeout job to run every minute
-    application.job_queue.run_repeating(timeout_task, interval=60, first=10, name='timeout_task')
+    application.job_queue.run_repeating(timeout_task, interval=120, first=10, name='timeout_task')
 
     # Add error handler
     application.add_error_handler(error_handler)
