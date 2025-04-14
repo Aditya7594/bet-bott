@@ -715,12 +715,6 @@ async def handle_cricket_message(update: Update, context: CallbackContext, game:
     if user_id not in [game.get("player1", ""), game.get("player2", "")]:
         return
         
-    # Check for game timeout
-    if "last_move" in game and (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
-        await handle_timeout(update.callback_query, game, context)
-        return
-        
-    # Instead of deleting, we'll just remind them to use buttons
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text="⚠️ Please use the game buttons to play!"
@@ -734,11 +728,6 @@ async def handle_hilo_message(update: Update, context: CallbackContext, game: di
     
     # Check if the message is from a player in the game
     if user_id != game.get("player_id", ""):
-        return
-        
-    # Check for game timeout
-    if "last_move" in game and (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
-        await handle_timeout(update.callback_query, game, context)
         return
         
     # Remind them to use buttons
@@ -756,12 +745,6 @@ async def handle_mines_message(update: Update, context: CallbackContext, game: d
     # Check if the message is from a player in the game
     if user_id != game.get("player_id", ""):
         return
-        
-    # Check for game timeout
-    if "last_move" in game and (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
-        await handle_timeout(update.callback_query, game, context)
-        return
-        
     # Remind them to use buttons
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
@@ -777,12 +760,6 @@ async def handle_xox_message(update: Update, context: CallbackContext, game: dic
     # Check if the message is from a player in the game
     if user_id not in [game.get("player1", ""), game.get("player2", "")]:
         return
-        
-    # Check for game timeout
-    if "last_move" in game and (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
-        await handle_timeout(update.callback_query, game, context)
-        return
-        
     # Remind them to use buttons
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
