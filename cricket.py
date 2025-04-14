@@ -390,7 +390,10 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
 async def toss_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id, choice = query.data.split('_', 2)  # Modified to handle the new game_id format
+    data_parts = query.data.split('_')
+    choice = data_parts[-1]
+    game_id = '_'.join(data_parts[1:-1])
+
     
     if not await check_user_started_bot(update, context):
         return
