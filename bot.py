@@ -57,14 +57,26 @@ async def timeout_task(context: CallbackContext) -> None:
         for game in games:
             if game.get("last_move") is None:
                 continue
+                
             if (now - game["last_move"]) > timedelta(minutes=5):
-                # Create a dummy query for timeout
+                # First, mark the game as inactive to prevent repeated timeouts
+                if "_id" in game:
+                    db[f"{game_type}_games"].update_one(
+                        {"_id": game["_id"]},
+                        {"$set": {"active": False}}
+                    )
+                elif "game_code" in game:
+                    db[f"{game_type}_games"].update_one(
+                        {"game_code": game["game_code"]},
+                        {"$set": {"active": False}}
+                    )
+                
+                # Create a dummy query for timeout handling
                 class DummyQuery:
                     def __init__(self):
                         self.message = None
                 dummy_query = DummyQuery()
                 await handle_timeout(dummy_query, game, context)
-
 # MongoDB management functions
 def get_user_by_id(user_id):
     return user_collection.find_one({"user_id": user_id})
@@ -822,11 +834,25 @@ async def handle_timeout(query: CallbackQuery, game: dict, context: CallbackCont
     else:
         game_id = "unknown"
     
+    # Check if the game is already inactive
+    if not game.get("active", True):
+        logger.info(f"Game {game_id} already handled as inactive, skipping timeout handling")
+        return
+    
     # Update game status in database
-    db[f"{game_type}_games"].update_one(
-        {"_id": game_id} if "_id" in game else {"game_code": game_id},
-        {"$set": {"active": False}}
-    )
+    try:
+        if "_id" in game:
+            db[f"{game_type}_games"].update_one(
+                {"_id": game_id},
+                {"$set": {"active": False}}
+            )
+        elif "game_code" in game:
+            db[f"{game_type}_games"].update_one(
+                {"game_code": game_id},
+                {"$set": {"active": False}}
+            )
+    except Exception as e:
+        logger.error(f"Error updating game status for timeout: {e}")
     
     # Send timeout message
     timeout_message = (
@@ -837,10 +863,21 @@ async def handle_timeout(query: CallbackQuery, game: dict, context: CallbackCont
     
     try:
         if query and hasattr(query, 'edit_message_text'):
-            await query.edit_message_text(
-                timeout_message,
-                parse_mode="Markdown"
-            )
+            try:
+                await query.edit_message_text(
+                    timeout_message,
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logger.error(f"Error editing message for timeout: {e}")
+                # If editing failed, try sending a new message
+                chat_id = game.get("chat_id") or game.get("group_chat_id")
+                if chat_id:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=timeout_message,
+                        parse_mode="Markdown"
+                    )
         else:
             # If no query or message, send a new message to the game's chat
             chat_id = game.get("chat_id") or game.get("group_chat_id")
@@ -851,10 +888,12 @@ async def handle_timeout(query: CallbackQuery, game: dict, context: CallbackCont
                     parse_mode="Markdown"
                 )
             
-            # Also send a message to the player(s)
+            # Send message to the player(s) only once
+            sent_to = set()
             for player in ["player_id", "player1", "player2"]:
                 player_id = game.get(player)
-                if player_id:
+                if player_id and player_id not in sent_to:
+                    sent_to.add(player_id)
                     try:
                         await context.bot.send_message(
                             chat_id=player_id,
@@ -875,7 +914,6 @@ async def handle_timeout(query: CallbackQuery, game: dict, context: CallbackCont
                 user_data["credits"] = user_data.get("credits", 0) + game["bet"]
                 save_user(user_data)
                 logger.info(f"Refunded {game['bet']} credits to user {user_id} due to game timeout")
-
 async def dm_forwarder(update: Update, context: CallbackContext) -> None:
     """Forward messages between users in cricket games."""
     if not update.message or not update.message.text:
