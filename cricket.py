@@ -358,8 +358,8 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
             {"_id": game_id},
             {
                 "$set": {
-                    "player1": game["player1"],
-                    "player2": game["player2"],
+                    "player1": str(game["player1"]),
+                    "player2": str(game["player2"]),
                     "active": True,
                     "group_chat_id": game["group_chat_id"],
                     "created_at": datetime.utcnow()
