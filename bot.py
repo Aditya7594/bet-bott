@@ -45,39 +45,6 @@ groups_collection = db['groups']  # Collection for tracking groups
 
 # Global variable for tracking last interaction time
 last_interaction_time = {}
-
-async def timeout_task(context: CallbackContext) -> None:
-    """Checks for game timeouts and handles them."""
-    now = datetime.utcnow()
-    
-    # Check each game collection for timeouts
-    for game_type in ['cricket', 'hilo', 'mines', 'xox']:
-        games = db[f'{game_type}_games'].find({"active": True})
-        
-        for game in games:
-            if game.get("last_move") is None:
-                continue
-                
-            if (now - game["last_move"]) > timedelta(minutes=5):
-                # First, mark the game as inactive to prevent repeated timeouts
-                if "_id" in game:
-                    db[f"{game_type}_games"].update_one(
-                        {"_id": game["_id"]},
-                        {"$set": {"active": False}}
-                    )
-                elif "game_code" in game:
-                    db[f"{game_type}_games"].update_one(
-                        {"game_code": game["game_code"]},
-                        {"$set": {"active": False}}
-                    )
-                
-                # Create a dummy query for timeout handling
-                class DummyQuery:
-                    def __init__(self):
-                        self.message = None
-                dummy_query = DummyQuery()
-                await handle_timeout(dummy_query, game, context)
-# MongoDB management functions
 def get_user_by_id(user_id):
     return user_collection.find_one({"user_id": user_id})
 
@@ -822,98 +789,6 @@ async def handle_xox_message(update: Update, context: CallbackContext, game: dic
         text="⚠️ Please use the game buttons to play!"
     )
 
-async def handle_timeout(query: CallbackQuery, game: dict, context: CallbackContext) -> None:
-    """Handle game timeout for any game type."""
-    game_type = game.get("game_type", "unknown")
-    
-    # Get game ID or code
-    if "_id" in game:
-        game_id = game["_id"]
-    elif "game_code" in game:
-        game_id = game["game_code"]
-    else:
-        game_id = "unknown"
-    
-    # Check if the game is already inactive
-    if not game.get("active", True):
-        logger.info(f"Game {game_id} already handled as inactive, skipping timeout handling")
-        return
-    
-    # Update game status in database
-    try:
-        if "_id" in game:
-            db[f"{game_type}_games"].update_one(
-                {"_id": game_id},
-                {"$set": {"active": False}}
-            )
-        elif "game_code" in game:
-            db[f"{game_type}_games"].update_one(
-                {"game_code": game_id},
-                {"$set": {"active": False}}
-            )
-    except Exception as e:
-        logger.error(f"Error updating game status for timeout: {e}")
-    
-    # Send timeout message
-    timeout_message = (
-        f"⏰ *Game Timed Out!* ⏰\n\n"
-        "The game has ended due to inactivity.\n"
-        "Your credits have been refunded."
-    )
-    
-    try:
-        if query and hasattr(query, 'edit_message_text'):
-            try:
-                await query.edit_message_text(
-                    timeout_message,
-                    parse_mode="Markdown"
-                )
-            except Exception as e:
-                logger.error(f"Error editing message for timeout: {e}")
-                # If editing failed, try sending a new message
-                chat_id = game.get("chat_id") or game.get("group_chat_id")
-                if chat_id:
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=timeout_message,
-                        parse_mode="Markdown"
-                    )
-        else:
-            # If no query or message, send a new message to the game's chat
-            chat_id = game.get("chat_id") or game.get("group_chat_id")
-            if chat_id:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=timeout_message,
-                    parse_mode="Markdown"
-                )
-            
-            # Send message to the player(s) only once
-            sent_to = set()
-            for player in ["player_id", "player1", "player2"]:
-                player_id = game.get(player)
-                if player_id and player_id not in sent_to:
-                    sent_to.add(player_id)
-                    try:
-                        await context.bot.send_message(
-                            chat_id=player_id,
-                            text=timeout_message,
-                            parse_mode="Markdown"
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending timeout message to player {player_id}: {e}")
-    except Exception as e:
-        logger.error(f"Error sending timeout message: {e}")
-    
-    # Refund credits if applicable
-    if "bet" in game:
-        user_id = game.get("player_id") or game.get("player1")
-        if user_id:
-            user_data = get_user_by_id(user_id)
-            if user_data:
-                user_data["credits"] = user_data.get("credits", 0) + game["bet"]
-                save_user(user_data)
-                logger.info(f"Refunded {game['bet']} credits to user {user_id} due to game timeout")
 async def dm_forwarder(update: Update, context: CallbackContext) -> None:
     """Forward messages between users in cricket games."""
     if not update.message or not update.message.text:
@@ -1062,9 +937,6 @@ def main() -> None:
         universal_handler    
     ))
     
-    # Set up the timeout job to run every minute
-    application.job_queue.run_repeating(timeout_task, interval=120, first=10, name='timeout_task')
-
     # Add error handler
     application.add_error_handler(error_handler)
     
