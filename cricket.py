@@ -461,14 +461,9 @@ async def choose_button(update: Update, context: CallbackContext) -> None:
         return
 
     if choice == "bat":
-       batter, bowler = user_id, game["player2"] if user_id == game["player1"] else game["player1"]
+        batter, bowler = user_id, game["player2"] if user_id == game["player1"] else game["player1"]
     else:
-       bowler, batter = user_id, game["player2"] if user_id == game["player1"] else game["player1"]
-
-    # Prevent same user as batter and bowler
-    if batter == bowler:
-        await query.answer("Cannot play solo! Please wait for opponent.")
-        return
+        bowler, batter = user_id, game["player2"] if user_id == game["player1"] else game["player1"]
 
     game.update({
         "batter": batter,
@@ -546,6 +541,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
 
             keyboard = []
             if player_id == game["current_players"]["bowler"]:
+                await asyncio.sleep(0.5)
                 row = []
                 for i in range(1, 7):
                     row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}"))
@@ -563,7 +559,6 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                 )
             except Exception as e:
                 logger.error(f"Error updating for player {player_id}: {e}")
-                
 
     # Bowler's move
     elif user_id == game["current_players"]["bowler"] and game["bowler_choice"] is None:
@@ -572,9 +567,8 @@ async def play_button(update: Update, context: CallbackContext) -> None:
 
         if batter_choice is None:
             logger.warning(f"Batter choice was None when bowler moved (game_id={game_id})")
-            await query.answer("Wait! Batter hasn't played yet.")
+            await query.answer("Batter hasn't played yet!")
             return
-
 
         game["bowler_choice"] = number
         logger.info(f"Cricket Game - Play Button: Bowler {user_id} chose {number}")
@@ -643,7 +637,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                     f"📊 Score: {game['score2']}/{game['wickets']}\n\n"
                     f"{result_text}"
                 )
-                for pid in game["spectators"] + [game["player1"], game["player2"]]:
+                for pid in list(game["spectators"]) + [game["player1"], game["player2"]]:
                     try:
                         await context.bot.edit_message_text(
                             chat_id=pid,
@@ -698,7 +692,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                 row = []
         keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_id}")])
 
-        for pid in game["spectators"] + [game["player1"], game["player2"]]:
+        for pid in list(game["spectators"]) + [game["player1"], game["player2"]]:
             try:
                 participant_keyboard = InlineKeyboardMarkup(keyboard) if pid == game["current_players"]["batter"] else None
                 await context.bot.edit_message_text(
