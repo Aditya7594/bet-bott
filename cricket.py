@@ -758,7 +758,7 @@ async def end_innings(game_id: str, context: CallbackContext) -> None:
         # End of match
         await declare_winner(game_id, context)
 
-async def declare_winner(game_id: int, context: CallbackContext):
+async def declare_winner(game_id: str, context: CallbackContext):
     if game_id not in cricket_games:
         return
 
@@ -821,10 +821,14 @@ async def declare_winner(game_id: int, context: CallbackContext):
     score_summary += f"🧑 {name1}: {scores[player1_id]} runs\n"
     score_summary += f"🧑 {name2}: {scores[player2_id]} runs\n"
 
+    # ✅ Add wickets to summary
+    wickets_summary = f"🎯 Wickets: {game['wickets']}/{game['max_wickets']}\n"
+
     result_message = (
         f"🏆 *GAME OVER!*\n\n"
         f"📜 *Match Summary:*\n"
-        f"{score_summary}\n"
+        f"{score_summary}"
+        f"{wickets_summary}"
         f"{result}"
     )
 
@@ -908,13 +912,13 @@ async def declare_winner(game_id: int, context: CallbackContext):
                     "player1": game["score1"],
                     "player2": game["score2"]
                 },
+                "wickets": game["wickets"],
                 "winner": winner_id_str,
                 "loser": loser_id_str,
                 "result": result,
                 "innings": game["innings"],
                 "player1_opponent": player2_id,
-                "player2_opponent": player1_id,
-                "wickets": game["wickets"]
+                "player2_opponent": player1_id
             })
         except Exception as e:
             logger.error(f"Error saving game history: {e}")
