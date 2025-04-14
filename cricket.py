@@ -563,6 +563,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                 )
             except Exception as e:
                 logger.error(f"Error updating for player {player_id}: {e}")
+                
 
     # Bowler's move
     elif user_id == game["current_players"]["bowler"] and game["bowler_choice"] is None:
@@ -662,7 +663,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
                     f"📊 Score: {score}/{game['wickets']}\n\n"
                     f"{result_text}"
                 )
-                for pid in game["spectators"] + [game["player1"], game["player2"]]:
+                for pid in list(game["spectators"]) + [game["player1"], game["player2"]]:
                     try:
                         await context.bot.edit_message_text(
                             chat_id=pid,
