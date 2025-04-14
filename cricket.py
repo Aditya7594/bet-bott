@@ -316,9 +316,12 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
         return
 
     game["player2"] = user_id
+    update_game_activity(game_id)
+
     
     bot_username = (await context.bot.get_me()).username
-    keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/  {bot_username}")]]
+    keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
+
     
     try:
         await context.bot.send_message(
@@ -393,6 +396,8 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
         return
     
     logger.info(f"Cricket Game - Toss Button: User {user_id} chose {choice} for game {game_id}")
+    logger.info(f"TOSS: Received game_id={game_id}, Active games={list(cricket_games.keys())}")
+
 
     if game_id not in cricket_games:
         logger.warning(f"Cricket Game - Toss Button: Game {game_id} not found")
