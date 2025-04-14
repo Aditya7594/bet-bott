@@ -715,7 +715,7 @@ async def handle_message(update: Update, context: CallbackContext):
                 active_game = (game_type, game)
                 break
 
-       if active_game:
+        if active_game:
             game_type, game = active_game
             if game_type == 'xox':
                 await handle_xox_message(update, context, game)
