@@ -93,6 +93,54 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
         )
         return False
     return True
+async def send_inactive_player_reminder(context: CallbackContext) -> None:
+    current_time = datetime.utcnow()
+    
+    for game_id, game in list(cricket_games.items()):
+        if game["player2"] is None:
+            continue
+            
+        if game["batter"] is None or game["bowler"] is None:
+            continue
+            
+        current_player_id = None
+        if game["batter_choice"] is None:
+            current_player_id = game["current_players"]["batter"]
+        elif game["bowler_choice"] is None:
+            current_player_id = game["current_players"]["bowler"]
+        else:
+            continue
+        
+        last_activity = game_activity.get(game_id, datetime.utcnow())
+        last_reminder = game.get("last_reminder")
+        
+        if (current_time - last_activity).total_seconds() >= 10 and (
+                last_reminder is None or (current_time - last_reminder).total_seconds() >= 10):
+            
+            try:
+                player_name = (await context.bot.get_chat(current_player_id)).first_name
+                waiting_for = "batting" if game["batter_choice"] is None else "bowling"
+                
+                reminder_text = (
+                    f"⏰ *Reminder!* It's your turn to play cricket!\n\n"
+                    f"You're currently {waiting_for}. Please make your move."
+                )
+                
+                await context.bot.send_message(
+                    chat_id=current_player_id,
+                    text=reminder_text,
+                    parse_mode="Markdown"
+                )
+                
+                game["last_reminder"] = current_time
+                
+            except Exception as e:
+                logger.error(f"Error sending play reminder: {e}")
+
+def update_game_activity(game_id):
+    game_activity[game_id] = datetime.utcnow()
+    if game_id in cricket_games:
+        cricket_games[game_id]["last_move"] = datetime.utcnow()
 
 
 async def chat_cricket(update: Update, context: CallbackContext) -> None:
@@ -107,6 +155,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     
     if not await check_user_started_bot(update, context):
         return
+    
     max_overs = 100  
     max_wickets = 1 
     if context.args:
@@ -125,7 +174,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
                 text="⚠️ Invalid parameters! Format: /chatcricket [overs] [wickets]")
             return
     
-    # Generate a unique game ID instead of using chat_id
+    # Generate a unique game ID
     game_id = f"{chat_id}_{int(time.time())}"
     cricket_games[game_id] = {
         "player1": user.id,
@@ -175,54 +224,6 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         parse_mode="Markdown")
     await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
 
-async def send_inactive_player_reminder(context: CallbackContext) -> None:
-    current_time = datetime.utcnow()
-    
-    for game_id, game in list(cricket_games.items()):
-        if game["player2"] is None:
-            continue
-            
-        if game["batter"] is None or game["bowler"] is None:
-            continue
-            
-        current_player_id = None
-        if game["batter_choice"] is None:
-            current_player_id = game["current_players"]["batter"]
-        elif game["bowler_choice"] is None:
-            current_player_id = game["current_players"]["bowler"]
-        else:
-            continue
-        
-        last_activity = game_activity.get(game_id, datetime.utcnow())
-        last_reminder = game.get("last_reminder")
-        
-        if (current_time - last_activity).total_seconds() >= 10 and (
-                last_reminder is None or (current_time - last_reminder).total_seconds() >= 10):
-            
-            try:
-                player_name = (await context.bot.get_chat(current_player_id)).first_name
-                waiting_for = "batting" if game["batter_choice"] is None else "bowling"
-                
-                reminder_text = (
-                    f"⏰ *Reminder!* It's your turn to play cricket!\n\n"
-                    f"You're currently {waiting_for}. Please make your move."
-                )
-                
-                await context.bot.send_message(
-                    chat_id=current_player_id,
-                    text=reminder_text,
-                    parse_mode="Markdown"
-                )
-                
-                game["last_reminder"] = current_time
-                
-            except Exception as e:
-                logger.error(f"Error sending play reminder: {e}")
-
-def update_game_activity(game_id):
-    game_activity[game_id] = datetime.utcnow()
-    if game_id in cricket_games:
-        cricket_games[game_id]["last_move"] = datetime.utcnow()
 
 async def update_game_interface(game_id: str, context: CallbackContext, text: str = None):
     if game_id not in cricket_games:
@@ -296,7 +297,7 @@ async def update_game_interface(game_id: str, context: CallbackContext, text: st
 async def handle_join_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id = query.data.split('_', 1)  # Modified to handle the new game_id format
+    _, game_id = query.data.split('_', 1)
     
     if not await check_user_started_bot(update, context):
         return
@@ -347,6 +348,7 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
         except Exception as e:
             logger.error(f"Error sending toss message to {player_id}: {e}")
 
+
 async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
@@ -383,17 +385,14 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     
     if game["player2"] and "batter" in game and game["batter"]:
         await update_game_interface(game_id, context)
-
 async def toss_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id, choice = query.data.split('_', 2)  # Modified to handle the new game_id format
+    _, game_id, choice = query.data.split('_', 2)
     
     if not await check_user_started_bot(update, context):
         return
     
-    logger.info(f"Cricket Game - Toss Button: User {user_id} chose {choice} for game {game_id}")
-
     if game_id not in cricket_games:
         logger.warning(f"Cricket Game - Toss Button: Game {game_id} not found")
         await query.answer("Game expired!")
@@ -426,6 +425,7 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
             )
         except Exception as e:
             logger.error(f"Error updating toss result for player {player_id}: {e}")
+
 
 async def choose_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
