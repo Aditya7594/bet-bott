@@ -576,7 +576,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
 
             keyboard = []
             if player_id == game["current_players"]["bowler"]:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.01)
                 row = []
                 for i in range(1, 7):
                     row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}"))
@@ -801,7 +801,7 @@ async def end_innings(game_id: str, context: CallbackContext) -> None:
                 print(f"Error updating participant {participant_id}: {e}")
         
         # Wait a moment before starting second innings
-        await asyncio.sleep(2)
+        await asyncio.sleep(0.1)
         
         # Start second innings
         await update_game_interface(game_id, context)
