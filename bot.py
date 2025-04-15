@@ -1,3 +1,4 @@
+import asyncio
 from pymongo import MongoClient
 import os
 import secrets
@@ -11,7 +12,9 @@ from token_1 import token
 
 from genshin_game import get_genshin_handlers
 from cricket import (
+    chat_command,
     chat_cricket,
+    cricket_games,
     handle_join_button,
     handle_watch_button,
     toss_button,
@@ -26,9 +29,10 @@ from cricket import (
 )
 from claim import get_claim_handlers, daily
 from bank import store, withdraw, bank, get_bank_handlers
-from hilo_game import start_hilo, hilo_click, hilo_cashout, get_hilo_handlers
-from mines_game import Mines, Mines_click, Mines_CashOut, get_mines_handlers
-from xox_game import get_xox_handlers
+from mines_game import  get_mines_handlers
+from hilo_game import  get_hilo_handlers
+from xox_game import  get_xox_handlers
+from bdice import get_bdice_handlers
 
 # Constants and settings
 OWNER_ID = 5667016949
@@ -610,12 +614,11 @@ async def give(update: Update, context: CallbackContext) -> None:
 async def universal_handler(update: Update, context: CallbackContext):
     try:
         if update.effective_chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
-            # Check if this is a new group for the bot
+            # Add new groups to database only once
             group_id = str(update.effective_chat.id)
             group = groups_collection.find_one({"group_id": group_id})
             
             if not group:
-                # Add new group to database
                 group_data = {
                     "group_id": group_id,
                     "title": update.effective_chat.title,
@@ -624,39 +627,31 @@ async def universal_handler(update: Update, context: CallbackContext):
                 }
                 save_group(group_data)
             else:
-                # Update last active time for the group
-                groups_collection.update_one(
-                    {"group_id": group_id},
-                    {"$set": {"last_active": datetime.utcnow()}}
-                )
+                # Update last active time only if it's been more than 5 minutes
+                last_update = group.get("last_active", datetime.utcnow() - timedelta(minutes=6))
+                if (datetime.utcnow() - last_update).total_seconds() > 300:
+                    groups_collection.update_one(
+                        {"group_id": group_id},
+                        {"$set": {"last_active": datetime.utcnow()}}
+                    )
             
             # Process message reward for genshin users
-            if update.message and update.message.text and not update.message.text.startswith("/"):
-                user_id = str(update.effective_user.id)
-                user_data = get_genshin_user_by_id(user_id)
-                
-                if not user_data:
-                    # Create new user data if it doesn't exist
-                    user_data = {
-                        "user_id": user_id,
-                        "primos": 0,
-                        "bag": {},
-                        "last_primo_reward": None
-                    }
-                
-                # Check if user has received primos in the last hour
-                current_time = datetime.utcnow()
-                last_reward = user_data.get("last_primo_reward")
-                
-                if not last_reward or (current_time - last_reward).total_seconds() > 3600:  # 1 hour cooldown
-                    # Add 5 primos
-                    user_data["primos"] = user_data.get("primos", 0) + 5
-                    user_data["last_primo_reward"] = current_time
-                    save_genshin_user(user_data)
-                    
-                    # Log the reward
-                    logger.info(f"User {user_id} received 5 primos for group chat message")
-                    
+            user_id = str(update.effective_user.id)
+            user_data = get_genshin_user_by_id(user_id)
+            
+            if not user_data:
+                user_data = {
+                    "user_id": user_id,
+                    "primos": 0,
+                    "bag": {},
+                    "last_primo_reward": None
+                }
+            
+            # Add 5 primos for every message (with cooldown)
+            if not user_data.get("last_primo_reward") or (datetime.utcnow() - user_data["last_primo_reward"]).total_seconds() > 300:
+                user_data["primos"] = user_data.get("primos", 0) + 5
+                user_data["last_primo_reward"] = datetime.utcnow()
+                save_genshin_user(user_data)
         elif update.effective_chat.type == ChatType.PRIVATE:
             await dm_forwarder(update, context)
             await handle_message(update, context)
@@ -664,6 +659,21 @@ async def universal_handler(update: Update, context: CallbackContext):
         logger.error(f"Universal handler error: {str(e)}")
         if update.effective_chat.type == ChatType.PRIVATE:
             await update.message.reply_text("❌ An error occurred while processing your message.")
+            
+message_deletion_semaphore = asyncio.Semaphore(10)  # Allow 10 concurrent deletions
+
+async def delete_messages(sent_messages, original_message):
+    async with message_deletion_semaphore:
+        await asyncio.sleep(10)
+        for msg in sent_messages:
+            try:
+                await msg.delete()
+            except:
+                pass
+        try:
+            await original_message.delete()
+        except:
+            pass
 
 async def handle_message(update: Update, context: CallbackContext):
     if not update.message or not update.message.text:
@@ -681,7 +691,7 @@ async def handle_message(update: Update, context: CallbackContext):
     if chat_id == update.effective_user.id:  # Private chat
         # Check for active games
         active_game = None
-        for game_type in ['xox', 'cricket', 'hilo', 'mines']:
+        for game_type in ['cricket']:
             game = db[f'{game_type}_games'].find_one({
                 "$or": [
                     {"player1": user_id}, 
@@ -694,17 +704,20 @@ async def handle_message(update: Update, context: CallbackContext):
                 active_game = (game_type, game)
                 break
 
+        # Check in-memory cricket_games after DB-based ones
+        if not active_game:
+            for game_id, game_data in cricket_games.items():
+                if str(update.effective_user.id) in [str(game_data.get("player1")), str(game_data.get("player2"))]:
+                    active_game = ("cricket", game_data)
+                    break
+
         if active_game:
             game_type, game = active_game
             if game_type == 'xox':
                 await handle_xox_message(update, context, game)
             elif game_type == 'cricket':
                 await handle_cricket_message(update, context, game)
-            elif game_type == 'hilo':
-                await handle_hilo_message(update, context, game)
-            elif game_type == 'mines':
-                await handle_mines_message(update, context, game)
-
+                        
 async def handle_cricket_message(update: Update, context: CallbackContext, game: dict) -> None:
     """Handle messages during an active Cricket game.
     Deletes user messages and asks them to use the buttons to play
@@ -766,8 +779,129 @@ async def handle_xox_message(update: Update, context: CallbackContext, game: dic
         text="⚠️ Please use the game buttons to play!"
     )
 
+async def enhanced_chat_system(update: Update, context: CallbackContext) -> None:
+    if not update.message or not update.message.text:
+        return
+
+    user_id = str(update.effective_user.id)
+    message = update.message.text
+
+    # Ignore commands
+    if message.startswith('/'):
+        return
+
+    # Find active games where the user is involved (either from in-memory or MongoDB)
+    active_game = None
+    
+    # First check in-memory cricket games
+    for game_id, game in cricket_games.items():
+        if user_id in [str(game.get("player1")), str(game.get("player2"))] or (
+            "spectators" in game and user_id in game.get("spectators", set())
+        ):
+            if game.get("active", True):  # Check if game is active
+                active_game = game
+                break
+    
+    # If not found in memory, check MongoDB
+    if not active_game:
+        game_doc = db['cricket_games'].find_one({
+            "$or": [
+                {"player1": user_id}, 
+                {"player2": user_id},
+                {"spectators": user_id}
+            ],
+            "active": True
+        })
+        if game_doc:
+            active_game = game_doc
+    
+    if not active_game:
+        # No active game or game is over
+        return
+    
+    # Format the message based on user role
+    user_name = update.effective_user.first_name
+    if user_id == str(active_game.get("player1")):
+        role = "🏏 Player 1"
+    elif user_id == str(active_game.get("player2")):
+        role = "🏏 Player 2"
+    else:
+        role = "👁️ Spectator"
+    
+    formatted_message = f"{role} {user_name}: {message}"
+    
+    # Collect all recipients (players and spectators)
+    recipients = []
+    if active_game.get("player1"):
+        recipients.append(active_game["player1"])
+    if active_game.get("player2"):
+        recipients.append(active_game["player2"])
+    
+    # Add spectators (handling both set and list cases)
+    spectators = active_game.get("spectators", set())
+    if isinstance(spectators, set):
+        recipients.extend(spectators)
+    elif isinstance(spectators, list):
+        recipients.extend(spectators)
+    
+    # Remove duplicates and the sender
+    recipients = list(set(recipients))
+    if user_id in recipients:
+        recipients.remove(user_id)
+    
+    # Send message to all recipients and store sent messages for deletion
+    sent_messages = []
+    for recipient in recipients:
+        try:
+            sent = await context.bot.send_message(
+                chat_id=recipient,
+                text=formatted_message
+            )
+            sent_messages.append(sent)
+        except Exception as e:
+            logger.error(f"Error sending message to {recipient}: {e}")
+    
+    # Send confirmation to sender that will also be deleted
+    confirmation = await update.message.reply_text("✅ Message sent!")
+    sent_messages.append(confirmation)
+    
+    # Update the last_move timestamp to prevent timeout
+    if "game_id" in active_game:
+        # Update in-memory game
+        game_id = active_game["game_id"]
+        if game_id in cricket_games:
+            cricket_games[game_id]["last_move"] = datetime.utcnow()
+        
+        # Also update in MongoDB if applicable
+        db['cricket_games'].update_one(
+            {"game_id": game_id},
+            {"$set": {"last_move": datetime.utcnow(), "active": True}}
+        )
+    elif "_id" in active_game:
+        # Only in MongoDB
+        db['cricket_games'].update_one(
+            {"_id": active_game["_id"]},
+            {"$set": {"last_move": datetime.utcnow(), "active": True}}
+        )
+    
+    # Schedule message deletion after 10 seconds
+    async def delete_messages():
+        await asyncio.sleep(10)
+        for msg in sent_messages:
+            try:
+                await msg.delete()
+            except Exception as e:
+                logger.error(f"Error deleting message: {e}")
+        
+        # Also try to delete the original message
+        try:
+            await update.message.delete()
+        except Exception as e:
+            logger.error(f"Error deleting original message: {e}")
+    
+    # Run the deletion task in the background
+    asyncio.create_task(delete_messages())
 async def dm_forwarder(update: Update, context: CallbackContext) -> None:
-    """Forward messages between users in cricket games."""
     if not update.message or not update.message.text:
         return
 
@@ -779,73 +913,54 @@ async def dm_forwarder(update: Update, context: CallbackContext) -> None:
         return
 
     # Check for active cricket game
-    game = db['cricket_games'].find_one({
-        "$or": [{"player1": user_id}, {"player2": user_id}],
-        "active": True
-    })
+    game = None
     
-    if game:
-        # Get the other player's ID
-        other_player_id = game["player2"] if user_id == game["player1"] else game["player1"]
-        
-        # Forward the message to the other player
-        try:
-            await context.bot.send_message(
-                chat_id=other_player_id,
-                text=f"💬 {update.effective_user.first_name}: {message}"
-            )
-            # Update the last_move timestamp to prevent timeout
-            db['cricket_games'].update_one(
-                {"_id": game["_id"]},
-                {"$set": {"last_move": datetime.utcnow()}}
-            )
-        except Exception as e:
-            logger.error(f"Error forwarding message: {e}")
-
-async def chat_command_cricket(update: Update, context: CallbackContext) -> None:
-    """Handle the /c command for chat during cricket games."""
-    if not context.args:
-        await update.message.reply_text("Usage: /c <message>")
+    # Check in-memory games first
+    for game_id, game_data in cricket_games.items():
+        if user_id in [str(game_data.get("player1")), str(game_data.get("player2"))]:
+            if game_data.get("active", True):
+                game = game_data
+                break
+    
+    # If not found, check MongoDB
+    if not game:
+        game = db['cricket_games'].find_one({
+            "$or": [{"player1": user_id}, {"player2": user_id}],
+            "active": True
+        })
+    
+    if not game:
         return
-
-    user = update.effective_user
-    user_id = str(user.id)
-    message = " ".join(context.args)
-
-    # Check for active cricket game
-    game = db['cricket_games'].find_one({
-        "$or": [{"player1": user_id}, {"player2": user_id}],
-        "active": True
-    })
     
-    if game:
-        # Get the other player's ID
-        other_player_id = game["player2"] if user_id == game["player1"] else game["player1"]
-        
-        # Format the message
-        formatted_message = f"💬 {user.first_name}: {message}"
-
-        try:
-            # Send the message to the other player's DM
-            await context.bot.send_message(
-                chat_id=other_player_id,
-                text=formatted_message
+    # Get the other player's ID
+    other_player_id = game["player2"] if user_id == game["player1"] else game["player1"]
+    
+    # Forward the message to the other player
+    try:
+        await context.bot.send_message(
+            chat_id=other_player_id,
+            text=f"💬 {update.effective_user.first_name}: {message}"
+        )
+        # Update the last_move timestamp to prevent timeout
+        if "game_id" in game:
+            game_id = game["game_id"]
+            if game_id in cricket_games:
+                cricket_games[game_id]["last_move"] = datetime.utcnow()
+            db['cricket_games'].update_one(
+                {"game_id": game_id},
+                {"$set": {"last_move": datetime.utcnow()}}
             )
-            # Update the last_move timestamp to prevent timeout
+        elif "_id" in game:
             db['cricket_games'].update_one(
                 {"_id": game["_id"]},
                 {"$set": {"last_move": datetime.utcnow()}}
             )
-            
-            # Send confirmation to the sender
-            await update.message.reply_text("✅ Message sent!")
-        except Exception as e:
-            logger.error(f"Error sending chat message: {e}")
-            await update.message.reply_text("❌ Failed to send message to the other player.")
-    else:
-        await update.message.reply_text("❌ You are not in an active cricket game.")
+    except Exception as e:
+        logger.error(f"Error forwarding message: {e}")
+        
 
 def main() -> None:
+    
     application = Application.builder().token(token).build()
 
     # Add all handlers inside the main function
@@ -904,9 +1019,7 @@ def main() -> None:
         application.add_handler(handler)
     for handler in get_cricket_handlers():        
         application.add_handler(handler)
-
-    # Add the /c command handler before the universal message handler    
-    application.add_handler(CommandHandler("c", chat_command_cricket))    
+  
 
     # Universal message handler (must come after all other specific handlers)    
     application.add_handler(MessageHandler(        

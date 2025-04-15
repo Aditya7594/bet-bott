@@ -1,3 +1,4 @@
+from multiprocessing import context
 from pymongo import MongoClient
 import random
 import logging
@@ -7,6 +8,21 @@ from datetime import datetime, timedelta
 import time
 import asyncio
 from telegram import User
+from functools import lru_cache
+
+from functools import lru_cache
+
+@lru_cache(maxsize=512)
+def get_user_name_cached_sync(user_id: int, fallback: str = "Player") -> str:
+    return fallback  # fallback if async call fails
+
+async def get_user_name_cached(user_id, context):
+    try:
+        chat = await context.bot.get_chat(user_id)
+        return chat.first_name
+    except:
+        return get_user_name_cached_sync(user_id)
+
 
 
 # Set up logging
@@ -97,25 +113,17 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
         return False
     return True
 
-async def update_user_profile(user: User):
-    user_data = {
-        "first_name": user.first_name,
-        "username": user.username,
-        "full_name": f"{user.first_name} {user.last_name}" if user.last_name else user.first_name,
-        "last_updated": datetime.utcnow()
-    }
-
-    user_collection.update_one(
-        {"user_id": str(user.id)},
-        {"$set": user_data},
-        upsert=True
-    )
-
-
+@lru_cache(maxsize=128)
+def get_user_name(user_id):
+    try:
+        user = context.bot.get_chat(user_id)
+        return user.first_name
+    except:
+        return "Player"
+    
 async def chat_cricket(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     chat_id = update.effective_chat.id
-    await update_user_profile(user)
     
     if update.effective_chat.type == "private":
         await context.bot.send_message(
@@ -125,6 +133,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
     
     if not await check_user_started_bot(update, context):
         return
+    
     max_overs = 100  
     max_wickets = 1 
     if context.args:
@@ -143,7 +152,6 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
                 text="⚠️ Invalid parameters! Format: /chatcricket [overs] [wickets]")
             return
     
-    # Generate a unique game ID instead of using chat_id
     game_id = f"{chat_id}_{int(time.time())}"
     cricket_games[game_id] = {
         "player1": user.id,
@@ -157,6 +165,8 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "bowler": None,
         "toss_winner": None,
         "innings": 1,
+        "wickets1": 0,
+        "wickets2": 0,
         "current_players": {},
         "batter_choice": None,
         "bowler_choice": None,
@@ -170,8 +180,6 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "last_move": datetime.utcnow(),
         "last_reminder": None
     }
-    
-    update_game_activity(game_id)
     
     game_desc = f"🏏 *Cricket Game Started!*\n\n"
     game_desc += f"Started by: {user.first_name}\n"
@@ -193,50 +201,6 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         parse_mode="Markdown")
     await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
 
-async def send_inactive_player_reminder(context: CallbackContext) -> None:
-    current_time = datetime.utcnow()
-    
-    for game_id, game in list(cricket_games.items()):
-        if game["player2"] is None:
-            continue
-            
-        if game["batter"] is None or game["bowler"] is None:
-            continue
-            
-        current_player_id = None
-        if game["batter_choice"] is None:
-            current_player_id = game["current_players"]["batter"]
-        elif game["bowler_choice"] is None:
-            current_player_id = game["current_players"]["bowler"]
-        else:
-            continue
-        
-        last_activity = game_activity.get(game_id, datetime.utcnow())
-        last_reminder = game.get("last_reminder")
-        
-        if (current_time - last_activity).total_seconds() >= 10 and (
-                last_reminder is None or (current_time - last_reminder).total_seconds() >= 10):
-            
-            try:
-                player_name = (await context.bot.get_chat(current_player_id)).first_name
-                waiting_for = "batting" if game["batter_choice"] is None else "bowling"
-                
-                reminder_text = (
-                    f"⏰ *Reminder!* It's your turn to play cricket!\n\n"
-                    f"You're currently {waiting_for}. Please make your move."
-                )
-                
-                await context.bot.send_message(
-                    chat_id=current_player_id,
-                    text=reminder_text,
-                    parse_mode="Markdown"
-                )
-                
-                game["last_reminder"] = current_time
-                
-            except Exception as e:
-                logger.error(f"Error sending play reminder: {e}")
-
 def update_game_activity(game_id):
     game_activity[game_id] = datetime.utcnow()
     if game_id in cricket_games:
@@ -249,8 +213,8 @@ async def update_game_interface(game_id: str, context: CallbackContext, text: st
     game = cricket_games[game_id]
     if not text:
         try:
-            batter_name = (await context.bot.get_chat(game["batter"])).first_name
-            bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
+            batter_name = (await get_user_name_cached(game["batter"], context))
+            bowler_name = (await get_user_name_cached(game["bowler"], context))
         except Exception:
             await context.bot.send_message(
                 chat_id=game["group_chat_id"],
@@ -407,8 +371,8 @@ async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     
     game["spectators"].add(user_id)
     
-    player1_name = (await context.bot.get_chat(game["player1"])).first_name
-    player2_name = "Waiting for opponent" if not game["player2"] else (await context.bot.get_chat(game["player2"])).first_name
+    player1_name = (await get_user_name_cached(game["player1"], context))
+    player2_name = "Waiting for opponent" if not game["player2"] else (await get_user_name_cached(game["player2"], context))
     
     bot_username = (await context.bot.get_me()).username
     keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
@@ -455,7 +419,7 @@ async def toss_button(update: Update, context: CallbackContext) -> None:
     
     logger.info(f"Cricket Game - Toss Button: Toss result was {toss_result}, winner is {game['toss_winner']}")
 
-    winner_name = (await context.bot.get_chat(game["toss_winner"])).first_name
+    winner_name = (await get_user_name_cached(game["toss_winner"], context))
     keyboard = [[
         InlineKeyboardButton("🏏 Bat", callback_data=f"choose_{game_id}_bat"),
         InlineKeyboardButton("🎯 Bowl", callback_data=f"choose_{game_id}_bowl")
@@ -537,8 +501,8 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         logger.info(f"Cricket Game - Play Button: Batter {user_id} chose {number}")
         await query.answer(f"Your choice: {number}")
 
-        batter_name = (await context.bot.get_chat(game["batter"])).first_name
-        bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
+        batter_name = (await get_user_name_cached(game["batter"], context))
+        bowler_name = (await get_user_name_cached(game["bowler"], context))
         score = game['score1'] if game['innings'] == 1 else game['score2']
         spectator_count = len(game["spectators"])
         spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
@@ -576,7 +540,7 @@ async def play_button(update: Update, context: CallbackContext) -> None:
 
             keyboard = []
             if player_id == game["current_players"]["bowler"]:
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0.05)
                 row = []
                 for i in range(1, 7):
                     row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}"))
@@ -612,8 +576,8 @@ async def play_button(update: Update, context: CallbackContext) -> None:
         game["batter_choice"] = None
         game["bowler_choice"] = None
 
-        batter_name = (await context.bot.get_chat(game["batter"])).first_name
-        bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
+        batter_name = (await get_user_name_cached(game["batter"], context))
+        bowler_name = (await get_user_name_cached(game["bowler"], context))
         score = game['score1'] if game['innings'] == 1 else game['score2']
         target = game['target'] if game['innings'] == 2 else None
         spectator_count = len(game["spectators"])
@@ -747,6 +711,12 @@ async def play_button(update: Update, context: CallbackContext) -> None:
 async def handle_wicket(game_id: str, context: CallbackContext) -> None:
     game = cricket_games[game_id]
     
+    if game["innings"] == 1:
+       game["wickets1"] = game["wickets"]
+    else:
+       game["wickets2"] = game["wickets"]
+
+    
     if game['wickets'] >= game['max_wickets']:
         await end_innings(game_id, context)
         return
@@ -778,8 +748,8 @@ async def end_innings(game_id: str, context: CallbackContext) -> None:
         game["current_players"] = {"batter": game["batter"], "bowler": game["bowler"]}
         
         # Notify all players of innings change
-        batter_name = (await context.bot.get_chat(game["batter"])).first_name
-        bowler_name = (await context.bot.get_chat(game["bowler"])).first_name
+        batter_name = (await get_user_name_cached(game["batter"], context))
+        bowler_name = (await get_user_name_cached(game["bowler"], context))
         
         text = (
             f"🏏 First Innings Complete!\n\n"
@@ -817,8 +787,8 @@ async def declare_winner(game_id: str, context: CallbackContext):
 
     # Player name fallback
     try:
-        p1 = (await context.bot.get_chat(game["player1"])).first_name
-        p2 = (await context.bot.get_chat(game["player2"])).first_name
+        p1 = (await get_user_name_cached(game["player1"], context))
+        p2 = (await get_user_name_cached(game["player2"], context))
     except Exception as e:
         logger.error(f"Error retrieving player names: {e}")
         p1 = "Player 1"
@@ -836,7 +806,7 @@ async def declare_winner(game_id: str, context: CallbackContext):
             winner_id = game["batter"]
             loser_id = game["bowler"]
             try:
-                winner = (await context.bot.get_chat(winner_id)).first_name
+                winner = (await get_user_name_cached(winner_id, context))
             except:
                 winner = "Player"
             result = f"🏅 {winner} won by {game['max_wickets'] - game['wickets']} wicket(s)!"
@@ -846,7 +816,7 @@ async def declare_winner(game_id: str, context: CallbackContext):
             winner_id = game["bowler"]
             loser_id = game["batter"]
             try:
-                winner = (await context.bot.get_chat(winner_id)).first_name
+                winner = (await get_user_name_cached(winner_id, context))
             except:
                 winner = "Player"
             diff = game["target"] - game["score2"] - 1
@@ -854,25 +824,24 @@ async def declare_winner(game_id: str, context: CallbackContext):
     else:
         result = "Match ended unexpectedly!"
 
-    # ✅ Accurate name-score mapping
-    score_summary = ""
-    player1_id = str(game["player1"])
-    player2_id = str(game["player2"])
-    scores = {player1_id: game["score1"], player2_id: game["score2"]}
-
+    # Accurate name-score mapping
+    first_batter = game["player1"] if game["batter"] != game["player1"] else game["player2"]
+    second_batter = game["batter"]
     try:
-        name1 = (await context.bot.get_chat(player1_id)).first_name
+        name1 = (await get_user_name_cached(first_batter, context))
     except:
         name1 = "Player 1"
     try:
-        name2 = (await context.bot.get_chat(player2_id)).first_name
+        name2 = (await get_user_name_cached(second_batter, context))
     except:
         name2 = "Player 2"
 
-    score_summary += f"🧑 {name1}: {scores[player1_id]} runs\n"
-    score_summary += f"🧑 {name2}: {scores[player2_id]} runs\n"
+    score_summary = (
+        f"🧑 {name1}: {game['score1']} runs\n"
+        f"🧑 {name2}: {game['score2']} runs\n"
+    )
 
-    # ✅ Add wickets to summary
+    # Add wickets to summary
     wickets_summary = f"🎯 Wickets: {game['wickets']}/{game['max_wickets']}\n"
 
     result_message = (
@@ -903,14 +872,14 @@ async def declare_winner(game_id: str, context: CallbackContext):
                 parse_mode="Markdown"
             )
             if player_id in game["message_id"]:
-                await context.bot.deleteMessage(
+                await context.bot.delete_message(
                     chat_id=player_id,
                     message_id=game["message_id"].get(player_id)
                 )
         except Exception as e:
             logger.error(f"Error sending result to {player_id}: {e}")
 
-    # ✅ Update stats in DB
+    # Update stats in DB
     if winner_id and loser_id:
         winner_id_str = str(winner_id)
         loser_id_str = str(loser_id)
@@ -918,11 +887,15 @@ async def declare_winner(game_id: str, context: CallbackContext):
         winner_runs = game['score2'] if winner_id == game["batter"] else game['score1']
         loser_runs = game['score1'] if winner_id == game["batter"] else game['score2']
 
-        # 🏏 Wickets logic
-        wickets_taken_by_winner = game["wickets"] if winner_id == game["bowler"] else 0
-        wickets_taken_by_loser = game["wickets"] if loser_id == game["bowler"] else 0
+        if game["innings"] == 2:
+            if winner_id == game["batter"]:
+                wickets_taken_by_winner = game["wickets1"]
+            else:
+                wickets_taken_by_winner = game["wickets2"]
+        else:
+            wickets_taken_by_winner = 0
 
-        # 🟢 Update winner
+        # Update winner
         user_collection.update_one(
             {"user_id": winner_id_str},
             {"$inc": {
@@ -935,13 +908,13 @@ async def declare_winner(game_id: str, context: CallbackContext):
             upsert=True
         )
 
-        # 🔴 Update loser
+        # Update loser
         user_collection.update_one(
             {"user_id": loser_id_str},
             {"$inc": {
                 "stats.losses": 1,
                 "stats.runs": loser_runs,
-                "stats.wickets": wickets_taken_by_loser
+                "stats.wickets": 0
             },
             "$set": {
                 "stats.current_streak": 0,
@@ -950,26 +923,26 @@ async def declare_winner(game_id: str, context: CallbackContext):
             upsert=True
         )
 
-        # 🏅 Check achievements
+        # Check achievements
         await check_achievements(winner_id, context)
         await check_achievements(loser_id, context)
 
-        # 🗃️ Save match history
+        # Save match history
         try:
             game_collection.insert_one({
                 "timestamp": datetime.now(),
-                "participants": [player1_id, player2_id],
+                "participants": [game["player1"], game["player2"]],
                 "scores": {
                     "player1": game["score1"],
                     "player2": game["score2"]
                 },
                 "wickets": game["wickets"],
-                "winner": winner_id_str,
+                "winner": winner_id_str,    
                 "loser": loser_id_str,
                 "result": result,
                 "innings": game["innings"],
-                "player1_opponent": player2_id,
-                "player2_opponent": player1_id
+                "player1_opponent": game["player2"],
+                "player2_opponent": game["player1"]
             })
         except Exception as e:
             logger.error(f"Error saving game history: {e}")
@@ -988,47 +961,62 @@ async def declare_winner(game_id: str, context: CallbackContext):
         logger.error(f"Error updating game status in DB: {e}")
 
 
+
+
+
+
+
 async def chat_command(update: Update, context: CallbackContext) -> None:
     if not context.args:
-        await update.message.reply_text("Usage: /c <message>")
+        await update.message.reply_text("Usage: /chat <message>")
         return
 
     user = update.effective_user
-    user_id = str(user.id)
+    user_id = user.id
     message = " ".join(context.args)
 
     if not await check_user_started_bot(update, context):
         return
-    
+
     active_game = None
     for game_id, game in cricket_games.items():
-        if user_id in [game["player1"], game["player2"]]:
+        if user_id in [game["player1"], game["player2"]] or user_id in game.get("spectators", set()):
             active_game = game
             break
-    
-    if active_game:
-        chat_id = active_game.get("group_chat_id")
-        if not chat_id:
-            await update.message.reply_text("❌ Game chat not found.")
-            return
 
-        formatted_message = f"💬 {user.first_name}: {message}"
+    if not active_game:
+        await update.message.reply_text("❌ You're not part of an active cricket game.")
+        return
 
+    sender_name = user.first_name or "Player"
+    formatted_message = f"💬 {sender_name}: {message}"
+
+    recipients = set([active_game["player1"], active_game["player2"]] + list(active_game.get("spectators", [])))
+    message_ids = []
+
+    # Send to all recipients privately and collect message_ids
+    for uid in recipients:
+        if uid != user_id:
+            try:
+                sent_msg = await context.bot.send_message(chat_id=uid, text=formatted_message)
+                message_ids.append((uid, sent_msg.message_id))
+            except Exception as e:
+                logger.error(f"Couldn't send DM to {uid}: {e}")
+
+    # Schedule deletion of command and DMs in background
+    async def delete_later():
+        await asyncio.sleep(10)
         try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=formatted_message
-            )
-            if update.effective_chat.type == "private":
-                await update.message.delete()
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
         except Exception as e:
-            logger.error(f"Error sending chat message: {e}")
-            await update.message.reply_text("❌ Failed to send message to game chat.")
-    else:
-        await update.message.reply_text("❌ You are not in an active cricket game.")
+            logger.error(f"Error deleting /chat command message: {e}")
+        for uid, mid in message_ids:
+            try:
+                await context.bot.delete_message(chat_id=uid, message_id=mid)
+            except Exception as e:
+                logger.error(f"Error deleting DM message for {uid}: {e}")
 
-def update_game_activity(game_id):
-    game_activity[game_id] = datetime.now()
+    asyncio.create_task(delete_later())
 
 async def game_chat(update: Update, context: CallbackContext) -> None:
     if not context.args:
@@ -1481,6 +1469,39 @@ async def display_earned_achievements(update: Update, context: CallbackContext, 
 def setup_jobs(application):
     job_queue = application.job_queue
 
+    # Clean up inactive games every 5 minutes
+    job_queue.run_repeating(
+        callback=cleanup_inactive_games,
+        interval=300,
+        first=10
+    )
+
+async def cleanup_inactive_games(context: CallbackContext):
+    current_time = datetime.utcnow()
+    
+    # Clean up in-memory games
+    games_to_remove = []
+    for game_id, game in list(cricket_games.items()):
+        last_move = game.get("last_move", datetime.utcnow() - timedelta(minutes=11))
+        if (current_time - last_move).total_seconds() > 600:  # 10 minutes of inactivity
+            games_to_remove.append(game_id)
+            try:
+                db['cricket_games'].update_one(
+                    {"game_id": game_id},
+                    {"$set": {"active": False}}
+                )
+            except:
+                pass
+    
+    for game_id in games_to_remove:
+        cricket_games.pop(game_id, None)
+    
+    # Clean up MongoDB games
+    db['cricket_games'].update_many(
+        {"last_move": {"$lte": current_time - timedelta(minutes=10)}},
+        {"$set": {"active": False}}
+    )
+
 def get_cricket_handlers():
     return [
         CommandHandler("stats", stats),
@@ -1495,3 +1516,9 @@ def get_cricket_handlers():
         CallbackQueryHandler(handle_watch_button, pattern=r"^watch_"),
         CallbackQueryHandler(achievements_button, pattern=r"^view_achievements$|^locked_achievements$|^view_leaderboard$"),
     ]
+
+async def get_first_name(context, user_id):
+    try:
+        return (await get_user_name_cached(user_id, context))
+    except:
+        return "Player"
