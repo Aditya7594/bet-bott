@@ -1187,7 +1187,6 @@ async def game_history(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"Error retrieving game history: {e}")
         await update.message.reply_text("An error occurred while retrieving your game history. Please try again later.")
-
 async def stats(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
@@ -1219,6 +1218,7 @@ async def stats(update: Update, context: CallbackContext) -> None:
     text += f"▫️ Total Runs: {stats.get('runs', 0)}\n"
     text += f"▫️ Wickets Taken: {stats.get('wickets', 0)}\n"
     
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 async def leaderboard_callback(update: Update, context: CallbackContext) -> None:
     """Handle leaderboard button callback"""
