@@ -1386,7 +1386,16 @@ async def category_navigation_callback(update: Update, context: CallbackContext)
     
     elif data.startswith("close_achievements"):
         await query.answer("Closed achievements")
-        await query.message.delete()
+        
+        # Check if the message exists
+        if query.message:
+            try:
+                await query.message.delete()
+            except Exception as e:
+                logger.error(f"Error deleting message: {e}")
+                await query.answer("Could not delete message. It might have already been removed.")
+        else:
+            await query.answer("Message not found.")
 
 async def achievements_command(update: Update, context: CallbackContext) -> None:
     await show_achievements_by_category(update, context, 0)
