@@ -1627,6 +1627,31 @@ async def tag_active_users(update: Update, context: CallbackContext) -> None:
                 chat_id=chat_id,
                 text="An error occurred while tagging users.",
             )
+
+async def leaderboard(update: Update, context: CallbackContext) -> None:
+    try:
+        # Query the database for top players
+        top_players = list(user_collection.find({}, {"_id": 0, "user_id": 1, "first_name": 1, "stats": 1})
+                           .sort([("stats.wins", -1), ("stats.runs", -1)])
+                           .limit(25))
+        
+        if not top_players:
+            await update.message.reply_text("No players found in the leaderboard.")
+            return
+        
+        text = "🏆 *Leaderboard:*\n\n"
+        player_list = list(top_players)  # Convert cursor to list to prevent cursor timeout
+        
+        for idx, player in enumerate(player_list, 1):
+            stats = player.get("stats", {})
+            text += f"{idx}. {player.get('first_name', 'Unknown')} - Wins: {stats.get('wins', 0)}, Runs: {stats.get('runs', 0)}\n"
+        
+        await update.message.reply_text(text, parse_mode="Markdown")
+        
+    except Exception as e:
+        logger.error(f"Error retrieving leaderboard: {e}")
+        await update.message.reply_text("An error occurred while retrieving the leaderboard. Please try again later.")
+        
 def get_cricket_handlers():
     return [
         CommandHandler("stats", stats),
