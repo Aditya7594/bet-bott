@@ -1553,21 +1553,21 @@ async def tag_active_users(update: Update, context: CallbackContext) -> None:
     ist_timezone = pytz.timezone('Asia/Kolkata')
     now_ist = pytz.utc.localize(now_utc).astimezone(ist_timezone)
     
-    # Calculate 5 minutes ago in UTC for database query
-    five_minutes_ago_utc = now_utc - timedelta(minutes=5)
+    # Calculate 10 minutes ago in UTC for database query
+    ten_minutes_ago_utc = now_utc - timedelta(minutes=10)
     
-    logger.info(f"Current IST time: {now_ist.strftime('%H:%M:%S')}, Checking activity since: {five_minutes_ago_utc}")
+    logger.info(f"Current IST time: {now_ist.strftime('%H:%M:%S')}, Checking activity since: {ten_minutes_ago_utc}")
     
-    # Find users who were active in the last 5 minutes
+    # Find users who were active in the last 10 minutes
     try:
         active_users = list(user_collection.find({
             "$or": [
-                {"last_active": {"$gte": five_minutes_ago_utc}},
-                {"last_seen": {"$gte": five_minutes_ago_utc}}
+                {"last_active": {"$gte": ten_minutes_ago_utc}},
+                {"last_seen": {"$gte": ten_minutes_ago_utc}}
             ]
         }))
         
-        logger.info(f"Found {len(active_users)} active users in the last 5 minutes")
+        logger.info(f"Found {len(active_users)} active users in the last 10 minutes")
     except Exception as e:
         logger.error(f"Error querying database: {e}")
         await context.bot.send_message(
@@ -1603,7 +1603,7 @@ async def tag_active_users(update: Update, context: CallbackContext) -> None:
     if not tagged_users:
         await context.bot.send_message(
             chat_id=chat_id,
-            text="No active users found in the last 5 minutes.",
+            text="No active users found in the last 10 minutes.",
             parse_mode="Markdown"
         )
         return
@@ -1613,7 +1613,7 @@ async def tag_active_users(update: Update, context: CallbackContext) -> None:
     
     for i in range(0, len(tagged_users), max_users_per_message):
         chunk = tagged_users[i:i + max_users_per_message]
-        message = f"Active users in the last 5 minutes ({len(chunk)}):\n" + "\n".join(chunk)
+        message = f"Active users in the last 10 minutes ({len(chunk)}):\n" + "\n".join(chunk)
         
         try:
             await context.bot.send_message(
