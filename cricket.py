@@ -1620,7 +1620,7 @@ async def tag_active_users(update: Update, context: CallbackContext) -> None:
             )
 def get_cricket_handlers():
     return [
-        CommandHandler("chatcricket", chat_cricket),
+        CommandHandler("chatcricket",chat_cricket),
         CommandHandler("stats", stats),
         CommandHandler("leaderboard", leaderboard),
         CommandHandler("history", game_history),
