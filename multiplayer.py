@@ -466,9 +466,6 @@ async def start_game(playing_id: str, context: CallbackContext) -> None:
         }}
     )
     
-    asyncio }}
-    )
-    
     asyncio_task(game_timeout_checker(playing_id, context))
     await update_game_interface(playing_id, context)
 
