@@ -466,7 +466,10 @@ async def start_game(playing_id: str, context: CallbackContext) -> None:
         }}
     )
     
-    asyncio.create_task(game_timeout_checker(playing_id, context))
+    asyncio }}
+    )
+    
+    asyncio_task(game_timeout_checker(playing_id, context))
     await update_game_interface(playing_id, context)
 
 async def game_timeout_checker(playing_id: str, context: CallbackContext):
@@ -638,7 +641,7 @@ async def Mhandle_play_button(update: Update, context: CallbackContext) -> None:
         await query.answer(f"Your choice: {number}")
         
         if game.get("bowler_choice") is not None:
-            await process_ball_result(playing_id, context, query)
+            await process_ball_result(playing_id, context)
     
     elif user_id == game["current_bowler"]:
         if game.get("bowler_choice") is not None:
@@ -658,7 +661,7 @@ async def Mhandle_play_button(update: Update, context: CallbackContext) -> None:
         if game.get("batter_choice") is not None:
             await process_ball_result(playing_id, context)
 
-async def process_ball_result(playing_id: str, context: CallbackContext, query: CallbackQuery) -> None:
+async def process_ball_result(playing_id: str, context: CallbackContext) -> None:
     game = await get_game_data(playing_id)
     if not game:
         logger.error(f"Game {playing_id} not found when processing ball result")
@@ -971,7 +974,7 @@ async def extend_time(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("Only the game admin can extend time!")
         return
     
-    if game["status"] != "ready":
+    if game["status"] != "    if game["status"] != "ready":
         await update.message.reply_text("Game is already started or not ready!")
         return
     
