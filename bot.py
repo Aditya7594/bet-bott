@@ -10,7 +10,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from telegram.constants import ChatType
 from token_1 import token
 
-from genshin_game import get_genshin_handlers
+#from genshin_game import get_genshin_handlers
 from cricket import (
     get_cricket_handlers,setup_jobs
 )
@@ -659,9 +659,9 @@ def main() -> None:
     application.add_handler(CommandHandler("store", store))
     application.add_handler(CommandHandler("withdraw", withdraw))
  
-    handlers = get_multiplayer_handlers()
-    for handler in handlers:
-        application.add_handler(handler)
+    #handlers = get_multiplayer_handlers()
+    #for handler in handlers:
+        #application.add_handler(handler)
     handlers = get_cricket_handlers()
     for handler in handlers:
         application.add_handler(handler)
