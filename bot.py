@@ -12,26 +12,14 @@ from token_1 import token
 
 from genshin_game import get_genshin_handlers
 from cricket import (
-    chat_command,
-    chat_cricket,
-    cricket_games,
-    handle_join_button,
-    handle_watch_button,
-    toss_button,
-    choose_button,
-    play_button,
-    handle_wicket,
-    end_innings,
-    declare_winner,
-    update_game_interface,
-    setup_jobs,
-    get_cricket_handlers
+    get_cricket_handlers,setup_jobs
 )
+from multiplayer import get_multiplayer_handlers
 from claim import get_claim_handlers, daily
 from bank import store, withdraw, bank, get_bank_handlers
-from mines_game import  get_mines_handlers
-from hilo_game import  get_hilo_handlers
-from xox_game import  get_xox_handlers
+from mines_game import get_mines_handlers
+from hilo_game import get_hilo_handlers
+from xox_game import get_xox_handlers
 from bdice import get_bdice_handlers
 
 # Constants and settings
@@ -49,6 +37,7 @@ groups_collection = db['groups']  # Collection for tracking groups
 
 # Global variable for tracking last interaction time
 last_interaction_time = {}
+
 def get_user_by_id(user_id):
     return user_collection.find_one({"user_id": user_id})
 
@@ -65,7 +54,7 @@ def save_group(group_data):
     groups_collection.update_one({"group_id": group_data["group_id"]}, {"$set": group_data}, upsert=True)
 
 def escape_markdown_v2(text):
-    escape_chars = r'\_*[]()~`>#+-=|{}.!'
+    escape_chars = r'\_*[]()~`>#+-=|{}.! '
     return ''.join(f'\\{char}' if char in escape_chars else char for char in text)
 
 def generate_referral_link(user_id):
@@ -656,8 +645,6 @@ async def handle_genshin_group_message(update: Update, context: CallbackContext)
 def main() -> None:
     
     application = Application.builder().token(token).build()
-
-    # Add all handlers inside the main function
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("profile", profile))
     application.add_handler(CommandHandler("reach", reach))    
@@ -667,40 +654,19 @@ def main() -> None:
     application.add_handler(CommandHandler("daily", daily))
     application.add_handler(CommandHandler("give", give))
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
-    
-    for handler in get_claim_handlers():        
-        application.add_handler(handler)
-    
-    application.add_handler(CommandHandler("addcredits", add_credits))    
-
-    # Add cricket game handlers    
-    application.add_handler(CommandHandler("chatcricket", chat_cricket))    
-    application.add_handler(CommandHandler("join", handle_join_button))    
-    application.add_handler(CommandHandler("watch", handle_watch_button))
-
-    # Add cricket game callback handlers    
-    application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))    
-    application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))    
-    application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))    
-    application.add_handler(CallbackQueryHandler(handle_join_button, pattern=r"^join_"))    
-    application.add_handler(CallbackQueryHandler(handle_watch_button, pattern=r"^watch_"))
-
-    # Add cricket game deep link handlers    
-    application.add_handler(MessageHandler(        
-        filters.Regex(r"^/start ([0-9]{3})$"),        
-        handle_join_button    
-    ))    
-    application.add_handler(MessageHandler(        
-        filters.Regex(r"^/start watch_([0-9]{3})$"),        
-        handle_watch_button    
-    ))
-
-    # Add the banking handlers
+    application.add_handler(CommandHandler("addcredits", add_credits))     
     application.add_handler(CommandHandler("bank", bank))
     application.add_handler(CommandHandler("store", store))
     application.add_handler(CommandHandler("withdraw", withdraw))
-
-    # Add game handlers    
+ 
+    handlers = get_multiplayer_handlers()
+    for handler in handlers:
+        application.add_handler(handler)
+    handlers = get_cricket_handlers()
+    for handler in handlers:
+        application.add_handler(handler)
+    for handler in get_claim_handlers():        
+        application.add_handler(handler)
     for handler in get_xox_handlers():        
         application.add_handler(handler)    
     for handler in get_hilo_handlers():        
@@ -708,10 +674,8 @@ def main() -> None:
     for handler in get_mines_handlers():        
         application.add_handler(handler)    
     for handler in get_genshin_handlers():        
-        application.add_handler(handler)    
-    for handler in get_bank_handlers():        
-        application.add_handler(handler)
-    for handler in get_cricket_handlers():        
+        application.add_handler(handler) 
+    for handler in get_bdice_handlers():
         application.add_handler(handler)
         
     application.add_handler(MessageHandler(
