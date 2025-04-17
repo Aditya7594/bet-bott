@@ -209,9 +209,9 @@ async def MButton_join(update: Update, context: CallbackContext) -> None:
         except:
             bowler_names.append(f"Player {uid}")
 
-    text = f"🏏 *Cricket Match Lobby*\n\nFormat: {game['max_overs']} overs, {game['max_wickets']} wickets\n\n"
-    text += f"🔼 Batters ({len(batter_names)}/{game['max_wickets']}): {', '.join(batter_names) if batter_names else 'None'}\n"
-    text += f"🔽 Bowlers ({len(bowler_names)}/{game['max_wickets']}): {', '.join(bowler_names) if bowler_names else 'None'}\n\n"
+    text = f"👥 *Current Players*\n\n"
+    text += f"▶️ Batters ({len(batter_names)}/{game['max_wickets']}): {', '.join(batter_names) if batter_names else 'None'}\n"
+    text += f"▶️ Bowlers ({len(bowler_names)}/{game['max_wickets']}): {', '.join(bowler_names) if bowler_names else 'None'}\n\n"
     
     if game["status"] == "waiting":
         text += f"Match starts when both sides are full."
@@ -219,8 +219,10 @@ async def MButton_join(update: Update, context: CallbackContext) -> None:
         time_left = (game["start_time"] - datetime.now(pytz.utc)).total_seconds()
         if time_left > 15:
             text += f"Game will start in {int(time_left)} seconds..."
-        elif time_left > 5:
+        elif time_left > 10:
             text += "Game will start in 15 seconds..."
+        elif time_left > 5:
+            text += "Game will start in 10 seconds..."
         else:
             text += "Game starting in 5 seconds..."
     else:
@@ -260,36 +262,57 @@ async def start_game_countdown(playing_id: str, context: CallbackContext) -> Non
         if time_left <= 0:
             await start_game(playing_id, context)
             break
-        elif 5 < time_left <= 15:
-            game_message = await context.bot.edit_message_text(
-                chat_id=game["group_chat_id"],
-                message_id=game["message_id"],
-                text=f"Game will start in {int(time_left)} seconds...",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"Mjoin_batter_{playing_id}")],
-                    [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"Mjoin_bowler_{playing_id}")],
-                    [InlineKeyboardButton("❌ Remove Me", callback_data=f"Mremove_{playing_id}")]
-                ]),
-                parse_mode="Markdown"
-            )
-            game["message_id"] = game_message.message_id
-            multiplayer_games[playing_id] = game
-            game_collection.update_one({"playing_id": playing_id}, {"$set": {"message_id": game_message.message_id}})
+        elif 10 < time_left <= 15:
+            if game.get("countdown_message") != "15":
+                game_message = await context.bot.edit_message_text(
+                    chat_id=game["group_chat_id"],
+                    message_id=game["message_id"],
+                    text=f"Game will start in 15 seconds...",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"Mjoin_batter_{playing_id}")],
+                        [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"Mjoin_bowler_{playing_id}")],
+                        [InlineKeyboardButton("❌ Remove Me", callback_data=f"Mremove_{playing_id}")]
+                    ]),
+                    parse_mode="Markdown"
+                )
+                game["message_id"] = game_message.message_id
+                game["countdown_message"] = "15"
+                multiplayer_games[playing_id] = game
+                game_collection.update_one({"playing_id": playing_id}, {"$set": {"message_id": game_message.message_id}})
+        elif 5 < time_left <= 10:
+            if game.get("countdown_message") != "10":
+                game_message = await context.bot.edit_message_text(
+                    chat_id=game["group_chat_id"],
+                    message_id=game["message_id"],
+                    text="Game starting in 10 seconds...",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"Mjoin_batter_{playing_id}")],
+                        [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"Mjoin_bowler_{playing_id}")],
+                        [InlineKeyboardButton("❌ Remove Me", callback_data=f"Mremove_{playing_id}")]
+                    ]),
+                    parse_mode="Markdown"
+                )
+                game["message_id"] = game_message.message_id
+                game["countdown_message"] = "10"
+                multiplayer_games[playing_id] = game
+                game_collection.update_one({"playing_id": playing_id}, {"$set": {"message_id": game_message.message_id}})
         elif time_left <= 5:
-            game_message = await context.bot.edit_message_text(
-                chat_id=game["group_chat_id"],
-                message_id=game["message_id"],
-                text="Game starting in 5 seconds...",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"Mjoin_batter_{playing_id}")],
-                    [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"Mjoin_bowler_{playing_id}")],
-                    [InlineKeyboardButton("❌ Remove Me", callback_data=f"Mremove_{playing_id}")]
-                ]),
-                parse_mode="Markdown"
-            )
-            game["message_id"] = game_message.message_id
-            multiplayer_games[playing_id] = game
-            game_collection.update_one({"playing_id": playing_id}, {"$set": {"message_id": game_message.message_id}})
+            if game.get("countdown_message") != "5":
+                game_message = await context.bot.edit_message_text(
+                    chat_id=game["group_chat_id"],
+                    message_id=game["message_id"],
+                    text="Game starting in 5 seconds...",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"Mjoin_batter_{playing_id}")],
+                        [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"Mjoin_bowler_{playing_id}")],
+                        [InlineKeyboardButton("❌ Remove Me", callback_data=f"Mremove_{playing_id}")]
+                    ]),
+                    parse_mode="Markdown"
+                )
+                game["message_id"] = game_message.message_id
+                game["countdown_message"] = "5"
+                multiplayer_games[playing_id] = game
+                game_collection.update_one({"playing_id": playing_id}, {"$set": {"message_id": game_message.message_id}})
         
         await asyncio.sleep(1)
 
@@ -364,8 +387,10 @@ async def Mhandle_remove_button(update: Update, context: CallbackContext) -> Non
         time_left = (game["start_time"] - datetime.now(pytz.utc)).total_seconds()
         if time_left > 15:
             text += f"Game will start in {int(time_left)} seconds..."
-        elif time_left > 5:
+        elif time_left > 10:
             text += "Game will start in 15 seconds..."
+        elif time_left > 5:
+            text += "Game will start in 10 seconds..."
         else:
             text += "Game starting in 5 seconds..."
     else:
@@ -1043,9 +1068,8 @@ async def list_players(update: Update, context: CallbackContext) -> None:
     text += f"\n\n▶️ Bowlers ({len(bowler_names)}/{game['max_wickets']}):\n"
     text += "\n".join([f"- {name}" for name in bowler_names]) if bowler_names else "None"
     
-    await context.bot.edit_message_text(
-        chat_id=game["group_chat_id"],
-        message_id=game["message_id"],
+    await context.bot.send_message(
+        chat_id=chat_id,
         text=text,
         parse_mode="Markdown"
     )
