@@ -10,18 +10,24 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from telegram.constants import ChatType
 from token_1 import token
 
-#from genshin_game import get_genshin_handlers
+from genshin_game import get_genshin_handlers
 from cricket import (
-    get_cricket_handlers,setup_jobs
+    get_cricket_handlers,
+    chat_cricket,
+    cricket_games,
+    handle_join_button,
+    handle_watch_button,
+    toss_button,
+    choose_button,
+    play_button,
+    setup_jobs,
 )
-from multiplayer import get_multiplayer_handlers
 from claim import get_claim_handlers, daily
 from bank import store, withdraw, bank, get_bank_handlers
 from mines_game import get_mines_handlers
 from hilo_game import get_hilo_handlers
 from xox_game import get_xox_handlers
 from bdice import get_bdice_handlers
-
 # Constants and settings
 OWNER_ID = 5667016949
 logging.basicConfig(
@@ -645,6 +651,8 @@ async def handle_genshin_group_message(update: Update, context: CallbackContext)
 def main() -> None:
     
     application = Application.builder().token(token).build()
+
+    # Add all handlers inside the main function
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("profile", profile))
     application.add_handler(CommandHandler("reach", reach))    
@@ -654,28 +662,40 @@ def main() -> None:
     application.add_handler(CommandHandler("daily", daily))
     application.add_handler(CommandHandler("give", give))
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
-    application.add_handler(CommandHandler("addcredits", add_credits))     
     application.add_handler(CommandHandler("bank", bank))
     application.add_handler(CommandHandler("store", store))
     application.add_handler(CommandHandler("withdraw", withdraw))
- 
-    #handlers = get_multiplayer_handlers()
-    #for handler in handlers:
-        #application.add_handler(handler)
-    handlers = get_cricket_handlers()
-    for handler in handlers:
-        application.add_handler(handler)
+    application.add_handler(CommandHandler("addcredits", add_credits))    
+    application.add_handler(CommandHandler("chatcricket", chat_cricket))    
+    application.add_handler(CommandHandler("join", handle_join_button))    
+    application.add_handler(CommandHandler("watch", handle_watch_button))    
+    application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))    
+    application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))    
+    application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))    
+    application.add_handler(CallbackQueryHandler(handle_join_button, pattern=r"^join_"))    
+    application.add_handler(CallbackQueryHandler(handle_watch_button, pattern=r"^watch_"))
+
+    application.add_handler(MessageHandler(        
+        filters.Regex(r"^/start ([0-9]{3})$"),        
+        handle_join_button    
+    ))    
+    application.add_handler(MessageHandler(        
+        filters.Regex(r"^/start watch_([0-9]{3})$"),        
+        handle_watch_button    
+    ))
     for handler in get_claim_handlers():        
         application.add_handler(handler)
-    for handler in get_xox_handlers():        
-        application.add_handler(handler)    
-    for handler in get_hilo_handlers():        
-        application.add_handler(handler)    
-    for handler in get_mines_handlers():        
-        application.add_handler(handler)    
-    for handler in get_genshin_handlers():        
-        application.add_handler(handler) 
     for handler in get_bdice_handlers():
+        application.add_handler(handler)
+    for handler in get_mines_handlers():
+        application.add_handler(handler)
+    for handler in get_hilo_handlers():
+        application.add_handler(handler)
+    for handler in get_xox_handlers():
+        application.add_handler(handler)
+    for handler in get_cricket_handlers():
+        application.add_handler(handler)
+    for handler in get_genshin_handlers():
         application.add_handler(handler)
         
     application.add_handler(MessageHandler(
