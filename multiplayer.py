@@ -1,14 +1,24 @@
 from pymongo import MongoClient
 import random
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup,CallbackQuery
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from telegram.ext import CallbackContext, CallbackQueryHandler, CommandHandler
 from datetime import datetime, timedelta
 import time
 import pytz
 import asyncio
-from cricket import get_user_name_cached
-from shared_state import shared
+from functools import lru_cache
+
+@lru_cache(maxsize=512)
+def get_user_name_cached_sync(user_id: int, fallback: str = "Player") -> str:
+    return fallback  # fallback if async call fails
+
+async def get_user_name_cached(user_id, context):
+    try:
+        chat = await context.bot.get_chat(user_id)
+        return chat.first_name
+    except:
+        return get_user_name_cached_sync(user_id)
 
 # Set up logging
 logging.basicConfig(
@@ -23,26 +33,28 @@ db = client['telegram_bot']
 user_collection = db['users']
 game_collection = db["multiplayer_games"]
 
+multiplayer_games = {}
+
 # Ensure UTC timezone is used consistently
 def get_current_utc_time():
     return datetime.now(pytz.utc)
 
 # Shared game state reference
-multiplayer_games = shared.multiplayer_games
+multiplayer_games = multiplayer_games
 
 # Update last_move on every interaction
-async def update_last_move(game_id: str):
+async def update_last_move(playing_id: str):
     current_time = get_current_utc_time()
     try:
         game_collection.update_one(
-            {"game_id": game_id},
+            {"playing_id": playing_id},
             {"$set": {"last_move": current_time}}
         )
-        if game_id in multiplayer_games:
-            multiplayer_games[game_id]["last_move"] = current_time
-        logger.info(f"Updated last_move for game {game_id} to {current_time}")
+        if playing_id in multiplayer_games:
+            multiplayer_games[playing_id]["last_move"] = current_time
+        logger.info(f"Updated last_move for game {playing_id} to {current_time}")
     except Exception as e:
-        logger.error(f"Error updating last_move for game {game_id}: {e}")
+        logger.error(f"Error updating last_move for game {playing_id}: {e}")
 
 async def check_user_started_bot(update: Update, context: CallbackContext) -> bool:
     query = update.callback_query
@@ -57,21 +69,23 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
 
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
+            text=f"⚠️ {user_tag}, you need to start the bot first!\n"
+                 f"Click the button below to start the bot.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
         return False
     return True
 
-async def get_game_data(game_id: str) -> dict:
-    game_id = str(game_id)
-    if game_id in shared.multiplayer_games:
-        return shared.multiplayer_games[game_id]
+async def get_game_data(playing_id: str) -> dict:
+    playing_id = str(playing_id)
+    if playing_id in multiplayer_games:
+        return multiplayer_games[playing_id]
     # Try to load from DB
-    game_data = game_collection.find_one({"game_id": game_id})
+    game_data = game_collection.find_one({"playing_id": playing_id})
     if game_data:
         game = {k: v for k, v in game_data.items() if k != "_id"}
-        shared.multiplayer_games[game_id] = game
+        multiplayer_games[playing_id] = game
         return game
     return None
 
@@ -99,9 +113,9 @@ async def multiplayer(update: Update, context: CallbackContext) -> None:
             await context.bot.send_message(chat_id=chat_id, text="⚠️ Invalid format! Use: /multiplayer [overs] [wickets]")
             return
 
-    game_id = str(chat_id)
+    playing_id = str(chat_id)
     game_data = {
-        "game_id": game_id,
+        "playing_id": playing_id,
         "batters": [],
         "bowlers": [],
         "max_overs": max_overs,
@@ -109,38 +123,39 @@ async def multiplayer(update: Update, context: CallbackContext) -> None:
         "group_chat_id": chat_id,
         "status": "waiting",
         "message_id": None,
-        "last_move": get_current_utc_time()
+        "last_move": get_current_utc_time(),
+        "start_time": None,
+        "admin_id": user.id
     }
 
-    logger.info(f"[multiplayer] Creating new game with ID: {game_id}")
-    multiplayer_games[game_id] = game_data
+    logger.info(f"[multiplayer] Creating new game with ID: {playing_id}")
+    multiplayer_games[playing_id] = game_data
     logger.info(f"[multiplayer] Stored in multiplayer_games: {list(multiplayer_games.keys())}")
 
-    game_collection.update_one({"game_id": game_id}, {"$set": game_data}, upsert=True)
+    game_collection.update_one({"playing_id": playing_id}, {"$set": game_data}, upsert=True)
 
     desc = f"🏏 *Cricket Match Started!*\n\nFormat: {max_overs} over{'s' if max_overs > 1 else ''}, {max_wickets} wicket{'s' if max_wickets > 1 else ''}\n\n"
     desc += "• Join as Batter or Bowler\n• Match will start once teams are full."
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"join_batter_{game_id}")],
-        [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"join_bowler_{game_id}")],
-        [InlineKeyboardButton("❌ Remove Me", callback_data=f"remove_{game_id}")]
+        [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"Mjoin_batter_{playing_id}")],
+        [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"Mjoin_bowler_{playing_id}")],
+        [InlineKeyboardButton("❌ Remove Me", callback_data=f"Mremove_{playing_id}")]
     ])
 
     sent_message = await context.bot.send_message(chat_id=chat_id, text=desc, reply_markup=keyboard, parse_mode="Markdown")
 
     game_data["message_id"] = sent_message.message_id
-    multiplayer_games[game_id]["message_id"] = sent_message.message_id
-    game_collection.update_one({"game_id": game_id}, {"$set": {"message_id": sent_message.message_id}})
+    multiplayer_games[playing_id]["message_id"] = sent_message.message_id
+    game_collection.update_one({"playing_id": playing_id}, {"$set": {"message_id": sent_message.message_id}})
 
     logger.info(f"[multiplayer] Game created and message_id stored: {sent_message.message_id}")
 
-
-async def handle_join_button(update: Update, context: CallbackContext) -> None:
+async def MButton_join(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     try:
-        _, role, game_id = query.data.split('_', 2)
+        _, role, playing_id = query.data.split('_', 2)
     except ValueError:
         await query.answer("Invalid callback!")
         return
@@ -149,12 +164,12 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
         await query.answer("Start the bot first!")
         return
 
-    game = await get_game_data(game_id)
+    game = await get_game_data(playing_id)
     if not game:
         await query.answer("Game not found or expired!")
         return
 
-    if game["status"] != "waiting":
+    if game["status"] not in ["waiting", "ready"]:
         await query.answer("Game already started!")
         return
 
@@ -165,12 +180,18 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
         return
 
     if role == "batter":
+        if len(game["batters"]) >= game["max_wickets"]:
+            await query.answer("Batter team is full!")
+            return
         game["batters"].append(user_id)
     else:
+        if len(game["bowlers"]) >= game["max_wickets"]:
+            await query.answer("Bowler team is full!")
+            return
         game["bowlers"].append(user_id)
 
-    shared.multiplayer_games[game_id] = game
-    game_collection.update_one({"game_id": game_id}, {"$set": {"batters": game["batters"], "bowlers": game["bowlers"]}})
+    multiplayer_games[playing_id] = game
+    game_collection.update_one({"playing_id": playing_id}, {"$set": {"batters": game["batters"], "bowlers": game["bowlers"]}})
 
     batter_names = []
     for uid in game["batters"]:
@@ -191,12 +212,24 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
     text = f"🏏 *Cricket Match Lobby*\n\nFormat: {game['max_overs']} overs, {game['max_wickets']} wickets\n\n"
     text += f"🔼 Batters ({len(batter_names)}/{game['max_wickets']}): {', '.join(batter_names) if batter_names else 'None'}\n"
     text += f"🔽 Bowlers ({len(bowler_names)}/{game['max_wickets']}): {', '.join(bowler_names) if bowler_names else 'None'}\n\n"
-    text += f"Match starts when both sides are full."
+    
+    if game["status"] == "waiting":
+        text += f"Match starts when both sides are full."
+    elif game["status"] == "ready":
+        time_left = (game["start_time"] - datetime.now(pytz.utc)).total_seconds()
+        if time_left > 15:
+            text += f"Game will start in {int(time_left)} seconds..."
+        elif time_left > 5:
+            text += "Game will start in 15 seconds..."
+        else:
+            text += "Game starting in 5 seconds..."
+    else:
+        text += "Game is starting soon..."
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"join_batter_{game_id}")],
-        [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"join_bowler_{game_id}")],
-        [InlineKeyboardButton("❌ Remove Me", callback_data=f"remove_{game_id}")]
+        [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"Mjoin_batter_{playing_id}")],
+        [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"Mjoin_bowler_{playing_id}")],
+        [InlineKeyboardButton("❌ Remove Me", callback_data=f"Mremove_{playing_id}")]
     ])
 
     try:
@@ -205,27 +238,71 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"Edit error: {e}")
 
-    if len(game["batters"]) >= game["max_wickets"] and len(game["bowlers"]) >= game["max_wickets"]:
-        await context.bot.send_message(chat_id=game["group_chat_id"], text="✅ Teams are ready! Game will begin soon.")
+    if len(game["batters"]) >= game["max_wickets"] and len(game["bowlers"]) >= game["max_wickets"] and game["status"] == "waiting":
         game["status"] = "ready"
-        shared.multiplayer_games[game_id] = game
-        game_collection.update_one({"game_id": game_id}, {"$set": {"status": "ready"}})
-        asyncio.create_task(delayed_game_start(game_id, context))
+        game["start_time"] = datetime.now(pytz.utc) + timedelta(seconds=15)
+        multiplayer_games[playing_id] = game
+        game_collection.update_one({"playing_id": playing_id}, {"$set": {"status": "ready", "start_time": game["start_time"]}})
+        asyncio.create_task(start_game_countdown(playing_id, context))
 
-async def delayed_game_start(game_id: str, context: CallbackContext, delay_seconds: int = 2) -> None:
-    await asyncio.sleep(delay_seconds)
-    await start_game(game_id, context)
+async def start_game_countdown(playing_id: str, context: CallbackContext) -> None:
+    game = await get_game_data(playing_id)
+    if not game:
+        return
+    
+    while True:
+        now = datetime.now(pytz.utc)
+        if game["start_time"] is None:
+            break
+            
+        time_left = (game["start_time"] - now).total_seconds()
+        
+        if time_left <= 0:
+            await start_game(playing_id, context)
+            break
+        elif 5 < time_left <= 15:
+            game_message = await context.bot.edit_message_text(
+                chat_id=game["group_chat_id"],
+                message_id=game["message_id"],
+                text=f"Game will start in {int(time_left)} seconds...",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"Mjoin_batter_{playing_id}")],
+                    [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"Mjoin_bowler_{playing_id}")],
+                    [InlineKeyboardButton("❌ Remove Me", callback_data=f"Mremove_{playing_id}")]
+                ]),
+                parse_mode="Markdown"
+            )
+            game["message_id"] = game_message.message_id
+            multiplayer_games[playing_id] = game
+            game_collection.update_one({"playing_id": playing_id}, {"$set": {"message_id": game_message.message_id}})
+        elif time_left <= 5:
+            game_message = await context.bot.edit_message_text(
+                chat_id=game["group_chat_id"],
+                message_id=game["message_id"],
+                text="Game starting in 5 seconds...",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"Mjoin_batter_{playing_id}")],
+                    [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"Mjoin_bowler_{playing_id}")],
+                    [InlineKeyboardButton("❌ Remove Me", callback_data=f"Mremove_{playing_id}")]
+                ]),
+                parse_mode="Markdown"
+            )
+            game["message_id"] = game_message.message_id
+            multiplayer_games[playing_id] = game
+            game_collection.update_one({"playing_id": playing_id}, {"$set": {"message_id": game_message.message_id}})
+        
+        await asyncio.sleep(1)
 
-async def handle_remove_button(update: Update, context: CallbackContext) -> None:
+async def Mhandle_remove_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id = query.data.split('_', 1)
+    _, playing_id = query.data.split('_', 1)
     
     if not await check_user_started_bot(update, context):
         await query.answer("You need to start the bot first!")
         return
     
-    game = await get_game_data(game_id)
+    game = await get_game_data(playing_id)
     if not game:
         await query.answer("Game not found or expired!")
         await query.edit_message_text(
@@ -234,7 +311,7 @@ async def handle_remove_button(update: Update, context: CallbackContext) -> None
         )
         return
     
-    if game["status"] != "waiting":
+    if game["status"] not in ["waiting", "ready"]:
         await query.answer("Game has already started!")
         return
     
@@ -252,9 +329,9 @@ async def handle_remove_button(update: Update, context: CallbackContext) -> None
         await query.answer("You're not part of this game!")
         return
     
-    shared.multiplayer_games[game_id] = game
+    multiplayer_games[playing_id] = game
     game_collection.update_one(
-        {"game_id": game_id},
+        {"playing_id": playing_id},
         {"$set": {
             "batters": game["batters"],
             "bowlers": game["bowlers"]
@@ -277,29 +354,38 @@ async def handle_remove_button(update: Update, context: CallbackContext) -> None
         except:
             bowler_names.append(f"Player {uid}")
     
-    game_desc = f"🏏 *Cricket Tournament*\n\n"
-    game_desc += f"Format: {game['max_overs']} over{'s' if game['max_overs'] > 1 else ''}, {game['max_wickets']} wicket{'s' if game['max_wickets'] > 1 else ''}\n\n"
-    game_desc += f"🔼 Batters ({len(game['batters'])}/{game['max_wickets']}): {', '.join(batter_names) if batter_names else 'None'}\n"
-    game_desc += f"🔽 Bowlers ({len(game['bowlers'])}/{game['max_wickets']}): {', '.join(bowler_names) if bowler_names else 'None'}\n\n"
-    game_desc += f"• Teams will start once {game['max_wickets']} players join each role"
+    text = f"👥 *Current Players*\n\n"
+    text += f"▶️ Batters ({len(batter_names)}/{game['max_wickets']}): {', '.join(batter_names) if batter_names else 'None'}\n"
+    text += f"▶️ Bowlers ({len(bowler_names)}/{game['max_wickets']}): {', '.join(bowler_names) if bowler_names else 'None'}\n\n"
     
-    await query.edit_message_text(
-        text=game_desc,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"join_batter_{game_id}")],
-            [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"join_bowler_{game_id}")],
-            [InlineKeyboardButton("❌ Remove Me", callback_data=f"remove_{game_id}")]
-        ]),
-        parse_mode="Markdown"
-    )
-    
-    await query.answer("Removed successfully!")
+    if game["status"] == "waiting":
+        text += f"Match starts when both sides are full."
+    elif game["status"] == "ready":
+        time_left = (game["start_time"] - datetime.now(pytz.utc)).total_seconds()
+        if time_left > 15:
+            text += f"Game will start in {int(time_left)} seconds..."
+        elif time_left > 5:
+            text += "Game will start in 15 seconds..."
+        else:
+            text += "Game starting in 5 seconds..."
+    else:
+        text += "Game is starting soon..."
 
-async def start_game(game_id: str, context: CallbackContext) -> None:
-    game = await get_game_data(game_id)
-    query = Update.callback_query
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"Mjoin_batter_{playing_id}")],
+        [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"Mjoin_bowler_{playing_id}")],
+        [InlineKeyboardButton("❌ Remove Me", callback_data=f"Mremove_{playing_id}")]
+    ])
+
+    try:
+        await query.edit_message_text(text=text, reply_markup=keyboard, parse_mode="Markdown")
+        await query.answer("Removed successfully!")
+    except Exception as e:
+        logger.error(f"Edit error: {e}")
+
+async def start_game(playing_id: str, context: CallbackContext) -> None:
+    game = await get_game_data(playing_id)
     if not game:
-        await query.answer("Game not found or expired!")
         return
     
     try:
@@ -335,10 +421,11 @@ async def start_game(game_id: str, context: CallbackContext) -> None:
     game["over"] = 0
     game["ball"] = 0
     game["innings"] = 1
+    game["last_action"] = datetime.now(pytz.utc)
     
-    shared.multiplayer_games[game_id] = game
+    multiplayer_games[playing_id] = game
     game_collection.update_one(
-        {"game_id": game_id},
+        {"playing_id": playing_id},
         {"$set": {
             "status": game["status"],
             "current_batter": game["current_batter"],
@@ -349,27 +436,70 @@ async def start_game(game_id: str, context: CallbackContext) -> None:
             "wickets": game["wickets"],
             "over": game["over"],
             "ball": game["ball"],
-            "innings": game["innings"]
+            "innings": game["innings"],
+            "last_action": game["last_action"]
         }}
     )
     
-    await update_game_interface(game_id, context)
+    asyncio.create_task(game_timeout_checker(playing_id, context))
+    await update_game_interface(playing_id, context)
 
-async def update_game_interface(game_id: str, context: CallbackContext) -> None:
-    game = await get_game_data(game_id)
+async def game_timeout_checker(playing_id: str, context: CallbackContext):
+    game = await get_game_data(playing_id)
     if not game:
-        logger.error(f"Game {game_id} not found when updating interface")
+        return
+    
+    while game["status"] == "started":
+        now = datetime.now(pytz.utc)
+        elapsed = (now - game["last_action"]).total_seconds()
+        
+        if elapsed > 15:
+            if game["current_batter"] in game["batters"]:
+                game["batters"].remove(game["current_batter"])
+                game["batters"].append(game["current_batter"])
+                game["current_batter"] = game["batters"][0]
+                await context.bot.edit_message_text(
+                    chat_id=game["group_chat_id"],
+                    message_id=game["message_id"],
+                    text=f"Batter {await get_user_name_cached(game['current_batter'], context)} timed out! Next batter is up.",
+                    parse_mode="Markdown"
+                )
+            else:
+                game["bowlers"].remove(game["current_bowler"])
+                game["bowlers"].append(game["current_bowler"])
+                game["current_bowler"] = game["bowlers"][0]
+                await context.bot.edit_message_text(
+                    chat_id=game["group_chat_id"],
+                    message_id=game["message_id"],
+                    text=f"Bowler {await get_user_name_cached(game['current_bowler'], context)} timed out! Next bowler is up.",
+                    parse_mode="Markdown"
+                )
+            
+            game["last_action"] = datetime.now(pytz.utc)
+            multiplayer_games[playing_id] = game
+            game_collection.update_one({"playing_id": playing_id}, {"$set": game})
+            await update_game_interface(playing_id, context)
+        
+        await asyncio.sleep(1)
+        game = await get_game_data(playing_id)
+
+async def update_game_interface(playing_id: str, context: CallbackContext) -> None:
+    game = await get_game_data(playing_id)
+    if not game:
+        logger.error(f"Game {playing_id} not found when updating interface")
         return
     
     game["batter_choice"] = None
     game["bowler_choice"] = None
+    game["last_action"] = datetime.now(pytz.utc)
     
-    shared.multiplayer_games[game_id] = game
+    multiplayer_games[playing_id] = game
     game_collection.update_one(
-        {"game_id": game_id},
+        {"playing_id": playing_id},
         {"$set": {
             "batter_choice": None,
-            "bowler_choice": None
+            "bowler_choice": None,
+            "last_action": game["last_action"]
         }}
     )
     
@@ -389,7 +519,7 @@ async def update_game_interface(game_id: str, context: CallbackContext) -> None:
     batter_keyboard = []
     row = []
     for i in range(1, 7):
-        row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_id}|{i}"))
+        row.append(InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}|{i}"))
         if len(row) == 3:
             batter_keyboard.append(row)
             row = []
@@ -397,7 +527,7 @@ async def update_game_interface(game_id: str, context: CallbackContext) -> None:
     bowler_keyboard = []
     row = []
     for i in range(1, 7):
-        row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_id}|{i}"))
+        row.append(InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}|{i}"))
         if len(row) == 3:
             bowler_keyboard.append(row)
             row = []
@@ -427,7 +557,7 @@ async def update_game_interface(game_id: str, context: CallbackContext) -> None:
         except Exception as e:
             logger.error(f"Error sending interface to {user_id}: {e}")
 
-async def handle_play_button(update: Update, context: CallbackContext) -> None:
+async def Mhandle_play_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     
@@ -442,7 +572,7 @@ async def handle_play_button(update: Update, context: CallbackContext) -> None:
             await query.answer("Invalid game data")
             return
             
-        game_id = game_parts[0]
+        playing_id = game_parts[0]
         number = int(game_parts[1])
     except (ValueError, IndexError) as e:
         logger.error(f"Error parsing play data: {e}, data: {query.data}")
@@ -451,7 +581,7 @@ async def handle_play_button(update: Update, context: CallbackContext) -> None:
     
     user_id = int(user_id)
     
-    game = await get_game_data(game_id)
+    game = await get_game_data(playing_id)
     if not game:
         await query.answer("Game not found or expired!")
         return
@@ -464,7 +594,8 @@ async def handle_play_button(update: Update, context: CallbackContext) -> None:
         await query.answer("It's not your turn!")
         return
     
-    await update_last_move(game_id)
+    game["last_action"] = datetime.now(pytz.utc)
+    await update_last_move(playing_id)
 
     if user_id == game["current_batter"]:
         if game.get("batter_choice") is not None:
@@ -473,16 +604,16 @@ async def handle_play_button(update: Update, context: CallbackContext) -> None:
             
         game["batter_choice"] = number
         
-        shared.multiplayer_games[game_id] = game
+        multiplayer_games[playing_id] = game
         game_collection.update_one(
-            {"game_id": game_id},
-            {"$set": {"batter_choice": number}}
+            {"playing_id": playing_id},
+            {"$set": {"batter_choice": number, "last_action": game["last_action"]}}
         )
         
         await query.answer(f"Your choice: {number}")
         
         if game.get("bowler_choice") is not None:
-            await process_ball_result(game_id, context, query)
+            await process_ball_result(playing_id, context, query)
     
     elif user_id == game["current_bowler"]:
         if game.get("bowler_choice") is not None:
@@ -491,28 +622,28 @@ async def handle_play_button(update: Update, context: CallbackContext) -> None:
             
         game["bowler_choice"] = number
         
-        shared.multiplayer_games[game_id] = game
+        multiplayer_games[playing_id] = game
         game_collection.update_one(
-            {"game_id": game_id},
-            {"$set": {"bowler_choice": number}}
+            {"playing_id": playing_id},
+            {"$set": {"bowler_choice": number, "last_action": game["last_action"]}}
         )
         
         await query.answer(f"Your choice: {number}")
         
         if game.get("batter_choice") is not None:
-            await process_ball_result(game_id, context)
+            await process_ball_result(playing_id, context)
 
-async def process_ball_result(game_id: str, context: CallbackContext, query: CallbackQuery) -> None:
-    game = await get_game_data(game_id)
+async def process_ball_result(playing_id: str, context: CallbackContext, query: CallbackQuery) -> None:
+    game = await get_game_data(playing_id)
     if not game:
-        logger.error(f"Game {game_id} not found when processing ball result")
+        logger.error(f"Game {playing_id} not found when processing ball result")
         return
     
     batter_choice = game.get("batter_choice")
     bowler_choice = game.get("bowler_choice")
 
     if batter_choice is None or bowler_choice is None:
-        logger.error(f"Missing choices for game {game_id}: batter={batter_choice}, bowler={bowler_choice}")
+        logger.error(f"Missing choices for game {playing_id}: batter={batter_choice}, bowler={bowler_choice}")
         return
     
     result_text = (
@@ -541,16 +672,17 @@ async def process_ball_result(game_id: str, context: CallbackContext, query: Cal
             game["ball"] = 0
         
         if game["wickets"] >= game["max_wickets"] or game["over"] >= game["max_overs"]:
-            shared.multiplayer_games[game_id] = game
+            multiplayer_games[playing_id] = game
             game_collection.update_one(
-                {"game_id": game_id},
+                {"playing_id": playing_id},
                 {"$set": {
                     "wickets": game["wickets"],
                     "over": game["over"],
-                    "ball": game["ball"]
+                    "ball": game["ball"],
+                    "last_action": game["last_action"]
                 }}
             )
-            await end_innings(game_id, context)
+            await end_innings(playing_id, context)
             return
         
         current_batter = game["current_batter"]
@@ -558,15 +690,16 @@ async def process_ball_result(game_id: str, context: CallbackContext, query: Cal
         game["batters"].append(current_batter)
         game["current_batter"] = game["batters"][0]
         
-        shared.multiplayer_games[game_id] = game
+        multiplayer_games[playing_id] = game
         game_collection.update_one(
-            {"game_id": game_id},
+            {"playing_id": playing_id},
             {"$set": {
                 "wickets": game["wickets"],
                 "over": game["over"],
                 "ball": game["ball"],
                 "current_batter": game["current_batter"],
-                "batters": game["batters"]
+                "batters": game["batters"],
+                "last_action": game["last_action"]
             }}
         )
     else:
@@ -585,13 +718,13 @@ async def process_ball_result(game_id: str, context: CallbackContext, query: Cal
                 except Exception as e:
                     logger.error(f"Error sending result to {user_id}: {e}")
                     
-            shared.multiplayer_games[game_id] = game
+            multiplayer_games[playing_id] = game
             game_collection.update_one(
-                {"game_id": game_id},
-                {"$set": {"score": game["score"]}}
+                {"playing_id": playing_id},
+                {"$set": {"score": game["score"], "last_action": game["last_action"]}}
             )
             
-            await end_innings(game_id, context)
+            await end_innings(playing_id, context)
             return
         
         game["ball"] += 1
@@ -605,39 +738,41 @@ async def process_ball_result(game_id: str, context: CallbackContext, query: Cal
             game["current_bowler"] = game["bowlers"][0]
         
         if game["over"] >= game["max_overs"]:
-            shared.multiplayer_games[game_id] = game
+            multiplayer_games[playing_id] = game
             game_collection.update_one(
-                {"game_id": game_id},
+                {"playing_id": playing_id},
                 {"$set": {
                     "score": game["score"],
                     "over": game["over"],
                     "ball": game["ball"],
                     "current_bowler": game["current_bowler"],
-                    "bowlers": game["bowlers"]
+                    "bowlers": game["bowlers"],
+                    "last_action": game["last_action"]
                 }}
             )
             
-            await end_innings(game_id, context)
+            await end_innings(playing_id, context)
             return
         
-        shared.multiplayer_games[game_id] = game
+        multiplayer_games[playing_id] = game
         game_collection.update_one(
-            {"game_id": game_id},
+            {"playing_id": playing_id},
             {"$set": {
                 "score": game["score"],
                 "over": game["over"],
                 "ball": game["ball"],
                 "current_bowler": game["current_bowler"],
-                "bowlers": game["bowlers"]
+                "bowlers": game["bowlers"],
+                "last_action": game["last_action"]
             }}
         )
     
-    await update_game_interface(game_id, context)
+    await update_game_interface(playing_id, context)
 
-async def end_innings(game_id: str, context: CallbackContext) -> None:
-    game = await get_game_data(game_id)
+async def end_innings(playing_id: str, context: CallbackContext) -> None:
+    game = await get_game_data(playing_id)
     if not game:
-        logger.error(f"Game {game_id} not found when ending innings")
+        logger.error(f"Game {playing_id} not found when ending innings")
         return
     
     if game["innings"] == 1:
@@ -649,10 +784,11 @@ async def end_innings(game_id: str, context: CallbackContext) -> None:
         game["batters"], game["bowlers"] = game["bowlers"], game["batters"]
         game["current_batter"] = game["batters"][0]
         game["current_bowler"] = game["bowlers"][0]
+        game["last_action"] = datetime.now(pytz.utc)
         
-        shared.multiplayer_games[game_id] = game
+        multiplayer_games[playing_id] = game
         game_collection.update_one(
-            {"game_id": game_id},
+            {"playing_id": playing_id},
             {"$set": {
                 "innings": game["innings"],
                 "target": game["target"],
@@ -662,7 +798,8 @@ async def end_innings(game_id: str, context: CallbackContext) -> None:
                 "batters": game["batters"],
                 "bowlers": game["bowlers"],
                 "current_batter": game["current_batter"],
-                "current_bowler": game["current_bowler"]
+                "current_bowler": game["current_bowler"],
+                "last_action": game["last_action"]
             }}
         )
         
@@ -679,14 +816,14 @@ async def end_innings(game_id: str, context: CallbackContext) -> None:
             except Exception as e:
                 logger.error(f"Error notifying player {user_id}: {e}")
         
-        await update_game_interface(game_id, context)
+        await update_game_interface(playing_id, context)
     else:
-        await declare_winner(game_id, context)
+        await declare_winner(playing_id, context)
 
-async def declare_winner(game_id: str, context: CallbackContext, innings_result=None) -> None:
-    game = await get_game_data(game_id)
+async def declare_winner(playing_id: str, context: CallbackContext, innings_result=None) -> None:
+    game = await get_game_data(playing_id)
     if not game:
-        logger.error(f"Game {game_id} not found when declaring winner")
+        logger.error(f"Game {playing_id} not found when declaring winner")
         return
     
     target = game.get("target", 0)
@@ -713,8 +850,9 @@ async def declare_winner(game_id: str, context: CallbackContext, innings_result=
     )
     
     try:
-        await context.bot.send_message(
+        await context.bot.edit_message_text(
             chat_id=game["group_chat_id"],
+            message_id=game["message_id"],
             text=result_message,
             parse_mode="Markdown"
         )
@@ -740,29 +878,31 @@ async def declare_winner(game_id: str, context: CallbackContext, innings_result=
         except Exception as e:
             logger.error(f"Error sending result to {user_id}: {e}")
     
-    if game_id in shared.multiplayer_games:
-        del shared.multiplayer_games[game_id]
+    if playing_id in multiplayer_games:
+        del multiplayer_games[playing_id]
     
-    game_collection.delete_one({"game_id": game_id})
+    game_collection.delete_one({"playing_id": playing_id})
 
-async def handle_cancel_button(update: Update, context: CallbackContext) -> None:
+async def Mhandle_cancel_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id = query.data.split('_', 1)
+    _, playing_id = query.data.split('_', 1)
     
-    game = await get_game_data(game_id)
+    game = await get_game_data(playing_id)
     if not game:
         await query.answer("Game not found or expired!")
         return
     
-    if user_id not in game["batters"] and user_id not in game["bowlers"]:
-        await query.answer("You can't cancel - not your turn!")
+    if user_id != game["admin_id"]:
+        await query.answer("Only the game admin can cancel the game!")
         return
     
     try:
-        await context.bot.send_message(
+        await context.bot.edit_message_text(
             chat_id=game["group_chat_id"],
-            text=f"🛑 Game cancelled by a player!"
+            message_id=game["message_id"],
+            text="🛑 Game cancelled by admin!",
+            parse_mode="Markdown"
         )
         
         try:
@@ -785,18 +925,141 @@ async def handle_cancel_button(update: Update, context: CallbackContext) -> None
         except Exception as e:
             logger.error(f"Error notifying player {uid} about cancellation: {e}")
     
-    if game_id in shared.multiplayer_games:
-        del shared.multiplayer_games[game_id]
+    if playing_id in multiplayer_games:
+        del multiplayer_games[playing_id]
     
-    game_collection.delete_one({"game_id": game_id})
+    game_collection.delete_one({"playing_id": playing_id})
     
     await query.answer("Game cancelled!")
+
+async def extend_time(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    playing_id = str(chat_id)
+    
+    game = await get_game_data(playing_id)
+    if not game:
+        await update.message.reply_text("No game found in this chat!")
+        return
+    
+    if user.id != game["admin_id"]:
+        await update.message.reply_text("Only the game admin can extend time!")
+        return
+    
+    if game["status"] != "ready":
+        await update.message.reply_text("Game is already started or not ready!")
+        return
+    
+    game["start_time"] = game["start_time"] + timedelta(seconds=15)
+    multiplayer_games[playing_id] = game
+    game_collection.update_one({"playing_id": playing_id}, {"$set": {"start_time": game["start_time"]}})
+    
+    await context.bot.edit_message_text(
+        chat_id=game["group_chat_id"],
+        message_id=game["message_id"],
+        text=f"Time extended! Game will start in {int((game['start_time'] - datetime.now(pytz.utc)).total_seconds())} seconds...",
+        parse_mode="Markdown"
+    )
+    
+    await update.message.delete()
+
+async def stop_game(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    playing_id = str(chat_id)
+    
+    game = await get_game_data(playing_id)
+    if not game:
+        await update.message.reply_text("No game found in this chat!")
+        return
+    
+    if user.id != game["admin_id"]:
+        await update.message.reply_text("Only the game admin can stop the game!")
+        return
+    
+    try:
+        await context.bot.edit_message_text(
+            chat_id=game["group_chat_id"],
+            message_id=game["message_id"],
+            text="🛑 Game stopped by admin!",
+            parse_mode="Markdown"
+        )
+        
+        try:
+            await context.bot.unpin_chat_message(
+                chat_id=game["group_chat_id"],
+                message_id=game["message_id"]
+            )
+        except Exception as e:
+            logger.error(f"Error unpinning message: {e}")
+            
+    except Exception as e:
+        logger.error(f"Error sending stop notification: {e}")
+    
+    for uid in game["batters"] + game["bowlers"]:
+        try:
+            await context.bot.send_message(
+                chat_id=uid,
+                text="🛑 Game has been stopped by admin!"
+            )
+        except Exception as e:
+            logger.error(f"Error notifying player {uid} about stop: {e}")
+    
+    if playing_id in multiplayer_games:
+        del multiplayer_games[playing_id]
+    
+    game_collection.delete_one({"playing_id": playing_id})
+    
+    await update.message.delete()
+
+async def list_players(update: Update, context: CallbackContext) -> None:
+    chat_id = update.effective_chat.id
+    playing_id = str(chat_id)
+    
+    game = await get_game_data(playing_id)
+    if not game:
+        await update.message.reply_text("No game found in this chat!")
+        return
+    
+    batter_names = []
+    for uid in game["batters"]:
+        try:
+            name = await get_user_name_cached(uid, context)
+            batter_names.append(name)
+        except:
+            batter_names.append(f"Player {uid}")
+    
+    bowler_names = []
+    for uid in game["bowlers"]:
+        try:
+            name = await get_user_name_cached(uid, context)
+            bowler_names.append(name)
+        except:
+            bowler_names.append(f"Player {uid}")
+    
+    text = f"👥 *Current Players*\n\n"
+    text += f"▶️ Batters ({len(batter_names)}/{game['max_wickets']}):\n"
+    text += "\n".join([f"- {name}" for name in batter_names]) if batter_names else "None"
+    text += f"\n\n▶️ Bowlers ({len(bowler_names)}/{game['max_wickets']}):\n"
+    text += "\n".join([f"- {name}" for name in bowler_names]) if bowler_names else "None"
+    
+    await context.bot.edit_message_text(
+        chat_id=game["group_chat_id"],
+        message_id=game["message_id"],
+        text=text,
+        parse_mode="Markdown"
+    )
+    
+    await update.message.delete()
 
 def get_multiplayer_handlers():
     return [
         CommandHandler("multiplayer", multiplayer),
-        CallbackQueryHandler(handle_join_button, pattern=r"^join_(batter|bowler)_"),
-        CallbackQueryHandler(handle_remove_button, pattern=r"^remove_"),
-        CallbackQueryHandler(handle_play_button, pattern=r"^play_"),
-        CallbackQueryHandler(handle_cancel_button, pattern=r"^cancel_")
+        CommandHandler("extend", extend_time),
+        CommandHandler("stop", stop_game),
+        CommandHandler("list", list_players),
+        CallbackQueryHandler(MButton_join, pattern='^Mjoin_[\s\S]*$'),
+        CallbackQueryHandler(Mhandle_remove_button, pattern='^Mremove_[\s\S]*$'),
+        CallbackQueryHandler(Mhandle_play_button, pattern='^Mplay_[\s\S]*$'),
+        CallbackQueryHandler(Mhandle_cancel_button, pattern='^Mcancel_[\s\S]*$')
     ]

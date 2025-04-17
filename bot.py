@@ -11,6 +11,9 @@ from telegram.constants import ChatType
 from token_1 import token
 
 from genshin_game import get_genshin_handlers
+from multiplayer import (
+    get_multiplayer_handlers,
+)
 from cricket import (
     get_cricket_handlers,
     chat_cricket,
@@ -683,6 +686,8 @@ def main() -> None:
         filters.Regex(r"^/start watch_([0-9]{3})$"),        
         handle_watch_button    
     ))
+    for handler in get_multiplayer_handlers():
+        application.add_handler(handler)
     for handler in get_claim_handlers():        
         application.add_handler(handler)
     for handler in get_bdice_handlers():
@@ -702,13 +707,9 @@ def main() -> None:
         (filters.TEXT | filters.Sticker.ALL) & ~filters.COMMAND,
         handle_genshin_group_message
     ))
-    # Add error handler
     application.add_error_handler(error_handler)
     
-    # Set up other jobs
     setup_jobs(application)
-
-    # Run the bot
     application.run_polling()
 
 if __name__ == '__main__':

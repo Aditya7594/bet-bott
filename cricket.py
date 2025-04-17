@@ -12,8 +12,6 @@ from datetime import datetime, timedelta
 from telegram import User
 from functools import lru_cache
 
-from functools import lru_cache
-
 @lru_cache(maxsize=512)
 def get_user_name_cached_sync(user_id: int, fallback: str = "Player") -> str:
     return fallback  # fallback if async call fails
@@ -348,14 +346,14 @@ async def update_game_interface(game_id: str, context: CallbackContext, text: st
 async def handle_join_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id = query.data.split('_', 1)  # Modified to handle the new game_id format
-    
+    _, game_id = query.data.split('_', 1)  
     if not await check_user_started_bot(update, context):
         return
-    
+  
     if game_id not in cricket_games:
         await query.answer("Game not found or expired!")
         return
+    print(1)
 
     game = cricket_games[game_id]
     
@@ -402,7 +400,6 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
         except Exception as e:
             logger.error(f"Error sending toss message to {player_id}: {e}")
 
-    # ✅ Save the active game to MongoDB so /c or /chat works
     try:
         db['cricket_games'].update_one(
             {"_id": game_id},
@@ -424,7 +421,7 @@ async def handle_join_button(update: Update, context: CallbackContext) -> None:
 async def handle_watch_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    _, game_id = query.data.split('_', 1)  # Modified to handle the new game_id format
+    _, game_id = query.data.split('_', 1)  #
 
     if not await check_user_started_bot(update, context):
         return
@@ -1218,36 +1215,29 @@ async def stats(update: Update, context: CallbackContext) -> None:
     text += f"🏃 *Performance*\n"
     text += f"▫️ Total Runs: {stats.get('runs', 0)}\n"
     text += f"▫️ Wickets Taken: {stats.get('wickets', 0)}\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
     
-
-async def leaderboard_callback(update: Update, context: CallbackContext) -> None:
-    """Handle leaderboard button callback"""
-    query = update.callback_query
-    
-    top_players = user_collection.find({}, {"_id": 0, "user_id": 1, "first_name": 1, "stats": 1}) \
-                                .sort([("stats.wins", -1), ("stats.runs", -1)]) \
-                                .limit(10)
-    
-    text = "🏆 *Leaderboard:*\n\n"
-    player_list = list(top_players)  # Convert cursor to list to prevent cursor timeout
-    
-    for idx, player in enumerate(player_list, 1):
-        stats = player.get("stats", {})
-        text += f"{idx}. {player.get('first_name', 'Unknown')} - Wins: {stats.get('wins', 0)}, Runs: {stats.get('runs', 0)}\n"
     
 
 async def leaderboard(update: Update, context: CallbackContext) -> None:
     """Handle the /leaderboard command"""
-    top_players = user_collection.find({}, {"_id": 0, "user_id": 1, "first_name": 1, "stats": 1}) \
-                                .sort([("stats.wins", -1), ("stats.runs", -1)]) \
-                                .limit(25)
-    
+    top_players = user_collection.find(
+        {},
+        {"_id": 0, "user_id": 1, "first_name": 1, "stats": 1}
+    ).sort([
+        ("stats.wins", -1),
+        ("stats.runs", -1)
+    ]).limit(25)
+
     text = "🏆 *Leaderboard:*\n\n"
-    player_list = list(top_players)  # Convert cursor to list to prevent cursor timeout
-    
-    for idx, player in enumerate(player_list, 1):
+    for idx, player in enumerate(top_players, 1):
         stats = player.get("stats", {})
-        text += f"{idx}. {player.get('first_name', 'Unknown')} - Wins: {stats.get('wins', 0)}, Runs: {stats.get('runs', 0)}\n"
+        name = player.get("first_name", "Unknown")
+        wins = stats.get("wins", 0)
+        runs = stats.get("runs", 0)
+        text += f"{idx}. {name} - Wins: {wins}, Runs: {runs}\n"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
     
 def setup_jobs(application):
     job_queue = application.job_queue
@@ -1375,6 +1365,7 @@ async def category_navigation_callback(update: Update, context: CallbackContext)
     # Update the cooldown time
     button_cooldowns[user_id] = current_time
     
+    
     if data.startswith("category_"):
         try:
             # Extract category index from data (format: "category_INDEX_USER_ID")
@@ -1390,6 +1381,7 @@ async def category_navigation_callback(update: Update, context: CallbackContext)
 
 async def achievements_command(update: Update, context: CallbackContext) -> None:
     await show_achievements_by_category(update, context, 0)
+    
 
 async def check_achievements(user_id, context=None):
     user_id_str = str(user_id)
