@@ -971,7 +971,7 @@ async def extend_time(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("Only the game admin can extend time!")
         return
     
-    if game["status"] != "    if game["status"] != "ready":
+    if game["status"] != "ready":
         await update.message.reply_text("Game is already started or not ready!")
         return
     
@@ -1068,8 +1068,9 @@ async def list_players(update: Update, context: CallbackContext) -> None:
     text += f"\n\n▶️ Bowlers ({len(bowler_names)}/{game['max_wickets']}):\n"
     text += "\n".join([f"- {name}" for name in bowler_names]) if bowler_names else "None"
     
-    await context.bot.send_message(
-        chat_id=chat_id,
+    await context.bot.edit_message_text(
+        chat_id=game["group_chat_id"],
+        message_id=game["message_id"],
         text=text,
         parse_mode="Markdown"
     )
