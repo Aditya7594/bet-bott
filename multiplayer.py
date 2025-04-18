@@ -134,7 +134,9 @@ async def multiplayer(update: Update, context: CallbackContext) -> None:
         "over": 0,
         "ball": 0,
         "innings": 1,
-        "last_action": get_current_utc_time()
+        "last_action": get_current_utc_time(),
+        "batter_stats": {},
+        "bowler_stats": {}
     }
 
     logger.info(f"[multiplayer] Creating new game with ID: {playing_id}")
@@ -450,13 +452,19 @@ async def start_game(playing_id: str, context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"Error updating group message: {e}")
     
+    # Initialize player messages dict
+    game["player_messages"] = {}
+    
+    # Send initial notification message to all players
     for user_id in game["batters"] + game["bowlers"]:
         try:
-            await context.bot.send_message(
+            message = await context.bot.send_message(
                 chat_id=user_id,
                 text="🎮 Game has started! You are part of the tournament.\n\n"
                     "Wait for your turn to bat or bowl."
             )
+            # Store message ID
+            game["player_messages"][str(user_id)] = message.message_id
         except Exception as e:
             logger.error(f"Error notifying player {user_id}: {e}")
     
@@ -487,7 +495,8 @@ async def start_game(playing_id: str, context: CallbackContext) -> None:
             "over": game["over"],
             "ball": game["ball"],
             "innings": game["innings"],
-            "last_action": game["last_action"]
+            "last_action": game["last_action"],
+            "player_messages": game["player_messages"]
         }}
     )
     
@@ -495,11 +504,15 @@ async def start_game(playing_id: str, context: CallbackContext) -> None:
     await update_game_interface(playing_id, context)
 
 async def game_timeout_checker(playing_id: str, context: CallbackContext):
-    game = await get_game_data(playing_id)
-    if not game:
-        return
-    
-    while game["status"] == "started":
+    while True:
+        game = await get_game_data(playing_id)
+        if not game:
+            logger.warning(f"[TimeoutChecker] Game {playing_id} no longer exists. Exiting timeout checker.")
+            return  # Exit loop safely
+
+        if game["status"] != "started":
+            return  # Exit if game is not active
+
         now = datetime.now(pytz.utc)
         elapsed = (now - game["last_action"]).total_seconds()
         
@@ -550,6 +563,10 @@ async def update_game_interface(playing_id: str, context: CallbackContext) -> No
     game["bowler_choice"] = None
     game["last_action"] = datetime.now(pytz.utc)
     
+    # Initialize player_messages dict if not exists
+    if "player_messages" not in game:
+        game["player_messages"] = {}
+    
     async with games_lock:
         multiplayer_games[playing_id] = game
     game_collection.update_one(
@@ -557,7 +574,8 @@ async def update_game_interface(playing_id: str, context: CallbackContext) -> No
         {"$set": {
             "batter_choice": None,
             "bowler_choice": None,
-            "last_action": game["last_action"]
+            "last_action": game["last_action"],
+            "player_messages": game.get("player_messages", {})
         }}
     )
     
@@ -591,32 +609,58 @@ async def update_game_interface(playing_id: str, context: CallbackContext) -> No
             row = []
     
     for user_id in game["batters"] + game["bowlers"]:
+        user_id_str = str(user_id)
         try:
             if user_id == batter_id:
-                await context.bot.edit_message_text(
-                    chat_id=user_id,
-                    message_id=game.get("player_message_id", user_id),
-                    text=status_text + f"🔸 Your turn to bat! Choose a number (1-6):",
-                    reply_markup=InlineKeyboardMarkup(batter_keyboard),
-                    parse_mode="Markdown"
-                )
+                message_text = status_text + f"🔸 Your turn to bat! Choose a number (1-6):"
+                markup = InlineKeyboardMarkup(batter_keyboard)
             elif user_id == bowler_id:
-                await context.bot.edit_message_text(
-                    chat_id=user_id,
-                    message_id=game.get("player_message_id", user_id),
-                    text=status_text + f"🔹 Your turn to bowl! Choose a number (1-6):",
-                    reply_markup=InlineKeyboardMarkup(bowler_keyboard),
-                    parse_mode="Markdown"
-                )
+                message_text = status_text + f"🔹 Your turn to bowl! Choose a number (1-6):"
+                markup = InlineKeyboardMarkup(bowler_keyboard)
             else:
-                await context.bot.edit_message_text(
+                message_text = status_text + f"⌛ Waiting for batter and bowler to play..."
+                markup = None
+                
+            # If we have a message ID for this user, edit it
+            if user_id_str in game["player_messages"]:
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=user_id,
+                        message_id=game["player_messages"][user_id_str],
+                        text=message_text,
+                        reply_markup=markup,
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    logger.error(f"Error editing message for user {user_id}: {e}")
+                    # Message might have been deleted, send a new one
+                    message = await context.bot.send_message(
+                        chat_id=user_id,
+                        text=message_text,
+                        reply_markup=markup,
+                        parse_mode="Markdown"
+                    )
+                    game["player_messages"][user_id_str] = message.message_id
+            else:
+                # Send a new message and store the ID
+                message = await context.bot.send_message(
                     chat_id=user_id,
-                    message_id=game.get("player_message_id", user_id),
-                    text=status_text + f"⌛ Waiting for batter and bowler to play...",
+                    text=message_text,
+                    reply_markup=markup,
                     parse_mode="Markdown"
                 )
+                game["player_messages"][user_id_str] = message.message_id
+            
         except Exception as e:
             logger.error(f"Error sending interface to {user_id}: {e}")
+    
+    # Update player_messages in DB and memory
+    async with games_lock:
+        multiplayer_games[playing_id]["player_messages"] = game["player_messages"]
+    game_collection.update_one(
+        {"playing_id": playing_id},
+        {"$set": {"player_messages": game["player_messages"]}}
+    )
 
 async def Mhandle_play_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -715,18 +759,45 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
         f"Bowler chose: {bowler_choice}\n\n"
     )
     
+    status_text = f"🏏 *Cricket Tournament - {'1st' if game['innings'] == 1 else '2nd'} Innings*\n\n"
+    status_text += f"⏳ Over: {game['over']}.{game['ball']}\n"
+    status_text += f"📊 Score: {game['score']}/{game['wickets']}\n"
+    
+    if game["innings"] == 2 and game.get("target"):
+        status_text += f"🎯 Target: {game['target']} runs\n"
+        status_text += f"💯 Need {game['target'] - game['score']} more runs\n\n"
+    else:
+        status_text += "\n"
+    
     if batter_choice == bowler_choice:
         result_text += f"🎯 OUT! Batter is dismissed!"
         game["wickets"] += 1
         
+        # Update bowler stats
+        bowler_id = game["current_bowler"]
+        if str(bowler_id) not in game["bowler_stats"]:
+            game["bowler_stats"][str(bowler_id)] = {"wickets": 0, "runs": 0}
+        game["bowler_stats"][str(bowler_id)]["wickets"] += 1
+        
         for user_id in game["batters"] + game["bowlers"]:
+            user_id_str = str(user_id)
             try:
-                await context.bot.edit_message_text(
-                    chat_id=user_id,
-                    message_id=game.get("player_message_id", user_id),
-                    text=result_text,
-                    parse_mode="Markdown"
-                )
+                if user_id_str in game.get("player_messages", {}):
+                    await context.bot.edit_message_text(
+                        chat_id=user_id,
+                        message_id=game["player_messages"][user_id_str],
+                        text=status_text + result_text,
+                        parse_mode="Markdown"
+                    )
+                else:
+                    message = await context.bot.send_message(
+                        chat_id=user_id,
+                        text=status_text + result_text,
+                        parse_mode="Markdown"
+                    )
+                    if "player_messages" not in game:
+                        game["player_messages"] = {}
+                    game["player_messages"][user_id_str] = message.message_id
             except Exception as e:
                 logger.error(f"Error sending result to {user_id}: {e}")
         
@@ -744,7 +815,9 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
                     "wickets": game["wickets"],
                     "over": game["over"],
                     "ball": game["ball"],
-                    "last_action": game["last_action"]
+                    "last_action": game["last_action"],
+                    "player_messages": game.get("player_messages", {}),
+                    "bowler_stats": game["bowler_stats"]
                 }}
             )
             await end_innings(playing_id, context)
@@ -766,7 +839,9 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
                 "ball": game["ball"],
                 "current_batter": game["current_batter"],
                 "batters": game["batters"],
-                "last_action": game["last_action"]
+                "last_action": game["last_action"],
+                "player_messages": game.get("player_messages", {}),
+                "bowler_stats": game["bowler_stats"]
             }}
         )
     else:
@@ -774,23 +849,45 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
         result_text += f"💥 {runs} run{'s' if runs > 1 else ''} scored!"
         game["score"] += runs
         
-        if game["innings"] == 2 and game.get("target") and game["score"] >= game["target"]:
-            for user_id in game["batters"] + game["bowlers"]:
-                try:
+        # Update batter stats
+        batter_id = game["current_batter"]
+        if str(batter_id) not in game["batter_stats"]:
+            game["batter_stats"][str(batter_id)] = {"runs": 0}
+        game["batter_stats"][str(batter_id)]["runs"] += runs
+        
+        for user_id in game["batters"] + game["bowlers"]:
+            user_id_str = str(user_id)
+            try:
+                if user_id_str in game.get("player_messages", {}):
                     await context.bot.edit_message_text(
                         chat_id=user_id,
-                        message_id=game.get("player_message_id", user_id),
-                        text=result_text,
+                        message_id=game["player_messages"][user_id_str],
+                        text=status_text + result_text,
                         parse_mode="Markdown"
                     )
-                except Exception as e:
-                    logger.error(f"Error sending result to {user_id}: {e}")
-                    
+                else:
+                    message = await context.bot.send_message(
+                        chat_id=user_id,
+                        text=status_text + result_text,
+                        parse_mode="Markdown"
+                    )
+                    if "player_messages" not in game:
+                        game["player_messages"] = {}
+                    game["player_messages"][user_id_str] = message.message_id
+            except Exception as e:
+                logger.error(f"Error sending result to {user_id}: {e}")
+        
+        if game["innings"] == 2 and game.get("target") and game["score"] >= game["target"]:                    
             async with games_lock:
                 multiplayer_games[playing_id] = game
             game_collection.update_one(
                 {"playing_id": playing_id},
-                {"$set": {"score": game["score"], "last_action": game["last_action"]}}
+                {"$set": {
+                    "score": game["score"], 
+                    "last_action": game["last_action"],
+                    "player_messages": game.get("player_messages", {}),
+                    "batter_stats": game["batter_stats"]
+                }}
             )
             
             await end_innings(playing_id, context)
@@ -818,7 +915,9 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
                     "ball": game["ball"],
                     "current_bowler": game["current_bowler"],
                     "bowlers": game["bowlers"],
-                    "last_action": game["last_action"]
+                    "last_action": game["last_action"],
+                    "player_messages": game.get("player_messages", {}),
+                    "batter_stats": game["batter_stats"]
                 }}
             )
             
@@ -835,10 +934,14 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
                 "ball": game["ball"],
                 "current_bowler": game["current_bowler"],
                 "bowlers": game["bowlers"],
-                "last_action": game["last_action"]
+                "last_action": game["last_action"],
+                "player_messages": game.get("player_messages", {}),
+                "batter_stats": game["batter_stats"]
             }}
         )
     
+    # Wait a few seconds to let users read the result before updating the interface
+    await asyncio.sleep(0.5)
     await update_game_interface(playing_id, context)
 
 async def end_innings(playing_id: str, context: CallbackContext) -> None:
@@ -848,8 +951,10 @@ async def end_innings(playing_id: str, context: CallbackContext) -> None:
         return
     
     if game["innings"] == 1:
+        first_innings_score = game["score"]
         game["target"] = game["score"] + 1
         game["innings"] = 2
+        game["score"] = 0
         game["over"] = 0
         game["ball"] = 0
         game["wickets"] = 0
@@ -865,6 +970,7 @@ async def end_innings(playing_id: str, context: CallbackContext) -> None:
             {"$set": {
                 "innings": game["innings"],
                 "target": game["target"],
+                "score": game["score"],
                 "over": game["over"],
                 "ball": game["ball"],
                 "wickets": game["wickets"],
@@ -876,20 +982,38 @@ async def end_innings(playing_id: str, context: CallbackContext) -> None:
             }}
         )
         
+        innings_message = (
+            f"🏏 *First Innings Completed!*\n\n"
+            f"First Innings Score: {first_innings_score}/{game['max_wickets']}\n"
+            f"Second Innings Target: {game['target']} runs\n\n"
+            f"Roles have been swapped. Game will continue shortly."
+        )
+        
+        # Update all player messages
         for user_id in game["batters"] + game["bowlers"]:
+            user_id_str = str(user_id)
             try:
-                await context.bot.edit_message_text(
-                    chat_id=user_id,
-                    message_id=game.get("player_message_id", user_id),
-                    text=f"🏏 *Innings Completed!*\n\n"
-                        f"First Innings Score: {game['score']}/{game['wickets']}\n"
-                        f"Second Innings Target: {game['target']} runs\n\n"
-                        f"Roles have been swapped. Game will continue shortly.",
-                    parse_mode="Markdown"
-                )
+                if user_id_str in game.get("player_messages", {}):
+                    await context.bot.edit_message_text(
+                        chat_id=user_id,
+                        message_id=game["player_messages"][user_id_str],
+                        text=innings_message,
+                        parse_mode="Markdown"
+                    )
+                else:
+                    message = await context.bot.send_message(
+                        chat_id=user_id,
+                        text=innings_message,
+                        parse_mode="Markdown"
+                    )
+                    if "player_messages" not in game:
+                        game["player_messages"] = {}
+                    game["player_messages"][user_id_str] = message.message_id
             except Exception as e:
                 logger.error(f"Error notifying player {user_id}: {e}")
         
+        # Wait a few seconds before updating the interface
+        await asyncio.sleep(3)
         await update_game_interface(playing_id, context)
     else:
         await declare_winner(playing_id, context)
@@ -943,6 +1067,21 @@ async def declare_winner(playing_id: str, context: CallbackContext, innings_resu
     team_a_text = "\n".join([f"- {name}" for name in team_a_players]) if team_a_players else "None"
     team_b_text = "\n".join([f"- {name}" for name in team_b_players]) if team_b_players else "None"
     
+    # Prepare detailed statistics
+    batter_stats_text = ""
+    if game.get("batter_stats"):
+        batter_stats_text += "\n*Batter Stats:*\n"
+        for player_id, stats in game["batter_stats"].items():
+            player_name = await get_user_name_cached(int(player_id), context)
+            batter_stats_text += f"{player_name}: {stats['runs']} runs\n"
+    
+    bowler_stats_text = ""
+    if game.get("bowler_stats"):
+        bowler_stats_text += "\n*Bowler Stats:*\n"
+        for player_id, stats in game["bowler_stats"].items():
+            player_name = await get_user_name_cached(int(player_id), context)
+            bowler_stats_text += f"{player_name}: {stats['wickets']} wickets\n"
+    
     result_message = innings_result if innings_result else ""
     result_message += (
         f"🏆 *GAME OVER!*\n\n"
@@ -951,11 +1090,13 @@ async def declare_winner(playing_id: str, context: CallbackContext, innings_resu
         f"Final Scores:\n"
         f"{team_a}: {first_innings_score} runs\n"
         f"{team_b}: {second_innings_score} runs\n\n"
+        f"{batter_stats_text}"
+        f"{bowler_stats_text}"
         f"🏆 {winner} won {margin}!\n"
     )
     
     try:
-        # Edit the existing message instead of sending a new one
+        # Edit the existing message in the group chat
         await context.bot.edit_message_text(
             chat_id=game["group_chat_id"],
             message_id=game["message_id"],
@@ -974,15 +1115,23 @@ async def declare_winner(playing_id: str, context: CallbackContext, innings_resu
     except Exception as e:
         logger.error(f"Error sending result to group chat: {e}")
 
+    # Update all player messages with the result
     for user_id in game["batters"] + game["bowlers"]:
+        user_id_str = str(user_id)
         try:
-            # Edit the existing message for players instead of sending new ones
-            await context.bot.edit_message_text(
-                chat_id=user_id,
-                message_id=game.get("player_message_id", user_id),
-                text=result_message,
-                parse_mode="Markdown"
-            )
+            if user_id_str in game.get("player_messages", {}):
+                await context.bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=game["player_messages"][user_id_str],
+                    text=result_message,
+                    parse_mode="Markdown"
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=result_message,
+                    parse_mode="Markdown"
+                )
         except Exception as e:
             logger.error(f"Error sending result to {user_id}: {e}")
     
