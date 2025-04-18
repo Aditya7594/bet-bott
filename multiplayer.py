@@ -23,29 +23,29 @@ user_collection = db['users']
 game_collection = db["multiplayer_games"]
 
 multiplayer_games = {}
+games_lock = asyncio.Lock()
 
 # Ensure UTC timezone is used consistently
 def get_current_utc_time():
     return datetime.now(pytz.utc)
 
-# Shared game state reference with lock
-multiplayer_games = {}
-games_lock = asyncio.Lock()
+# Shared game state reference
+multiplayer_games = multiplayer_games
 
 # Update last_move on every interaction
 async def update_last_move(playing_id: str):
     current_time = get_current_utc_time()
-    async with games_lock:
-        try:
-            game_collection.update_one(
-                {"playing_id": playing_id},
-                {"$set": {"last_move": current_time}}
-            )
+    try:
+        game_collection.update_one(
+            {"playing_id": playing_id},
+            {"$set": {"last_move": current_time}}
+        )
+        async with games_lock:
             if playing_id in multiplayer_games:
                 multiplayer_games[playing_id]["last_move"] = current_time
-            logger.info(f"Updated last_move for game {playing_id} to {current_time}")
-        except Exception as e:
-            logger.error(f"Error updating last_move for game {playing_id}: {e}")
+        logger.info(f"Updated last_move for game {playing_id} to {current_time}")
+    except Exception as e:
+        logger.error(f"Error updating last_move for game {playing_id}: {e}")
 
 async def check_user_started_bot(update: Update, context: CallbackContext) -> bool:
     query = update.callback_query
@@ -570,22 +570,25 @@ async def update_game_interface(playing_id: str, context: CallbackContext) -> No
     for user_id in game["batters"] + game["bowlers"]:
         try:
             if user_id == batter_id:
-                await context.bot.send_message(
+                await context.bot.edit_message_text(
                     chat_id=user_id,
+                    message_id=game.get("player_message_id", user_id),
                     text=status_text + f"🔸 Your turn to bat! Choose a number (1-6):",
                     reply_markup=InlineKeyboardMarkup(batter_keyboard),
                     parse_mode="Markdown"
                 )
             elif user_id == bowler_id:
-                await context.bot.send_message(
+                await context.bot.edit_message_text(
                     chat_id=user_id,
+                    message_id=game.get("player_message_id", user_id),
                     text=status_text + f"🔹 Your turn to bowl! Choose a number (1-6):",
                     reply_markup=InlineKeyboardMarkup(bowler_keyboard),
                     parse_mode="Markdown"
                 )
             else:
-                await context.bot.send_message(
+                await context.bot.edit_message_text(
                     chat_id=user_id,
+                    message_id=game.get("player_message_id", user_id),
                     text=status_text + f"⌛ Waiting for batter and bowler to play...",
                     parse_mode="Markdown"
                 )
@@ -695,8 +698,9 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
         
         for user_id in game["batters"] + game["bowlers"]:
             try:
-                await context.bot.send_message(
+                await context.bot.edit_message_text(
                     chat_id=user_id,
+                    message_id=game.get("player_message_id", user_id),
                     text=result_text,
                     parse_mode="Markdown"
                 )
@@ -750,8 +754,9 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
         if game["innings"] == 2 and game.get("target") and game["score"] >= game["target"]:
             for user_id in game["batters"] + game["bowlers"]:
                 try:
-                    await context.bot.send_message(
+                    await context.bot.edit_message_text(
                         chat_id=user_id,
+                        message_id=game.get("player_message_id", user_id),
                         text=result_text,
                         parse_mode="Markdown"
                     )
@@ -850,8 +855,9 @@ async def end_innings(playing_id: str, context: CallbackContext) -> None:
         
         for user_id in game["batters"] + game["bowlers"]:
             try:
-                await context.bot.send_message(
+                await context.bot.edit_message_text(
                     chat_id=user_id,
+                    message_id=game.get("player_message_id", user_id),
                     text=f"🏏 *Innings Completed!*\n\n"
                         f"First Innings Score: {game['score']}/{game['wickets']}\n"
                         f"Second Innings Target: {game['target']} runs\n\n"
@@ -875,26 +881,58 @@ async def declare_winner(playing_id: str, context: CallbackContext, innings_resu
     first_innings_score = target - 1 if target else 0
     second_innings_score = game["score"]
     
+    # Determine team names based on innings
+    team_a = "Team A" if game["innings"] == 2 else "Team B"
+    team_b = "Team B" if game["innings"] == 2 else "Team A"
+    
+    # Get player names for both teams
+    team_a_players = []
+    for uid in game["batters"] if game["innings"] == 2 else game["bowlers"]:
+        try:
+            name = await get_user_name_cached(uid, context)
+            team_a_players.append(name)
+        except:
+            team_a_players.append(f"Player {uid}")
+    
+    team_b_players = []
+    for uid in game["bowlers"] if game["innings"] == 2 else game["batters"]:
+        try:
+            name = await get_user_name_cached(uid, context)
+            team_b_players.append(name)
+        except:
+            team_b_players.append(f"Player {uid}")
+    
     if game["innings"] == 2:
         if second_innings_score >= target:
-            winner_team = "Second batting team"
-            margin = f"by {game['max_wickets'] - game['wickets']} wickets"
+            winner = team_b
+            if game["wickets"] < game["max_wickets"]:
+                margin = f"by {game['max_wickets'] - game['wickets']} wickets"
+            else:
+                margin = "by last wicket"
         else:
-            winner_team = "First batting team"
+            winner = team_a
             margin = f"by {target - second_innings_score - 1} runs"
     else:
-        winner_team = "Game incomplete"
-        margin = ""
+        winner = "No winner"
+        margin = "Game ended early"
+    
+    # Format player lists
+    team_a_text = "\n".join([f"- {name}" for name in team_a_players]) if team_a_players else "None"
+    team_b_text = "\n".join([f"- {name}" for name in team_b_players]) if team_b_players else "None"
     
     result_message = innings_result if innings_result else ""
     result_message += (
         f"🏆 *GAME OVER!*\n\n"
-        f"First Innings: {first_innings_score} runs\n"
-        f"Second Innings: {second_innings_score}/{game['wickets']}\n\n"
-        f"🏆 {winner_team} won {margin}!\n"
+        f"First Innings ({team_a}):\n{team_a_text}\n\n"
+        f"Second Innings ({team_b}):\n{team_b_text}\n\n"
+        f"Final Scores:\n"
+        f"{team_a}: {first_innings_score} runs\n"
+        f"{team_b}: {second_innings_score} runs\n\n"
+        f"🏆 {winner} won {margin}!\n"
     )
     
     try:
+        # Edit the existing message instead of sending a new one
         await context.bot.edit_message_text(
             chat_id=game["group_chat_id"],
             message_id=game["message_id"],
@@ -915,8 +953,10 @@ async def declare_winner(playing_id: str, context: CallbackContext, innings_resu
 
     for user_id in game["batters"] + game["bowlers"]:
         try:
-            await context.bot.send_message(
+            # Edit the existing message for players instead of sending new ones
+            await context.bot.edit_message_text(
                 chat_id=user_id,
+                message_id=game.get("player_message_id", user_id),
                 text=result_message,
                 parse_mode="Markdown"
             )
@@ -964,8 +1004,9 @@ async def Mhandle_cancel_button(update: Update, context: CallbackContext) -> Non
     
     for uid in game["batters"] + game["bowlers"]:
         try:
-            await context.bot.send_message(
+            await context.bot.edit_message_text(
                 chat_id=uid,
+                message_id=game.get("player_message_id", uid),
                 text="🛑 Game has been cancelled!"
             )
         except Exception as e:
@@ -1046,8 +1087,9 @@ async def stop_game(update: Update, context: CallbackContext) -> None:
     
     for uid in game["batters"] + game["bowlers"]:
         try:
-            await context.bot.send_message(
+            await context.bot.edit_message_text(
                 chat_id=uid,
+                message_id=game.get("player_message_id", uid),
                 text="🛑 Game has been stopped by admin!"
             )
         except Exception as e:
