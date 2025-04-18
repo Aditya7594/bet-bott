@@ -29,6 +29,15 @@ games_lock = asyncio.Lock()
 def get_current_utc_time():
     return datetime.now(pytz.utc)
 
+# Function to get user first name
+async def get_user_name_cached(user_id, context):
+    try:
+        user = await context.bot.get_chat(user_id)
+        return user.first_name if user.first_name else f"Player {user_id}"
+    except Exception as e:
+        logger.error(f"Error getting user name for {user_id}: {e}")
+        return f"Player {user_id}"
+
 # Shared game state reference
 multiplayer_games = multiplayer_games
 
@@ -491,22 +500,28 @@ async def game_timeout_checker(playing_id: str, context: CallbackContext):
                 game["batters"].remove(game["current_batter"])
                 game["batters"].append(game["current_batter"])
                 game["current_batter"] = game["batters"][0] if game["batters"] else None
-                await context.bot.edit_message_text(
-                    chat_id=game["group_chat_id"],
-                    message_id=game["message_id"],
-                    text=f"Batter {await get_user_name_cached(game['current_batter'], context)} timed out! Next batter is up.",
-                    parse_mode="Markdown"
-                )
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=game["group_chat_id"],
+                        message_id=game["message_id"],
+                        text=f"Batter {await get_user_name_cached(game['current_batter'], context)} timed out! Next batter is up.",
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    logger.error(f"Error editing message: {e}")
             elif game["current_bowler"] and game["current_bowler"] in game["bowlers"]:
                 game["bowlers"].remove(game["current_bowler"])
                 game["bowlers"].append(game["current_bowler"])
                 game["current_bowler"] = game["bowlers"][0] if game["bowlers"] else None
-                await context.bot.edit_message_text(
-                    chat_id=game["group_chat_id"],
-                    message_id=game["message_id"],
-                    text=f"Bowler {await get_user_name_cached(game['current_bowler'], context)} timed out! Next bowler is up.",
-                    parse_mode="Markdown"
-                )
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=game["group_chat_id"],
+                        message_id=game["message_id"],
+                        text=f"Bowler {await get_user_name_cached(game['current_bowler'], context)} timed out! Next bowler is up.",
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    logger.error(f"Error editing message: {e}")
             
             game["last_action"] = datetime.now(pytz.utc)
             async with games_lock:
