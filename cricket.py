@@ -267,7 +267,6 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         text=game_desc,
         reply_markup=keyboard,
         parse_mode="Markdown")
-    await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent_message.message_id)
 
 def update_game_activity(game_id):
     game_activity[game_id] = datetime.utcnow()
