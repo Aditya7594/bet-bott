@@ -1307,7 +1307,7 @@ async def list_players(update: Update, context: CallbackContext) -> None:
     text += "\n".join([f"- {name}" for name in bowler_names]) if bowler_names else "None"
     
     try:
-        await context.bot.edit_message_text(
+        await context.bot.send_message(
             chat_id=game["group_chat_id"],
             message_id=game["message_id"],
             text=text,
