@@ -424,6 +424,14 @@ async def Mhandle_remove_button(update: Update, context: CallbackContext) -> Non
     except Exception as e:
         logger.error(f"Edit error: {e}")
 
+    if len(game["batters"]) >= game["max_wickets"] and len(game["bowlers"]) >= game["max_wickets"] and game["status"] == "waiting":
+        game["status"] = "ready"
+        game["start_time"] = datetime.now(pytz.utc) + timedelta(seconds=15)
+        async with games_lock:
+            multiplayer_games[playing_id] = game
+        game_collection.update_one({"playing_id": playing_id}, {"$set": {"status": "ready", "start_time": game["start_time"]}})
+        asyncio.create_task(start_game_countdown(playing_id, context))
+
 async def start_game(playing_id: str, context: CallbackContext) -> None:
     game = await get_game_data(playing_id)
     if not game:
@@ -1149,12 +1157,19 @@ async def list_players(update: Update, context: CallbackContext) -> None:
     text += f"\n\n▶️ Bowlers ({len(bowler_names)}/{game['max_wickets']}):\n"
     text += "\n".join([f"- {name}" for name in bowler_names]) if bowler_names else "None"
     
-    await context.bot.edit_message_text(
-        chat_id=game["group_chat_id"],
-        message_id=game["message_id"],
-        text=text,
-        parse_mode="Markdown"
-    )
+    try:
+        await context.bot.edit_message_text(
+            chat_id=game["group_chat_id"],
+            message_id=game["message_id"],
+            text=text,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Error updating player list: {e}")
+        await update.message.reply_text(
+            text=text,
+            parse_mode="Markdown"
+        )
     
     await update.message.delete()
 
