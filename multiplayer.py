@@ -504,15 +504,11 @@ async def start_game(playing_id: str, context: CallbackContext) -> None:
     await update_game_interface(playing_id, context)
 
 async def game_timeout_checker(playing_id: str, context: CallbackContext):
-    while True:
-        game = await get_game_data(playing_id)
-        if not game:
-            logger.warning(f"[TimeoutChecker] Game {playing_id} no longer exists. Exiting timeout checker.")
-            return  # Exit loop safely
-
-        if game["status"] != "started":
-            return  # Exit if game is not active
-
+    game = await get_game_data(playing_id)
+    if not game:
+        return
+    
+    while game["status"] == "started":
         now = datetime.now(pytz.utc)
         elapsed = (now - game["last_action"]).total_seconds()
         
