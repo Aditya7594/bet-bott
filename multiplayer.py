@@ -9,17 +9,6 @@ import pytz
 import asyncio
 from functools import lru_cache
 
-@lru_cache(maxsize=512)
-def get_user_name_cached_sync(user_id: int, fallback: str = "Player") -> str:
-    return fallback  # fallback if async call fails
-
-async def get_user_name_cached(user_id, context):
-    try:
-        chat = await context.bot.get_chat(user_id)
-        return chat.first_name
-    except:
-        return get_user_name_cached_sync(user_id)
-
 # Set up logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -39,22 +28,24 @@ multiplayer_games = {}
 def get_current_utc_time():
     return datetime.now(pytz.utc)
 
-# Shared game state reference
-multiplayer_games = multiplayer_games
+# Shared game state reference with lock
+multiplayer_games = {}
+games_lock = asyncio.Lock()
 
 # Update last_move on every interaction
 async def update_last_move(playing_id: str):
     current_time = get_current_utc_time()
-    try:
-        game_collection.update_one(
-            {"playing_id": playing_id},
-            {"$set": {"last_move": current_time}}
-        )
-        if playing_id in multiplayer_games:
-            multiplayer_games[playing_id]["last_move"] = current_time
-        logger.info(f"Updated last_move for game {playing_id} to {current_time}")
-    except Exception as e:
-        logger.error(f"Error updating last_move for game {playing_id}: {e}")
+    async with games_lock:
+        try:
+            game_collection.update_one(
+                {"playing_id": playing_id},
+                {"$set": {"last_move": current_time}}
+            )
+            if playing_id in multiplayer_games:
+                multiplayer_games[playing_id]["last_move"] = current_time
+            logger.info(f"Updated last_move for game {playing_id} to {current_time}")
+        except Exception as e:
+            logger.error(f"Error updating last_move for game {playing_id}: {e}")
 
 async def check_user_started_bot(update: Update, context: CallbackContext) -> bool:
     query = update.callback_query
@@ -85,7 +76,8 @@ async def get_game_data(playing_id: str) -> dict:
     game_data = game_collection.find_one({"playing_id": playing_id})
     if game_data:
         game = {k: v for k, v in game_data.items() if k != "_id"}
-        multiplayer_games[playing_id] = game
+        async with games_lock:
+            multiplayer_games[playing_id] = game
         return game
     return None
 
@@ -125,12 +117,20 @@ async def multiplayer(update: Update, context: CallbackContext) -> None:
         "message_id": None,
         "last_move": get_current_utc_time(),
         "start_time": None,
-        "admin_id": user.id
+        "admin_id": user.id,
+        "batter_choice": None,
+        "bowler_choice": None,
+        "score": 0,
+        "wickets": 0,
+        "over": 0,
+        "ball": 0,
+        "innings": 1,
+        "last_action": get_current_utc_time()
     }
 
     logger.info(f"[multiplayer] Creating new game with ID: {playing_id}")
-    multiplayer_games[playing_id] = game_data
-    logger.info(f"[multiplayer] Stored in multiplayer_games: {list(multiplayer_games.keys())}")
+    async with games_lock:
+        multiplayer_games[playing_id] = game_data
 
     game_collection.update_one({"playing_id": playing_id}, {"$set": game_data}, upsert=True)
 
@@ -146,7 +146,8 @@ async def multiplayer(update: Update, context: CallbackContext) -> None:
     sent_message = await context.bot.send_message(chat_id=chat_id, text=desc, reply_markup=keyboard, parse_mode="Markdown")
 
     game_data["message_id"] = sent_message.message_id
-    multiplayer_games[playing_id]["message_id"] = sent_message.message_id
+    async with games_lock:
+        multiplayer_games[playing_id]["message_id"] = sent_message.message_id
     game_collection.update_one({"playing_id": playing_id}, {"$set": {"message_id": sent_message.message_id}})
 
     logger.info(f"[multiplayer] Game created and message_id stored: {sent_message.message_id}")
@@ -190,7 +191,8 @@ async def MButton_join(update: Update, context: CallbackContext) -> None:
             return
         game["bowlers"].append(user_id)
 
-    multiplayer_games[playing_id] = game
+    async with games_lock:
+        multiplayer_games[playing_id] = game
     game_collection.update_one({"playing_id": playing_id}, {"$set": {"batters": game["batters"], "bowlers": game["bowlers"]}})
 
     batter_names = []
@@ -243,7 +245,8 @@ async def MButton_join(update: Update, context: CallbackContext) -> None:
     if len(game["batters"]) >= game["max_wickets"] and len(game["bowlers"]) >= game["max_wickets"] and game["status"] == "waiting":
         game["status"] = "ready"
         game["start_time"] = datetime.now(pytz.utc) + timedelta(seconds=15)
-        multiplayer_games[playing_id] = game
+        async with games_lock:
+            multiplayer_games[playing_id] = game
         game_collection.update_one({"playing_id": playing_id}, {"$set": {"status": "ready", "start_time": game["start_time"]}})
         asyncio.create_task(start_game_countdown(playing_id, context))
 
@@ -277,7 +280,8 @@ async def start_game_countdown(playing_id: str, context: CallbackContext) -> Non
                 )
                 game["message_id"] = game_message.message_id
                 game["countdown_message"] = "15"
-                multiplayer_games[playing_id] = game
+                async with games_lock:
+                    multiplayer_games[playing_id] = game
                 game_collection.update_one({"playing_id": playing_id}, {"$set": {"message_id": game_message.message_id}})
         elif 5 < time_left <= 10:
             if game.get("countdown_message") != "10":
@@ -294,7 +298,8 @@ async def start_game_countdown(playing_id: str, context: CallbackContext) -> Non
                 )
                 game["message_id"] = game_message.message_id
                 game["countdown_message"] = "10"
-                multiplayer_games[playing_id] = game
+                async with games_lock:
+                    multiplayer_games[playing_id] = game
                 game_collection.update_one({"playing_id": playing_id}, {"$set": {"message_id": game_message.message_id}})
         elif time_left <= 5:
             if game.get("countdown_message") != "5":
@@ -311,7 +316,8 @@ async def start_game_countdown(playing_id: str, context: CallbackContext) -> Non
                 )
                 game["message_id"] = game_message.message_id
                 game["countdown_message"] = "5"
-                multiplayer_games[playing_id] = game
+                async with games_lock:
+                    multiplayer_games[playing_id] = game
                 game_collection.update_one({"playing_id": playing_id}, {"$set": {"message_id": game_message.message_id}})
         
         await asyncio.sleep(1)
@@ -352,7 +358,8 @@ async def Mhandle_remove_button(update: Update, context: CallbackContext) -> Non
         await query.answer("You're not part of this game!")
         return
     
-    multiplayer_games[playing_id] = game
+    async with games_lock:
+        multiplayer_games[playing_id] = game
     game_collection.update_one(
         {"playing_id": playing_id},
         {"$set": {
@@ -437,8 +444,8 @@ async def start_game(playing_id: str, context: CallbackContext) -> None:
             logger.error(f"Error notifying player {user_id}: {e}")
     
     game["status"] = "started"
-    game["current_batter"] = game["batters"][0]
-    game["current_bowler"] = game["bowlers"][0]
+    game["current_batter"] = game["batters"][0] if game["batters"] else None
+    game["current_bowler"] = game["bowlers"][0] if game["bowlers"] else None
     game["batter_choice"] = None
     game["bowler_choice"] = None
     game["score"] = 0
@@ -448,7 +455,8 @@ async def start_game(playing_id: str, context: CallbackContext) -> None:
     game["innings"] = 1
     game["last_action"] = datetime.now(pytz.utc)
     
-    multiplayer_games[playing_id] = game
+    async with games_lock:
+        multiplayer_games[playing_id] = game
     game_collection.update_one(
         {"playing_id": playing_id},
         {"$set": {
@@ -466,7 +474,7 @@ async def start_game(playing_id: str, context: CallbackContext) -> None:
         }}
     )
     
-    asyncio_task(game_timeout_checker(playing_id, context))
+    asyncio.create_task(game_timeout_checker(playing_id, context))
     await update_game_interface(playing_id, context)
 
 async def game_timeout_checker(playing_id: str, context: CallbackContext):
@@ -479,20 +487,20 @@ async def game_timeout_checker(playing_id: str, context: CallbackContext):
         elapsed = (now - game["last_action"]).total_seconds()
         
         if elapsed > 15:
-            if game["current_batter"] in game["batters"]:
+            if game["current_batter"] and game["current_batter"] in game["batters"]:
                 game["batters"].remove(game["current_batter"])
                 game["batters"].append(game["current_batter"])
-                game["current_batter"] = game["batters"][0]
+                game["current_batter"] = game["batters"][0] if game["batters"] else None
                 await context.bot.edit_message_text(
                     chat_id=game["group_chat_id"],
                     message_id=game["message_id"],
                     text=f"Batter {await get_user_name_cached(game['current_batter'], context)} timed out! Next batter is up.",
                     parse_mode="Markdown"
                 )
-            else:
+            elif game["current_bowler"] and game["current_bowler"] in game["bowlers"]:
                 game["bowlers"].remove(game["current_bowler"])
                 game["bowlers"].append(game["current_bowler"])
-                game["current_bowler"] = game["bowlers"][0]
+                game["current_bowler"] = game["bowlers"][0] if game["bowlers"] else None
                 await context.bot.edit_message_text(
                     chat_id=game["group_chat_id"],
                     message_id=game["message_id"],
@@ -501,7 +509,8 @@ async def game_timeout_checker(playing_id: str, context: CallbackContext):
                 )
             
             game["last_action"] = datetime.now(pytz.utc)
-            multiplayer_games[playing_id] = game
+            async with games_lock:
+                multiplayer_games[playing_id] = game
             game_collection.update_one({"playing_id": playing_id}, {"$set": game})
             await update_game_interface(playing_id, context)
         
@@ -518,7 +527,8 @@ async def update_game_interface(playing_id: str, context: CallbackContext) -> No
     game["bowler_choice"] = None
     game["last_action"] = datetime.now(pytz.utc)
     
-    multiplayer_games[playing_id] = game
+    async with games_lock:
+        multiplayer_games[playing_id] = game
     game_collection.update_one(
         {"playing_id": playing_id},
         {"$set": {
@@ -615,21 +625,22 @@ async def Mhandle_play_button(update: Update, context: CallbackContext) -> None:
         await query.answer("This game is not active!")
         return
     
-    if user_id != game["current_batter"] and user_id != game["current_bowler"]:
+    if user_id != game.get("current_batter") and user_id != game.get("current_bowler"):
         await query.answer("It's not your turn!")
         return
     
     game["last_action"] = datetime.now(pytz.utc)
     await update_last_move(playing_id)
 
-    if user_id == game["current_batter"]:
+    if user_id == game.get("current_batter"):
         if game.get("batter_choice") is not None:
             await query.answer("You've already made your choice!")
             return
             
         game["batter_choice"] = number
         
-        multiplayer_games[playing_id] = game
+        async with games_lock:
+            multiplayer_games[playing_id] = game
         game_collection.update_one(
             {"playing_id": playing_id},
             {"$set": {"batter_choice": number, "last_action": game["last_action"]}}
@@ -640,14 +651,15 @@ async def Mhandle_play_button(update: Update, context: CallbackContext) -> None:
         if game.get("bowler_choice") is not None:
             await process_ball_result(playing_id, context)
     
-    elif user_id == game["current_bowler"]:
+    elif user_id == game.get("current_bowler"):
         if game.get("bowler_choice") is not None:
             await query.answer("You've already made your choice!")
             return
             
         game["bowler_choice"] = number
         
-        multiplayer_games[playing_id] = game
+        async with games_lock:
+            multiplayer_games[playing_id] = game
         game_collection.update_one(
             {"playing_id": playing_id},
             {"$set": {"bowler_choice": number, "last_action": game["last_action"]}}
@@ -697,7 +709,8 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
             game["ball"] = 0
         
         if game["wickets"] >= game["max_wickets"] or game["over"] >= game["max_overs"]:
-            multiplayer_games[playing_id] = game
+            async with games_lock:
+                multiplayer_games[playing_id] = game
             game_collection.update_one(
                 {"playing_id": playing_id},
                 {"$set": {
@@ -711,11 +724,13 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
             return
         
         current_batter = game["current_batter"]
-        game["batters"].remove(current_batter)
-        game["batters"].append(current_batter)
-        game["current_batter"] = game["batters"][0]
+        if current_batter in game["batters"]:
+            game["batters"].remove(current_batter)
+            game["batters"].append(current_batter)
+            game["current_batter"] = game["batters"][0] if game["batters"] else None
         
-        multiplayer_games[playing_id] = game
+        async with games_lock:
+            multiplayer_games[playing_id] = game
         game_collection.update_one(
             {"playing_id": playing_id},
             {"$set": {
@@ -743,7 +758,8 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
                 except Exception as e:
                     logger.error(f"Error sending result to {user_id}: {e}")
                     
-            multiplayer_games[playing_id] = game
+            async with games_lock:
+                multiplayer_games[playing_id] = game
             game_collection.update_one(
                 {"playing_id": playing_id},
                 {"$set": {"score": game["score"], "last_action": game["last_action"]}}
@@ -758,12 +774,14 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
             game["ball"] = 0
             
             current_bowler = game["current_bowler"]
-            game["bowlers"].remove(current_bowler)
-            game["bowlers"].append(current_bowler)
-            game["current_bowler"] = game["bowlers"][0]
+            if current_bowler in game["bowlers"]:
+                game["bowlers"].remove(current_bowler)
+                game["bowlers"].append(current_bowler)
+                game["current_bowler"] = game["bowlers"][0] if game["bowlers"] else None
         
         if game["over"] >= game["max_overs"]:
-            multiplayer_games[playing_id] = game
+            async with games_lock:
+                multiplayer_games[playing_id] = game
             game_collection.update_one(
                 {"playing_id": playing_id},
                 {"$set": {
@@ -779,7 +797,8 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
             await end_innings(playing_id, context)
             return
         
-        multiplayer_games[playing_id] = game
+        async with games_lock:
+            multiplayer_games[playing_id] = game
         game_collection.update_one(
             {"playing_id": playing_id},
             {"$set": {
@@ -807,11 +826,12 @@ async def end_innings(playing_id: str, context: CallbackContext) -> None:
         game["ball"] = 0
         game["wickets"] = 0
         game["batters"], game["bowlers"] = game["bowlers"], game["batters"]
-        game["current_batter"] = game["batters"][0]
-        game["current_bowler"] = game["bowlers"][0]
+        game["current_batter"] = game["batters"][0] if game["batters"] else None
+        game["current_bowler"] = game["bowlers"][0] if game["bowlers"] else None
         game["last_action"] = datetime.now(pytz.utc)
         
-        multiplayer_games[playing_id] = game
+        async with games_lock:
+            multiplayer_games[playing_id] = game
         game_collection.update_one(
             {"playing_id": playing_id},
             {"$set": {
@@ -904,7 +924,8 @@ async def declare_winner(playing_id: str, context: CallbackContext, innings_resu
             logger.error(f"Error sending result to {user_id}: {e}")
     
     if playing_id in multiplayer_games:
-        del multiplayer_games[playing_id]
+        async with games_lock:
+            del multiplayer_games[playing_id]
     
     game_collection.delete_one({"playing_id": playing_id})
 
@@ -951,7 +972,8 @@ async def Mhandle_cancel_button(update: Update, context: CallbackContext) -> Non
             logger.error(f"Error notifying player {uid} about cancellation: {e}")
     
     if playing_id in multiplayer_games:
-        del multiplayer_games[playing_id]
+        async with games_lock:
+            del multiplayer_games[playing_id]
     
     game_collection.delete_one({"playing_id": playing_id})
     
@@ -976,7 +998,8 @@ async def extend_time(update: Update, context: CallbackContext) -> None:
         return
     
     game["start_time"] = game["start_time"] + timedelta(seconds=15)
-    multiplayer_games[playing_id] = game
+    async with games_lock:
+        multiplayer_games[playing_id] = game
     game_collection.update_one({"playing_id": playing_id}, {"$set": {"start_time": game["start_time"]}})
     
     await context.bot.edit_message_text(
@@ -1031,7 +1054,8 @@ async def stop_game(update: Update, context: CallbackContext) -> None:
             logger.error(f"Error notifying player {uid} about stop: {e}")
     
     if playing_id in multiplayer_games:
-        del multiplayer_games[playing_id]
+        async with games_lock:
+            del multiplayer_games[playing_id]
     
     game_collection.delete_one({"playing_id": playing_id})
     
