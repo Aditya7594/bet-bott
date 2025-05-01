@@ -12,6 +12,8 @@ users_collection = db['users']
 genshin_collection = db['genshin_users']
 blacklist_collection = db['blacklist']
 
+OWNER_IDS = [5667016949] 
+
 # Fetch user data from database
 def get_user_by_id(user_id):
     return users_collection.find_one({"user_id": user_id})
@@ -90,6 +92,31 @@ async def bank(update: Update, context: CallbackContext) -> None:
 
     bank_balance = user_data.get('bank', 0)
     await update.message.reply_text(f"Your virtual bank balance is: {bank_balance} credits.")
+
+async def add_credits(update: Update, context: CallbackContext) -> None:
+    sender_id = update.effective_user.id
+
+    if sender_id not in OWNER_IDS:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+
+    try:
+        user_id = str(int(context.args[0]))
+        amount = int(context.args[1])
+    except (IndexError, ValueError):
+        await update.message.reply_text("Usage: /addcredits <user_id> <amount>")
+        return
+
+    user_data = get_user_by_id(user_id)
+    if not user_data:
+        await update.message.reply_text(f"User with ID {user_id} not found.")
+        return
+
+    user_data["credits"] = user_data.get("credits", 0) + amount
+    save_user(user_data)
+
+    await update.message.reply_text(f"✅ Added {amount} credits to user {user_id}. New balance: {user_data['credits']} credits.")
+
 
 # Add user to blacklist
 async def blacklist(update: Update, context: CallbackContext) -> None:
