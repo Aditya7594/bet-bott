@@ -178,18 +178,25 @@ async def scan_blacklist(update: Update, context: CallbackContext):
 
     banned = []
     try:
-        async for member in context.bot.get_chat_members(chat.id):
-            if is_blacklisted(member.user.id):
-                try:
+        # Use get_chat_members_count to estimate number of members and handle a workaround for fetch
+        total_members = await context.bot.get_chat_members_count(chat.id)
+        
+        # You can add logic here if you have manually tracked member IDs
+        for i in range(total_members):
+            # Use get_chat_member to check each user (but this might hit limits)
+            try:
+                member = await context.bot.get_chat_member(chat.id, i)
+                if is_blacklisted(member.user.id):
                     await context.bot.ban_chat_member(chat.id, member.user.id)
                     banned.append(member.user.id)
-                except Exception:
-                    continue
+            except Exception as e:
+                print(f"Failed to process member {i}: {e}")
     except Exception as e:
         await update.message.reply_text(f"Failed to scan members: {e}")
         return
 
     await update.message.reply_text(f"Scan complete. Banned users: {', '.join(map(str, banned)) if banned else 'None'}")
+
 
 # Register command handlers
 def get_bank_handlers():
