@@ -671,7 +671,7 @@ def main() -> None:
     application.add_handler(CommandHandler("addcredits", add_credits))
     application.add_handler(CommandHandler("blacklist", blacklist))
     application.add_handler(CommandHandler("unblacklist", unblacklist))
-    application.add_handler(CommandHandler("scan_blacklist", scan_blacklist)
+    application.add_handler(CommandHandler("scan_blacklist", scan_blacklist))
     application.add_handler(ChatMemberHandler(auto_ban, ChatMemberHandler.CHAT_MEMBER))
     application.add_handler(CommandHandler("chatcricket", chat_cricket))    
     application.add_handler(CommandHandler("join", handle_join_button))    
