@@ -160,6 +160,36 @@ async def auto_ban(update: Update, context: CallbackContext):
             print(f"Banned blacklisted user {user.full_name} (ID: {user.id})")
         except Exception as e:
             print(f"Failed to ban user {user.id}: {e}")
+# Scan group and auto-ban all blacklisted users
+async def scan_blacklist(update: Update, context: CallbackContext):
+    chat = update.effective_chat
+
+    if not update.effective_user or not update.effective_user.id:
+        return
+
+    try:
+        members = await context.bot.get_chat_administrators(chat.id)
+        if not any(admin.user.id == update.effective_user.id for admin in members):
+            await update.message.reply_text("Only admins can run this command.")
+            return
+    except Exception:
+        await update.message.reply_text("Failed to fetch admins.")
+        return
+
+    banned = []
+    try:
+        async for member in context.bot.get_chat_members(chat.id):
+            if is_blacklisted(member.user.id):
+                try:
+                    await context.bot.ban_chat_member(chat.id, member.user.id)
+                    banned.append(member.user.id)
+                except Exception:
+                    continue
+    except Exception as e:
+        await update.message.reply_text(f"Failed to scan members: {e}")
+        return
+
+    await update.message.reply_text(f"Scan complete. Banned users: {', '.join(map(str, banned)) if banned else 'None'}")
 
 # Register command handlers
 def get_bank_handlers():
