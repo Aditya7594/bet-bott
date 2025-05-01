@@ -103,6 +103,20 @@ async def blacklist(update: Update, context: CallbackContext) -> None:
     blacklist_collection.update_one({"user_id": target_id}, {"$set": {"user_id": target_id}}, upsert=True)
     await update.message.reply_text(f"User ID {target_id} has been blacklisted.")
 
+# Remove user from blacklist
+async def unblacklist(update: Update, context: CallbackContext) -> None:
+    try:
+        target_id = int(context.args[0])
+    except (IndexError, ValueError):
+        await update.message.reply_text("Usage: /unblacklist <user_id>")
+        return
+
+    result = blacklist_collection.delete_one({"user_id": target_id})
+    if result.deleted_count > 0:
+        await update.message.reply_text(f"User ID {target_id} has been removed from the blacklist.")
+    else:
+        await update.message.reply_text(f"User ID {target_id} was not found in the blacklist.")
+
 # Auto-ban blacklisted users when they join
 def is_blacklisted(user_id):
     return blacklist_collection.find_one({"user_id": user_id}) is not None
@@ -127,5 +141,6 @@ def get_bank_handlers():
         CommandHandler("withdraw", withdraw),
         CommandHandler("bank", bank),
         CommandHandler("blacklist", blacklist),
+        CommandHandler("unblacklist", unblacklist),
         ChatMemberHandler(auto_ban, ChatMemberHandler.CHAT_MEMBER)
     ]
