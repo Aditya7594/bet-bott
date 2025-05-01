@@ -26,7 +26,7 @@ from cricket import (
     setup_jobs,
 )
 from claim import get_claim_handlers, daily
-from bank import bank, store, withdraw, add_credits, blacklist, unblacklist, auto_ban
+from bank import bank, store, withdraw, add_credits, blacklist, unblacklist, auto_ban,scan_blacklist
 from mines_game import get_mines_handlers
 from hilo_game import get_hilo_handlers
 from xox_game import get_xox_handlers
@@ -671,6 +671,7 @@ def main() -> None:
     application.add_handler(CommandHandler("addcredits", add_credits))
     application.add_handler(CommandHandler("blacklist", blacklist))
     application.add_handler(CommandHandler("unblacklist", unblacklist))
+    application.add_handler(CommandHandler("scan_blacklist", scan_blacklist)
     application.add_handler(ChatMemberHandler(auto_ban, ChatMemberHandler.CHAT_MEMBER))
     application.add_handler(CommandHandler("chatcricket", chat_cricket))    
     application.add_handler(CommandHandler("join", handle_join_button))    
