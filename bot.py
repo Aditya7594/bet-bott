@@ -26,7 +26,7 @@ from cricket import (
     setup_jobs,
 )
 from claim import get_claim_handlers, daily
-from bank import store, withdraw, bank, get_bank_handlers
+from bank import get_bank_handlers
 from mines_game import get_mines_handlers
 from hilo_game import get_hilo_handlers
 from xox_game import get_xox_handlers
