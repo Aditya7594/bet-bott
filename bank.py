@@ -1,5 +1,5 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext, filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, CallbackContext, ChatMemberHandler, filters
 from pymongo import MongoClient
 import logging
 from datetime import datetime, timedelta
@@ -10,6 +10,7 @@ client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?r
 db = client['telegram_bot']
 users_collection = db['users']
 genshin_collection = db['genshin_users']
+blacklist_collection = db['blacklist']
 
 # Fetch user data from database
 def get_user_by_id(user_id):
@@ -30,14 +31,12 @@ async def store(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
 
-    # Get the amount to store
     try:
         amount = int(context.args[0])
     except (IndexError, ValueError):
         await update.message.reply_text("Usage: /store <amount>")
         return
 
-    # Fetch user data
     user_data = get_user_by_id(user_id)
     if not user_data:
         await update.message.reply_text("You need to start the bot first by using /start.")
@@ -47,7 +46,6 @@ async def store(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(f"You don't have enough credits to store. Your balance is {user_data['credits']} credits.")
         return
 
-    # Store credits in the virtual bank
     user_data['credits'] -= amount
     user_data['bank'] = user_data.get('bank', 0) + amount
     save_user(user_data)
@@ -59,51 +57,75 @@ async def withdraw(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
 
-    # Get the amount to withdraw
     try:
         amount = int(context.args[0])
     except (IndexError, ValueError):
         await update.message.reply_text("Usage: /withdraw <amount>")
         return
 
-    # Fetch user data
     user_data = get_user_by_id(user_id)
     if not user_data:
         await update.message.reply_text("You need to start the bot first by using /start.")
         return
 
-    if user_data['bank'] < amount:
-        await update.message.reply_text(f"You don't have enough funds in your bank. Your bank balance is {user_data['bank']} credits.")
+    if user_data.get('bank', 0) < amount:
+        await update.message.reply_text(f"You don't have enough funds in your bank. Your bank balance is {user_data.get('bank', 0)} credits.")
         return
 
-    # Withdraw credits from the virtual bank
     user_data['credits'] += amount
     user_data['bank'] -= amount
     save_user(user_data)
 
     await update.message.reply_text(f"Successfully withdrew {amount} credits from your virtual bank. Your current balance is {user_data['credits']} credits.")
 
-# Bank balance command - Show user's bank balance
+# Show bank balance
 async def bank(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
 
-    # Fetch user data
     user_data = get_user_by_id(user_id)
     if not user_data:
         await update.message.reply_text("You need to start the bot first by using /start.")
         return
 
-    # Get the user's virtual bank balance
-    bank_balance = user_data.get('bank', 0)  # Default to 0 if not found
-
-    # Show the bank balance
+    bank_balance = user_data.get('bank', 0)
     await update.message.reply_text(f"Your virtual bank balance is: {bank_balance} credits.")
 
+# Add user to blacklist
+async def blacklist(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    try:
+        target_id = int(context.args[0])
+    except (IndexError, ValueError):
+        await update.message.reply_text("Usage: /blacklist <user_id>")
+        return
+
+    blacklist_collection.update_one({"user_id": target_id}, {"$set": {"user_id": target_id}}, upsert=True)
+    await update.message.reply_text(f"User ID {target_id} has been blacklisted.")
+
+# Auto-ban blacklisted users when they join
+def is_blacklisted(user_id):
+    return blacklist_collection.find_one({"user_id": user_id}) is not None
+
+async def auto_ban(update: Update, context: CallbackContext):
+    chat_member = update.chat_member
+    user = chat_member.new_chat_member.user
+    if chat_member.difference().get("status") == ("left", "member") or chat_member.new_chat_member.status != "member":
+        return
+
+    if is_blacklisted(user.id):
+        try:
+            await context.bot.ban_chat_member(chat_id=update.effective_chat.id, user_id=user.id)
+            print(f"Banned blacklisted user {user.full_name} (ID: {user.id})")
+        except Exception as e:
+            print(f"Failed to ban user {user.id}: {e}")
+
+# Register command handlers
 def get_bank_handlers():
-    """Return all bank handlers."""
     return [
         CommandHandler("store", store),
         CommandHandler("withdraw", withdraw),
-        CommandHandler("bank", bank)
+        CommandHandler("bank", bank),
+        CommandHandler("blacklist", blacklist),
+        ChatMemberHandler(auto_ban, ChatMemberHandler.CHAT_MEMBER)
     ]
