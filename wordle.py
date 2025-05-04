@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 ABSENT = 0
 PRESENT = 1
 CORRECT = 2
-MAX_TRIALS = 6  # Changed to standard Wordle trials
+MAX_TRIALS = 6  # Standard Wordle trials
 BLOCKS = {0: "🟥", 1: "🟨", 2: "🟩"} 
 
 WORD_LIST = []
@@ -116,11 +116,6 @@ def update_leaderboard(chat_id: int, user_id: int, username: str, trials: int, w
     except Exception as e:
         logger.error(f"Error updating leaderboard: {e}")
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "Welcome to the Wordle Bot! Use /wordle to start a classic game or /cricketwordle for a cricket-themed game."
-    )
-
 async def start_wordle_game(update: Update, context: ContextTypes.DEFAULT_TYPE, word_list: list[str], mode: str):
     chat_id = update.effective_chat.id
     
@@ -170,28 +165,6 @@ async def wordle_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 async def cricketwordle_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await start_wordle_game(update, context, CRICKET_WORD_LIST, "cricketwordle")
-
-async def stopgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await is_admin(update, context) and not await is_owner(update):
-        await update.message.reply_text("Only admins or owner can stop the game.")
-        return
-    
-    if 'game_active' not in context.chat_data or not context.chat_data['game_active']:
-        await update.message.reply_text("No game is currently active.")
-        return
-    
-    solution = context.chat_data['solution']
-    user_id = context.chat_data['current_player']
-    username = context.chat_data['current_player_name']
-    trials = context.chat_data['trials']
-    
-    try:
-        update_leaderboard(update.effective_chat.id, user_id, username, trials, False)
-        context.chat_data['game_active'] = False
-        await update.message.reply_text(f"Game stopped. The word was '{solution.upper()}'")
-    except Exception as e:
-        logger.error(f"Error in stopgame_command: {e}")
-        await update.message.reply_text("An error occurred while stopping the game.")
 
 async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await display_leaderboard(update, group_only=True)
@@ -284,10 +257,8 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 # Command handlers
 wordle_handlers = [
-    CommandHandler("start", start_command),
     CommandHandler("wordle", wordle_command),
     CommandHandler("cricketwordle", cricketwordle_command),
-    CommandHandler("stopgame", stopgame_command),
     CommandHandler("wordleaderboard", leaderboard_command),
     CommandHandler("wordglobal", global_leaderboard_command),
     CallbackQueryHandler(handle_start_button, pattern="start_bot"),
