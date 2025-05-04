@@ -1,5 +1,7 @@
-from telegram import *
-from telegram.ext import CommandHandler, MessageHandler, filters, CallbackContext,ParseMode
+from telegram import Update
+from telegram.ext import CommandHandler, MessageHandler, filters, CallbackContext
+from telegram.constants import ParseMode
+
 
 games = {}
 timers = {}
