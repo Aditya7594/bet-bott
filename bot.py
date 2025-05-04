@@ -693,6 +693,7 @@ def main() -> None:
     ))
     for handler in get_multiplayer_handlers():
         application.add_handler(handler)
+    application.add_handlers(get_wordhunt_handlers())
     for handler in get_claim_handlers():        
         application.add_handler(handler)
     for handler in get_bdice_handlers():
