@@ -2,6 +2,14 @@ import random, os
 import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from pymongo import MongoClient
+from collections import defaultdict
+
+
+client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot') 
+db = client['telegram_bot']
+wh_scores = db["wordhunt_scores"]
+
 
 games = {}
 activity_timers = {}  # Store our activity timers
@@ -11,6 +19,14 @@ letter_list_location = os.path.join(THIS_FOLDER, '8letters.txt')
 
 with open(letter_list_location, "r") as word_list:
     line_list = [line.rstrip('\n').lower() for line in word_list]
+
+def update_mongo_score(group_id, player_name, score):
+    wh_scores.update_one(
+        {"group_id": group_id, "player_name": player_name},
+        {"$inc": {"score": score}},
+        upsert=True
+    )
+
 
 class GameObject:
     
@@ -135,32 +151,28 @@ async def scoring(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     if chat_id not in games or not games[chat_id].ongoing_game:
         return
-    
-    guess = update.message.text
-    username = update.effective_user.username or update.effective_user.first_name
-    
-    guess = guess.lower()
-    print(f"User {username} guessed: {guess}")
-    
+
+    guess = update.message.text.lower()
+    player_name = update.effective_user.first_name or update.effective_user.username
+
     if guess in games[chat_id].found_words:
-        found_notif = f"<b>{guess}</b> has already been found!"
-        await update.message.reply_html(found_notif)
+        await update.message.reply_html(f"<b>{guess}</b> has already been found!")
     elif guess in games[chat_id].score_words:
-        # Valid word found - update activity time
         games[chat_id].update_activity_time()
-        
         score = len(guess) * len(guess)
-        notif = f"<i>{username}</i> found <b>{guess}</b> for {score} points! \n{upper_letters(games[chat_id].letter_row)}"
+        notif = f"<i>{player_name}</i> found <b>{guess}</b> for {score} points!\n{upper_letters(games[chat_id].letter_row)}"
         games[chat_id].score_words.remove(guess)
         games[chat_id].found_words.append(guess)
-        if username not in games[chat_id].player_scores:
-            games[chat_id].player_scores[username] = 0
-        if username not in games[chat_id].player_words:
-            games[chat_id].player_words[username] = []
-        games[chat_id].player_words[username].append(guess)
-        games[chat_id].player_scores[username] += score
-        await update.message.reply_html(notif)
 
+        if player_name not in games[chat_id].player_scores:
+            games[chat_id].player_scores[player_name] = 0
+        if player_name not in games[chat_id].player_words:
+            games[chat_id].player_words[player_name] = []
+        games[chat_id].player_words[player_name].append(guess)
+        games[chat_id].player_scores[player_name] += score
+        update_mongo_score(chat_id, player_name, score)
+
+        await update.message.reply_html(notif)
 
 async def end_game_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
     job = context.job
@@ -210,8 +222,42 @@ async def end_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         activity_timers[chat_id].schedule_removal()
         activity_timers[chat_id] = None
 
+async def whleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    top_players = list(wh_scores.find({"group_id": chat_id}).sort("score", -1).limit(10))
+    
+    if not top_players:
+        await update.message.reply_text("No leaderboard data found for this group.")
+        return
+
+    reply = "🏆 <b>Group Leaderboard</b> 🏆\n"
+    for idx, player in enumerate(top_players, 1):
+        reply += f"{idx}. {player['player_name']} - {player['score']} pts\n"
+    
+    await update.message.reply_html(reply)
+
+async def whglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    pipeline = [
+        {"$group": {"_id": "$player_name", "score": {"$sum": "$score"}}},
+        {"$sort": {"score": -1}},
+        {"$limit": 10}
+    ]
+    top_players = list(wh_scores.aggregate(pipeline))
+
+    if not top_players:
+        await update.message.reply_text("No global leaderboard data found.")
+        return
+
+    reply = "🌍 <b>Global Leaderboard</b> 🌍\n"
+    for idx, player in enumerate(top_players, 1):
+        reply += f"{idx}. {player['_id']} - {player['score']} pts\n"
+
+    await update.message.reply_html(reply)
 
 def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("wordhunt", play))
     application.add_handler(CommandHandler("end", end_game))
+    application.add_handler(CommandHandler("whleaderboard", whleaderboard))
+    application.add_handler(CommandHandler("whglobal", whglobal))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, scoring))
+
