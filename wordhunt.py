@@ -1,23 +1,22 @@
+import random, os
+import asyncio
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    ContextTypes, filters
-)
-from telegram.constants import ParseMode
-import random
-import logging
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# --- Setup Logging ---
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-
-# --- Globals ---
 games = {}
 timers = {}
 
-# --- Game Object ---
+THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
+letter_list_location = os.path.join(THIS_FOLDER, '8letters.txt')
+
+with open(letter_list_location, "r") as word_list:
+    line_list = [line.rstrip('\n').lower() for line in word_list]
+
 class GameObject:
+    
     def __init__(self):
-        self.line_list = self.load_words()
+        global line_list
+        self.line_list = line_list
         self.ongoing_game = False
         self.letter_row = []
         self.score_words = []
@@ -26,47 +25,42 @@ class GameObject:
         self.top_score_words = []
         self.player_words = {}
 
-    def load_words(self):
-        try:
-            with open("8letters.txt") as f:
-                return [line.strip().lower() for line in f if line.strip()]
-        except Exception as e:
-            logging.error(f"Error loading word list: {e}")
-            return []
-
     def create_letter_row(self):
-        vowels = ['a', 'e', 'i', 'o', 'u']
-        non_vowels_common = ['b', 'c', 'd', 'f', 'g', 'h', 'k', 'l', 'm', 'n', 'p', 'r', 's', 't', 'w', 'y']
-        non_vowels_rare = ['j', 'q', 'x', 'z', 'v']
-        num_vowels = random.randint(2, 3)
-
-        self.letter_row = random.sample(vowels, num_vowels)
-        self.letter_row += random.choices(non_vowels_common, k=7 - num_vowels)
-        self.letter_row += [random.choice(non_vowels_rare)]
+        vowels = ['a','e','i','o','u']
+        non_vowels_common = ['b', 'c', 'd', 'f', 'g', 'h', 'k', 'l', 'm', 'n', 'p', 'r', 's', 't','w','y']
+        non_vowels_rare = ['j', 'q', 'x', 'z','v']
+        num_vowels = random.randint(2,3)
+        self.letter_row = []
+        for i in range(num_vowels):
+            self.letter_row.append(random.choice(vowels))
+        for j in range(7 - num_vowels):
+            self.letter_row.append(random.choice(non_vowels_common))
+        self.letter_row.append(random.choice(non_vowels_rare))
         random.shuffle(self.letter_row)
 
+    def create_score_words(self):
+        self.score_words = []
+        for word in self.line_list:
+            if(self.can_spell(word)):
+                self.score_words.append(word)
+
     def can_spell(self, word):
-        temp_letters = self.letter_row.copy()
-        for letter in word:
-            if letter in temp_letters:
-                temp_letters.remove(letter)
+        word_letters = list(word)
+        available_letters = self.letter_row.copy()
+        for letter in word_letters:
+            if letter in available_letters:
+                available_letters.remove(letter)
             else:
                 return False
         return True
 
-    def create_score_words(self):
-        self.score_words = [word for word in self.line_list if self.can_spell(word)]
-        logging.info(f"Generated {len(self.score_words)} score words")
-
     def start(self):
-        if not self.ongoing_game:
+        if self.ongoing_game == False:
             self.ongoing_game = True
-            attempts = 0
-            while len(self.score_words) < 125 and attempts < 100:
+            while(len(self.score_words) < 125):
                 self.create_letter_row()
                 self.create_score_words()
-                attempts += 1
-            self.top_score_words = sorted(self.score_words, key=len, reverse=True)[:5]
+            self.top_score_words = sorted(self.score_words, key=len, reverse=True)[0:5]
 
     def end_clear(self):
         self.letter_row = []
@@ -76,150 +70,117 @@ class GameObject:
         self.top_score_words = []
         self.player_words = {}
 
+    def ongoing_game_false(self):
+        self.ongoing_game = False
+
     def sort_player_words(self):
         for player in self.player_words:
             self.player_words[player] = sorted(self.player_words[player], key=len, reverse=True)
 
-# --- Utilities ---
-def upper_letters(letters):
-    return ' '.join(letter.upper() for letter in letters)
 
-def format_word_table(words):
-    table = "<b>🔍 Try these words:</b>\n"
-    for i in range(0, len(words), 10):
-        row = words[i:i+10]
-        table += " | ".join(row) + "\n"
-    return table
+def upper_letters(letter_row):
+    upper = ""
+    for letter in letter_row:
+        upper = upper + " " + letter.upper()
+    return upper
 
-# --- Command Handlers ---
-async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def play(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global games
+    global timers
     chat_id = update.effective_chat.id
+    await update.message.reply_html("Generating Letters")
+    if chat_id not in games:
+        games[chat_id] = GameObject()
+    games[chat_id].start()
 
+    # Using Job queue instead of Timer
+    if chat_id in timers and timers[chat_id] is not None:
+        timers[chat_id].schedule_removal()
+    
+    # Schedule end_game to run in 45 seconds
+    timers[chat_id] = context.job_queue.run_once(
+        end_game_callback, 45, 
+        chat_id=chat_id, data=update
+    )
+    
+    await update.message.reply_html(upper_letters(games[chat_id].letter_row))
+
+async def scoring(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    if chat_id not in games or not games[chat_id].ongoing_game:
+        return
+    
+    guess = update.message.text
+    username = update.effective_user.username or update.effective_user.first_name
+    
+    guess = guess.lower()
+    print(f"User {username} guessed: {guess}")
+    
+    if guess in games[chat_id].found_words:
+        found_notif = f"<b>{guess}</b> has already been found!"
+        await update.message.reply_html(found_notif)
+    elif guess in games[chat_id].score_words:
+        score = len(guess) * len(guess)
+        notif = f"<i>{username}</i> found <b>{guess}</b> for {score} points! \n{upper_letters(games[chat_id].letter_row)}"
+        games[chat_id].score_words.remove(guess)
+        games[chat_id].found_words.append(guess)
+        if username not in games[chat_id].player_scores:
+            games[chat_id].player_scores[username] = 0
+        if username not in games[chat_id].player_words:
+            games[chat_id].player_words[username] = []
+        games[chat_id].player_words[username].append(guess)
+        games[chat_id].player_scores[username] += score
+        await update.message.reply_html(notif)
+
+async def end_game_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
+    job = context.job
+    chat_id = job.chat_id
+    update = job.data
+    
     if chat_id in games and games[chat_id].ongoing_game:
-        await update.message.reply_text("⛔ A game is already in progress. Please wait for it to finish.")
-        return
+        await end_game(update, context)
 
-    games[chat_id] = GameObject()
-    game = games[chat_id]
-
-    if not game.line_list:
-        await update.message.reply_text("⚠️ Word list not loaded. Game cannot start.")
-        return
-
-    game.start()
-
-    if not game.letter_row:
-        await update.message.reply_text("⚠️ Failed to generate letters. Game cannot start.")
-        del games[chat_id]
-        return
-
-    timers[chat_id] = context.job_queue.run_once(end_game, 90, chat_id=chat_id)
-
-    try:
-        await context.bot.send_message(chat_id=chat_id, text="🧠 Generating Letters...")
-        await context.bot.send_message(chat_id=chat_id, text=upper_letters(game.letter_row))
-    except Exception as e:
-        logging.error(f"Error sending initial messages: {e}")
-        game.end_clear()
-        del games[chat_id]
-        if chat_id in timers:
-            del timers[chat_id]
-
-async def scoring(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def end_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     if chat_id not in games or not games[chat_id].ongoing_game:
+        await update.message.reply_html("No active game to end.")
         return
+    
+    games[chat_id].ongoing_game_false()
+    await update.message.reply_html("<b>Game Ended!</b>")
+    
+    final_results = "🎉 SCORES: \n"
+    for player, score in games[chat_id].player_scores.items():
+        final_results = final_results + player + ": " + str(score) + "\n"
+    if not bool(games[chat_id].player_scores): # player_scores dict is empty
+        final_results = "No one played! \n"
+    
+    # Best Possible Words
+    total_possible_words = len(games[chat_id].score_words) + len(games[chat_id].found_words)
+    final_results += f"\n💡 BEST POSSIBLE WORDS ({total_possible_words} total): \n"
+    for word in games[chat_id].top_score_words:
+        final_results += word + "\n"
+    
+    # Player Scoring Words
+    games[chat_id].sort_player_words()
+    final_results += "\n🔎 WORDS FOUND \n"
+    for player in games[chat_id].player_words:
+        final_results += f"<b>{player}({len(games[chat_id].player_words[player])})</b> \n"
+        for word in games[chat_id].player_words[player]:
+            final_results += word + " "
+        final_results += "\n"
+    
+    await update.message.reply_html(final_results)
+    games[chat_id].end_clear()
+    
+    # Clean up the timer
+    if chat_id in timers and timers[chat_id] is not None:
+        timers[chat_id].schedule_removal()
+        timers[chat_id] = None
 
-    guess = update.message.text.lower()
-    username = update.effective_user.username or f"User_{update.effective_user.id}"
-    game = games[chat_id]
 
-    if len(guess) < 2:
-        return
-
-    if guess in game.found_words:
-        await update.message.reply_text(f"<b>{guess}</b> has already been found!", parse_mode=ParseMode.HTML)
-        return
-
-    if guess in game.score_words:
-        score = len(guess) ** 2
-        game.score_words.remove(guess)
-        game.found_words.append(guess)
-
-        game.player_scores.setdefault(username, 0)
-        game.player_words.setdefault(username, [])
-        game.player_scores[username] += score
-        game.player_words[username].append(guess)
-
-        await update.message.reply_text(
-            f"<i>{username}</i> found <b>{guess}</b> for {score} points!\n{upper_letters(game.letter_row)}",
-            parse_mode=ParseMode.HTML
-        )
-    else:
-        logging.info(f"Word '{guess}' not found in score_words")
-        sample_words = random.sample(game.score_words, min(100, len(game.score_words)))
-        word_table = format_word_table(sample_words)
-        await update.message.reply_text(
-            f"❌ <b>{guess}</b> is not valid. Try these words:\n{word_table}",
-            parse_mode=ParseMode.HTML
-        )
-
-async def end_game(context: ContextTypes.DEFAULT_TYPE, manual_chat_id=None):
-    chat_id = manual_chat_id if manual_chat_id else context.job.chat_id
-
-    if chat_id not in games or not games[chat_id].ongoing_game:
-        return
-
-    game = games[chat_id]
-    game.ongoing_game = False
-    game.sort_player_words()
-
-    final_results = "<b>🎉 GAME ENDED!</b>\n\n<b>SCORES:</b>\n"
-    for player, score in game.player_scores.items():
-        final_results += f"{player}: {score}\n"
-    if not game.player_scores:
-        final_results += "No one played!\n"
-
-    if game.top_score_words:
-        final_results += "\n<b>💡 BEST POSSIBLE WORDS:</b>\n"
-        final_results += '\n'.join(game.top_score_words) + "\n"
-    else:
-        final_results += "\nNo possible words found.\n"
-
-    if game.player_words:
-        final_results += "\n<b>🔎 WORDS FOUND:</b>\n"
-        for player, words in game.player_words.items():
-            final_results += f"<b>{player}</b> ({len(words)}):\n" + ' '.join(words) + "\n"
-    else:
-        final_results += "\nNo words found.\n"
-
-    try:
-        await context.bot.send_message(chat_id=chat_id, text=final_results, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logging.error(f"Error sending final results: {e}")
-        final_results = "Game ended. No results available."
-        await context.bot.send_message(chat_id=chat_id, text=final_results)
-
-    game.end_clear()
-    if chat_id in games:
-        del games[chat_id]
-    if chat_id in timers:
-        del timers[chat_id]
-
-async def manual_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    job = timers.get(chat_id)
-    if job:
-        job.schedule_removal()
-    await end_game(context, manual_chat_id=chat_id)
-
-# --- Error Handling ---
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logging.error(f"Update {update} caused error {context.error}")
-
-def get_wordhunt_handlers():
-    return [
-        CommandHandler('wordhunt', wordhunt),
-        CommandHandler('end', manual_end),
-        MessageHandler(filters.TEXT & ~filters.COMMAND, scoring)
-    ]
+def register_handlers(application: Application) -> None:
+    application.add_handler(CommandHandler("wordhunt", play))
+    application.add_handler(CommandHandler("end", end_game))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, scoring))
