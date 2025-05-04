@@ -55,6 +55,7 @@ class GameObject:
         return True
 
     def create_score_words(self):
+        # Allow ANY word that can be formed from the letters (not limited to exact length)
         self.score_words = [word for word in self.line_list if self.can_spell(word)]
 
     def start(self):
@@ -86,13 +87,18 @@ def upper_letters(letters):
 # --- Command Handlers ---
 async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    if chat_id not in games:
-        games[chat_id] = GameObject()
 
+    # 🔒 Prevent starting if game is already running
+    if chat_id in games and games[chat_id].ongoing_game:
+        await update.message.reply_text("⛔ A game is already in progress. Please wait for it to finish.")
+        return
+
+    games[chat_id] = GameObject()
     game = games[chat_id]
     game.start()
 
-    timers[chat_id] = context.job_queue.run_once(end_game, 45, chat_id=chat_id)
+    # ⏱️ Increased game duration to 90 seconds
+    timers[chat_id] = context.job_queue.run_once(end_game, 90, chat_id=chat_id)
     await context.bot.send_message(chat_id=chat_id, text="🧠 Generating Letters...")
     await context.bot.send_message(chat_id=chat_id, text=upper_letters(game.letter_row))
 
@@ -123,6 +129,13 @@ async def scoring(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"<i>{username}</i> found <b>{guess}</b> for {score} points!\n{upper_letters(game.letter_row)}",
             parse_mode=ParseMode.HTML
         )
+
+        # ✅ End early if all words are found
+        if len(game.found_words) == len(game.score_words) + len(game.found_words):
+            job = timers.get(chat_id)
+            if job:
+                job.schedule_removal()
+            await end_game(context)
 
 async def end_game(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
