@@ -274,73 +274,94 @@ def update_game_activity(game_id):
         cricket_games[game_id]["last_move"] = datetime.utcnow()
 
 async def update_game_interface(game_id: str, context: CallbackContext, text: str = None):
-    if game_id not in cricket_games:
+    game = cricket_games.get(game_id)
+    if not game:
         return
 
-    game = cricket_games[game_id]
     if not text:
         try:
             batter_name = (await get_user_name_cached(game["batter"], context))
             bowler_name = (await get_user_name_cached(game["bowler"], context))
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error getting player names: {e}")
             await context.bot.send_message(
                 chat_id=game["group_chat_id"],
                 text="⚠️ Error retrieving player information. Please try again.")
             return
 
         score = game['score1'] if game['innings'] == 1 else game['score2']
-        target = game['target'] if game['innings'] == 2 else None
+        target_text = f" (Target: {game['target']})" if game['innings'] == 2 else ""
         spectator_count = len(game["spectators"])
-        
         spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
-        
+
         text = (
             f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
             f"🔸 Batting: {batter_name}\n"
             f"🔹 Bowling: {bowler_name}\n"
-            f"📊 Score: {score}/{game['wickets']}"
+            f"📊 Score: {score}/{game['wickets']}{target_text}"
         )
-        
-        if game['innings'] == 2:
-            text += f" (Target: {game['target']})"
-        
-        text += "\n\n"
 
         if game["batter_choice"] is None:
-            text += f"⚡ {batter_name}, choose a number (1-6):"
+            text += f"\n\n⚡ {batter_name}, choose a number (1-6):"
         else:
-            text += f"⚡ {bowler_name}, choose a number (1-6):"
+            text += f"\n\n⚡ {bowler_name}, choose a number (1-6):"
 
-    keyboard = []
-    row = []
-    for i in range(1, 7):
-        row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}"))
-        if len(row) == 3:
-            keyboard.append(row)
-            row = []
-    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_id}")])
+    keyboard = [
+        [
+            InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}")
+            for i in range(1, 4)
+        ],
+        [
+            InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}")
+            for i in range(4, 7)
+        ],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_id}")]
+    ]
 
+    message_info = []
     recipients = list(game["spectators"]) + [game["player1"], game["player2"]]
+
     for player_id in recipients:
         try:
-            if player_id not in game["message_id"]:
-                msg = await context.bot.send_message(
-                    chat_id=player_id,
-                    text=text,
-                    reply_markup=InlineKeyboardMarkup(keyboard) if player_id not in game["spectators"] else None,
-                    parse_mode="Markdown"
-                )
-                game["message_id"][player_id] = msg.message_id
+            if player_id in game.get("message_id", {}):
+                message_info.append((
+                    context.bot.edit_message_text,
+                    {
+                        "chat_id": player_id,
+                        "message_id": game["message_id"][player_id],
+                        "text": text,
+                        "reply_markup": InlineKeyboardMarkup(keyboard) if player_id not in game["spectators"] else None,
+                        "parse_mode": "Markdown"
+                    }
+                ))
             else:
-                await context.bot.edit_message_text(
-                    chat_id=player_id,
-                    message_id=game["message_id"].get(player_id),
-                    text=text,
-                    reply_markup=InlineKeyboardMarkup(keyboard) if player_id not in game["spectators"] else None,
-                    parse_mode="Markdown"
-                )
+                message_info.append((
+                    context.bot.send_message,
+                    {
+                        "chat_id": player_id,
+                        "text": text,
+                        "reply_markup": InlineKeyboardMarkup(keyboard) if player_id not in game["spectators"] else None,
+                        "parse_mode": "Markdown"
+                    }
+                ))
         except Exception as e:
-            logger.error(f"Error updating game interface for {player_id}: {e}")
+            logger.error(f"Error preparing message for {player_id}: {e}")
+
+    # Send all messages in parallel
+    results = await asyncio.gather(
+        *[func(**params) for func, params in message_info],
+        return_exceptions=True
+    )
+
+    for i, (player_id, result) in enumerate(zip(recipients, results)):
+        if isinstance(result, Exception):
+            logger.error(f"Error updating interface for {player_id}: {result}")
+        elif player_id not in game["spectators"]:
+            game["message_id"][player_id] = (
+                message_info[i][1]["message_id"]
+                if "message_id" in message_info[i][1]
+                else getattr(result, "message_id", None)
+            )
 
 async def handle_join_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -606,7 +627,6 @@ async def play_button(update: Update, context: CallbackContext) -> None:
 
             keyboard = []
             if player_id == game["current_players"]["bowler"]:
-                await asyncio.sleep(0.05)
                 row = []
                 for i in range(1, 7):
                     row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}"))
@@ -855,9 +875,6 @@ async def end_innings(game_id: str, context: CallbackContext) -> None:
                 )
             except Exception as e:
                 print(f"Error updating participant {participant_id}: {e}")
-        
-        # Wait a moment before starting second innings
-        await asyncio.sleep(0.1)
         
         # Start second innings
         await update_game_interface(game_id, context)
