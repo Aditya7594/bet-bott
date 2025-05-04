@@ -667,8 +667,6 @@ def main() -> None:
     application.add_handler(CommandHandler("give", give))
     application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
     application.add_handler(CommandHandler("bank", bank))
-    application.add_handler(CommandHandler("wordhunt", wordhunt))
-    application.add_handler(CommandHandler("end", manual_end))
     application.add_handler(CommandHandler("store", store))
     application.add_handler(CommandHandler("withdraw", withdraw))
     application.add_handler(CommandHandler("addcredits", add_credits))
