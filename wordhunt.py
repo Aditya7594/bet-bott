@@ -5,7 +5,6 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from pymongo import MongoClient
 from collections import defaultdict
 
-
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot') 
 db = client['telegram_bot']
 wh_scores = db["wordhunt_scores"]
@@ -26,7 +25,6 @@ def update_mongo_score(group_id, player_name, score):
         {"$inc": {"score": score}},
         upsert=True
     )
-
 
 class GameObject:
     
@@ -75,7 +73,7 @@ class GameObject:
         if self.ongoing_game == False:
             self.ongoing_game = True
             self.last_activity_time = asyncio.get_event_loop().time()  # Set initial activity time
-            while(len(self.score_words) < 125):
+            while(len(self.score_words) < 35):
                 self.create_letter_row()
                 self.create_score_words()
             self.top_score_words = sorted(self.score_words, key=len, reverse=True)[0:5]
