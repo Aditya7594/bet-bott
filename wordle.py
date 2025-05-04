@@ -257,7 +257,7 @@ wordle_handlers = [
     CallbackQueryHandler(handle_start_button, pattern="start_bot"),
     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_guess)
 
-
+]
 # Initialize the bot
 setup_logger()
 load_word_lists()
