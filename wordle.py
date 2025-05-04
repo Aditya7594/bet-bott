@@ -248,16 +248,17 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("An error occurred while processing your guess.")
 
 
-# Command handlers
-wordle_handlers = [
-    CommandHandler("wordle", wordle_command),
-    CommandHandler("cricketwordle", cricketwordle_command),
-    CommandHandler("wordleaderboard", leaderboard_command),
-    CommandHandler("wordglobal", global_leaderboard_command),
-    CallbackQueryHandler(handle_start_button, pattern="start_bot"),
-    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_guess)
+# Define handlers to be added to application
+def get_wordle_handlers():
+    return [
+        CommandHandler("wordle", wordle_command),
+        CommandHandler("cricketwordle", cricketwordle_command),
+        CommandHandler("wordleaderboard", leaderboard_command),
+        CommandHandler("wordglobal", global_leaderboard_command),
+        CallbackQueryHandler(handle_start_button, pattern="start_bot"),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_guess)
+    ]
 
-]
-# Initialize the bot
+# Initialize the module
 setup_logger()
 load_word_lists()
