@@ -1,9 +1,8 @@
-from telegram import Update
+from telegram import Update, ParseMode
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     ContextTypes, filters
 )
-from telegram.constants import ParseMode
 import random
 import logging
 
@@ -31,7 +30,7 @@ class GameObject:
             with open("8letters.txt") as f:
                 return [line.strip().lower() for line in f if line.strip()]
         except Exception as e:
-            print("Error loading word list:", e)
+            logging.error(f"Error loading word list: {e}")
             return []
 
     def create_letter_row(self):
@@ -55,7 +54,7 @@ class GameObject:
         return True
 
     def create_score_words(self):
-        # Allow ANY word that can be formed from the letters (not limited to exact length)
+        # Find all words that can be formed with the current letter row
         self.score_words = [word for word in self.line_list if self.can_spell(word)]
 
     def start(self):
@@ -88,19 +87,40 @@ def upper_letters(letters):
 async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
-    # 🔒 Prevent starting if game is already running
+    # Prevent starting if game is already running
     if chat_id in games and games[chat_id].ongoing_game:
         await update.message.reply_text("⛔ A game is already in progress. Please wait for it to finish.")
         return
 
     games[chat_id] = GameObject()
     game = games[chat_id]
+
+    # Ensure game has valid state before starting
+    if not game.line_list:
+        await update.message.reply_text("⚠️ Word list not loaded. Game cannot start.")
+        return
+
     game.start()
 
-    # ⏱️ Increased game duration to 90 seconds
+    # Check if game initialized properly
+    if not game.letter_row:
+        await update.message.reply_text("⚠️ Failed to generate letters. Game cannot start.")
+        del games[chat_id]
+        return
+
+    # Set game duration
     timers[chat_id] = context.job_queue.run_once(end_game, 90, chat_id=chat_id)
-    await context.bot.send_message(chat_id=chat_id, text="🧠 Generating Letters...")
-    await context.bot.send_message(chat_id=chat_id, text=upper_letters(game.letter_row))
+
+    # Send initial messages
+    try:
+        await context.bot.send_message(chat_id=chat_id, text="🧠 Generating Letters...")
+        await context.bot.send_message(chat_id=chat_id, text=upper_letters(game.letter_row))
+    except Exception as e:
+        logging.error(f"Error sending initial messages: {e}")
+        game.end_clear()
+        del games[chat_id]
+        if chat_id in timers:
+            del timers[chat_id]
 
 async def scoring(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -108,8 +128,15 @@ async def scoring(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     guess = update.message.text.lower()
+    if not guess.isalpha():
+        return
+
     username = update.effective_user.username or f"User_{update.effective_user.id}"
     game = games[chat_id]
+
+    # Validate the guess
+    if len(guess) < 2:  # Minimum word length should be 2
+        return
 
     if guess in game.found_words:
         await update.message.reply_text(f"<b>{guess}</b> has already been found!", parse_mode=ParseMode.HTML)
@@ -130,16 +157,15 @@ async def scoring(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML
         )
 
-        # ✅ End early if all words are found
-        if len(game.found_words) == len(game.score_words) + len(game.found_words):
+        # Check if all words are found
+        if not game.score_words:
             job = timers.get(chat_id)
             if job:
                 job.schedule_removal()
             await end_game(context)
 
-async def end_game(context: ContextTypes.DEFAULT_TYPE):
-    job = context.job
-    chat_id = job.chat_id
+async def end_game(context: ContextTypes.DEFAULT_TYPE, manual_chat_id=None):
+    chat_id = manual_chat_id if manual_chat_id else context.job.chat_id
 
     if chat_id not in games or not games[chat_id].ongoing_game:
         return
@@ -155,17 +181,29 @@ async def end_game(context: ContextTypes.DEFAULT_TYPE):
     else:
         final_results += "No one played!\n"
 
-    final_results += "\n<b>💡 BEST POSSIBLE WORDS:</b>\n"
-    final_results += '\n'.join(game.top_score_words) + "\n"
+    if game.top_score_words:
+        final_results += "\n<b>💡 BEST POSSIBLE WORDS:</b>\n"
+        final_results += '\n'.join(game.top_score_words) + "\n"
+    else:
+        final_results += "\nNo possible words found.\n"
 
-    final_results += "\n<b>🔎 WORDS FOUND:</b>\n"
-    for player, words in game.player_words.items():
-        final_results += f"<b>{player}</b> ({len(words)}):\n" + ' '.join(words) + "\n"
+    if game.player_words:
+        final_results += "\n<b>🔎 WORDS FOUND:</b>\n"
+        for player, words in game.player_words.items():
+            final_results += f"<b>{player}</b> ({len(words)}):\n" + ' '.join(words) + "\n"
+    else:
+        final_results += "\nNo words found.\n"
 
-    await context.bot.send_message(chat_id=chat_id, text=final_results, parse_mode=ParseMode.HTML)
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=final_results, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logging.error(f"Error sending final results: {e}")
+        final_results = "Game ended. No results available."
+        await context.bot.send_message(chat_id=chat_id, text=final_results)
 
     game.end_clear()
-    del games[chat_id]
+    if chat_id in games:
+        del games[chat_id]
     if chat_id in timers:
         del timers[chat_id]
 
@@ -174,13 +212,12 @@ async def manual_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
     job = timers.get(chat_id)
     if job:
         job.schedule_removal()
-    await end_game(context)
+    await end_game(context, manual_chat_id=chat_id)
 
-# --- Error Handler ---
+# --- Error Handling ---
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logging.error(f"Update {update} caused error {context.error}")
 
-# --- Setup Function ---
 def get_wordhunt_handlers():
     return [
         CommandHandler('wordhunt', wordhunt),
