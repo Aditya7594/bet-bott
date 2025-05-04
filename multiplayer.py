@@ -29,7 +29,8 @@ games_lock = asyncio.Lock()
 def get_current_utc_time():
     return datetime.now(pytz.utc)
 
-# Function to get user first name
+# Function to get user first name with caching
+@lru_cache(maxsize=100)
 async def get_user_name_cached(user_id, context):
     try:
         user = await context.bot.get_chat(user_id)
@@ -38,10 +39,6 @@ async def get_user_name_cached(user_id, context):
         logger.error(f"Error getting user name for {user_id}: {e}")
         return f"Player {user_id}"
 
-# Shared game state reference
-multiplayer_games = multiplayer_games
-
-# Update last_move on every interaction
 async def update_last_move(playing_id: str):
     current_time = get_current_utc_time()
     try:
@@ -64,13 +61,12 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
 
     if not user_data:
         bot_username = (await context.bot.get_me()).username
-        keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
+        keyboard = [[InlineKeyboardButton("🎮 Start Bot", url=f"t.me/{bot_username}")]]
         user_tag = f"@{user.username}" if user.username else user.first_name if user.first_name else user_id
 
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"⚠️ {user_tag}, you need to start the bot first!\n"
-                 f"Click the button below to start the bot.",
+            text=f"⚠️ {user_tag}, please start the bot first!",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
@@ -81,7 +77,6 @@ async def get_game_data(playing_id: str) -> dict:
     playing_id = str(playing_id)
     if playing_id in multiplayer_games:
         return multiplayer_games[playing_id]
-    # Try to load from DB
     game_data = game_collection.find_one({"playing_id": playing_id})
     if game_data:
         game = {k: v for k, v in game_data.items() if k != "_id"}
@@ -501,6 +496,7 @@ async def start_game(playing_id: str, context: CallbackContext) -> None:
     )
     
     asyncio.create_task(game_timeout_checker(playing_id, context))
+    await update_group_message(playing_id, context)
     await update_game_interface(playing_id, context)
 
 async def game_timeout_checker(playing_id: str, context: CallbackContext):
@@ -518,10 +514,10 @@ async def game_timeout_checker(playing_id: str, context: CallbackContext):
                 game["batters"].append(game["current_batter"])
                 game["current_batter"] = game["batters"][0] if game["batters"] else None
                 try:
-                    await context.bot.edit_message_text(
+                    batter_name = await get_user_name_cached(game["current_batter"], context)
+                    await context.bot.send_message(
                         chat_id=game["group_chat_id"],
-                        message_id=game["message_id"],
-                        text=f"Batter {await get_user_name_cached(game['current_batter'], context)} timed out! Next batter is up.",
+                        text=f"Batter {batter_name} timed out! Next batter is up.",
                         parse_mode="Markdown"
                     )
                 except Exception as e:
@@ -531,10 +527,10 @@ async def game_timeout_checker(playing_id: str, context: CallbackContext):
                 game["bowlers"].append(game["current_bowler"])
                 game["current_bowler"] = game["bowlers"][0] if game["bowlers"] else None
                 try:
-                    await context.bot.edit_message_text(
+                    bowler_name = await get_user_name_cached(game["current_bowler"], context)
+                    await context.bot.send_message(
                         chat_id=game["group_chat_id"],
-                        message_id=game["message_id"],
-                        text=f"Bowler {await get_user_name_cached(game['current_bowler'], context)} timed out! Next bowler is up.",
+                        text=f"Bowler {bowler_name} timed out! Next bowler is up.",
                         parse_mode="Markdown"
                     )
                 except Exception as e:
@@ -544,10 +540,64 @@ async def game_timeout_checker(playing_id: str, context: CallbackContext):
             async with games_lock:
                 multiplayer_games[playing_id] = game
             game_collection.update_one({"playing_id": playing_id}, {"$set": game})
+            await update_group_message(playing_id, context)
             await update_game_interface(playing_id, context)
         
         await asyncio.sleep(1)
         game = await get_game_data(playing_id)
+
+async def update_group_message(playing_id: str, context: CallbackContext) -> None:
+    game = await get_game_data(playing_id)
+    if not game:
+        logger.error(f"Game {playing_id} not found when updating interface")
+        return
+    
+    # Get current batter and bowler information
+    current_batter_id = game.get("current_batter")
+    current_bowler_id = game.get("current_bowler")
+
+    # Generate mention strings for current players
+    async def get_mention(user_id):
+        if not user_id:
+            return "No player"
+        try:
+            name = await get_user_name_cached(user_id, context)
+            return f"[{name}](tg://user?id={user_id})"
+        except:
+            return f"Player {user_id}"
+
+    batter_mention = await get_mention(current_batter_id)
+    bowler_mention = await get_mention(current_bowler_id)
+
+    # Build status message
+    status = [
+        f"🏏 *Cricket Tournament - {'1st' if game['innings'] == 1 else '2nd'} Innings*",
+        f"⏳ Over: {game['over']}.{game['ball']}",
+        f"📊 Score: {game['score']}/{game['wickets']}",
+    ]
+
+    if game["innings"] == 2 and game.get("target"):
+        status.extend([
+            f"🎯 Target: {game['target']} runs",
+            f"💯 Need {max(0, game['target'] - game['score'])} more runs"
+        ])
+
+    status.extend([
+        f"\nBATSMAN: {batter_mention}",
+        f"BOWLER: {bowler_mention}",
+        "\nCheck your DMs to play your turn!"
+    ])
+
+    try:
+        await context.bot.edit_message_text(
+            chat_id=game["group_chat_id"],
+            message_id=game["message_id"],
+            text="\n".join(status),
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        logger.error(f"Error updating group message: {e}")
 
 async def update_game_interface(playing_id: str, context: CallbackContext) -> None:
     game = await get_game_data(playing_id)
@@ -588,31 +638,21 @@ async def update_game_interface(playing_id: str, context: CallbackContext) -> No
     else:
         status_text += "\n"
     
-    batter_keyboard = []
-    row = []
-    for i in range(1, 7):
-        row.append(InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}|{i}"))
-        if len(row) == 3:
-            batter_keyboard.append(row)
-            row = []
-    
-    bowler_keyboard = []
-    row = []
-    for i in range(1, 7):
-        row.append(InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}|{i}"))
-        if len(row) == 3:
-            bowler_keyboard.append(row)
-            row = []
-    
     for user_id in game["batters"] + game["bowlers"]:
         user_id_str = str(user_id)
         try:
             if user_id == batter_id:
                 message_text = status_text + f"🔸 Your turn to bat! Choose a number (1-6):"
-                markup = InlineKeyboardMarkup(batter_keyboard)
+                markup = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}|{i}") for i in range(1,4)],
+                    [InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}|{i}") for i in range(4,7)]
+                ])
             elif user_id == bowler_id:
                 message_text = status_text + f"🔹 Your turn to bowl! Choose a number (1-6):"
-                markup = InlineKeyboardMarkup(bowler_keyboard)
+                markup = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}|{i}") for i in range(1,4)],
+                    [InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}|{i}") for i in range(4,7)]
+                ])
             else:
                 message_text = status_text + f"⌛ Waiting for batter and bowler to play..."
                 markup = None
@@ -937,7 +977,8 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
         )
     
     # Wait a few seconds to let users read the result before updating the interface
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(1)
+    await update_group_message(playing_id, context)
     await update_game_interface(playing_id, context)
 
 async def end_innings(playing_id: str, context: CallbackContext) -> None:
@@ -1007,6 +1048,9 @@ async def end_innings(playing_id: str, context: CallbackContext) -> None:
                     game["player_messages"][user_id_str] = message.message_id
             except Exception as e:
                 logger.error(f"Error notifying player {user_id}: {e}")
+        
+        # Update group message
+        await update_group_message(playing_id, context)
         
         # Wait a few seconds before updating the interface
         await asyncio.sleep(3)
@@ -1174,7 +1218,7 @@ async def Mhandle_cancel_button(update: Update, context: CallbackContext) -> Non
         try:
             await context.bot.edit_message_text(
                 chat_id=uid,
-                message_id=game.get("player_message_id", uid),
+                message_id=game.get("player_messages", {}).get(str(uid), uid),
                 text="🛑 Game has been cancelled!"
             )
         except Exception as e:
@@ -1257,7 +1301,7 @@ async def stop_game(update: Update, context: CallbackContext) -> None:
         try:
             await context.bot.edit_message_text(
                 chat_id=uid,
-                message_id=game.get("player_message_id", uid),
+                message_id=game.get("player_messages", {}).get(str(uid), uid),
                 text="🛑 Game has been stopped by admin!"
             )
         except Exception as e:
@@ -1305,7 +1349,6 @@ async def list_players(update: Update, context: CallbackContext) -> None:
     try:
         await context.bot.send_message(
             chat_id=game["group_chat_id"],
-            message_id=game["message_id"],
             text=text,
             parse_mode="Markdown"
         )
