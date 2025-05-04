@@ -26,7 +26,7 @@ from cricket import (
     setup_jobs,
 )
 from claim import get_claim_handlers, daily
-from wordle import wordle_handlers, setup_logger
+from wordle import wordle_handlers, setup_logger,load_word_lists
 from wordhunt import register_handlers, games
 from bank import bank, store, withdraw, add_credits, blacklist, unblacklist, auto_ban,scan_blacklist
 from mines_game import get_mines_handlers
@@ -48,6 +48,7 @@ groups_collection = db['groups']  # Collection for tracking groups
 
 # Global variable for tracking last interaction time
 last_interaction_time = {}
+load_word_lists()
 
 def get_user_by_id(user_id):
     return user_collection.find_one({"user_id": user_id})
