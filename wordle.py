@@ -7,7 +7,6 @@ import os
 from collections import Counter
 import random
 import sys
-import time
 from typing import Sequence
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -26,7 +25,7 @@ logger = logging.getLogger(__name__)
 ABSENT = 0
 PRESENT = 1
 CORRECT = 2
-MAX_TRIALS = 30
+MAX_TRIALS = 6  # Changed to standard Wordle trials
 BLOCKS = {0: "🟥", 1: "🟨", 2: "🟩"} 
 
 WORD_LIST = []
@@ -35,6 +34,8 @@ CRICKET_WORD_LIST = []
 THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
 
 def load_word_lists():
+    try:
+        # Load classic word list
         word_list_path = os.path.join(THIS_FOLDER, 'word_list.txt')
         with open(word_list_path, "r", encoding="utf-8") as f:
             WORD_LIST.extend([line.strip().lower() for line in f if line.strip()])
@@ -43,6 +44,14 @@ def load_word_lists():
         cricket_word_list_path = os.path.join(THIS_FOLDER, 'cricket_word_list.txt')
         with open(cricket_word_list_path, "r", encoding="utf-8") as f:
             CRICKET_WORD_LIST.extend([line.strip().lower() for line in f if line.strip()])
+        
+        if not WORD_LIST or not CRICKET_WORD_LIST:
+            raise ValueError("One or both word lists are empty")
+        
+        logger.info("Word lists loaded successfully")
+    except Exception as e:
+        logger.error(f"Error loading word lists: {e}")
+        raise
 
 def setup_logger(level=logging.INFO):
     frm = (
@@ -237,7 +246,7 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     if len(guess) != len(solution):
-        await update.message.reply_text("The word must be 5 letters.")
+        await update.message.reply_text(f"The word must be {len(solution)} letters.")
         return
     elif guess not in word_list:
         await update.message.reply_text("Not in word list.")
@@ -284,3 +293,7 @@ wordle_handlers = [
     CallbackQueryHandler(handle_start_button, pattern="start_bot"),
     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_guess)
 ]
+
+# Initialize the bot
+setup_logger()
+load_word_lists()
