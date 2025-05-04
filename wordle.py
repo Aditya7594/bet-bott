@@ -10,7 +10,10 @@ import sys
 from typing import Sequence
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, CallbackQueryHandler, filters, JobQueue
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, ContextTypes,
+    CallbackQueryHandler, filters, JobQueue
+)
 from telegram.constants import ChatMemberStatus
 from pymongo import MongoClient
 
@@ -35,12 +38,10 @@ THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
 
 def load_word_lists():
     try:
-        # Load classic word list
         word_list_path = os.path.join(THIS_FOLDER, 'word_list.txt')
         with open(word_list_path, "r", encoding="utf-8") as f:
             WORD_LIST.extend([line.strip().lower() for line in f if line.strip()])
         
-        # Load cricket word list
         cricket_word_list_path = os.path.join(THIS_FOLDER, 'cricket_word_list.txt')
         with open(cricket_word_list_path, "r", encoding="utf-8") as f:
             CRICKET_WORD_LIST.extend([line.strip().lower() for line in f if line.strip()])
@@ -54,9 +55,7 @@ def load_word_lists():
         raise
 
 def setup_logger(level=logging.INFO):
-    frm = (
-        "%(levelname)-.3s [%(asctime)s] thr=%(thread)d %(name)s:%(lineno)d: %(message)s"
-    )
+    frm = "%(levelname)-.3s [%(asctime)s] %(name)s:%(lineno)d: %(message)s"
     handler = RotatingFileHandler("bot.log", maxBytes=10 * 1024 * 1024, backupCount=5)
     handler.setFormatter(logging.Formatter(frm))
     handler.setLevel(level)
@@ -92,10 +91,6 @@ async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         logger.error(f"Error checking admin status: {e}")
         return False
 
-async def is_owner(update: Update) -> bool:
-    OWNER_ID = 1234567890  # Replace with your actual owner ID
-    return update.effective_user.id == OWNER_ID
-
 async def check_user_started_bot(user_id: int, bot) -> bool:
     try:
         await bot.get_chat(user_id)
@@ -118,13 +113,13 @@ def update_leaderboard(chat_id: int, user_id: int, username: str, trials: int, w
 
 async def start_wordle_game(update: Update, context: ContextTypes.DEFAULT_TYPE, word_list: list[str], mode: str):
     chat_id = update.effective_chat.id
-    
+
     if not word_list:
         await update.message.reply_text("Sorry, the word list is currently unavailable. Please try again later.")
         return
-    
-    if 'game_active' in context.chat_data and context.chat_data['game_active']:
-        await update.message.reply_text("A game is already ongoing, reply with your guess.")
+
+    if context.chat_data.get('game_active'):
+        await update.message.reply_text("A game is already ongoing. Reply with your guess.")
         return
 
     context.chat_data['solution'] = random.choice(word_list)
@@ -133,43 +128,44 @@ async def start_wordle_game(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     context.chat_data['current_player'] = update.effective_user.id
     context.chat_data['current_player_name'] = update.effective_user.username or update.effective_user.first_name
     context.chat_data['mode'] = mode
+    context.chat_data['guess_history'] = []
 
     context.application.job_queue.run_once(
-        check_inactivity, 
+        check_inactivity,
         30,
         chat_id=chat_id,
-        user_id=update.effective_user.id
+        name=str(chat_id)
     )
 
-    await update.message.reply_text(f"A new {mode.upper()} game starts, reply with your guess.")
+    await update.message.reply_text(f"A new {mode.upper()} game starts. Reply with your guess!")
 
 async def check_inactivity(context: ContextTypes.DEFAULT_TYPE):
     chat_id = context.job.chat_id
     chat_data = context.application.chat_data.get(chat_id)
-    
+
     if chat_data and chat_data.get('game_active') and chat_data.get('trials') == 0:
         solution = chat_data.get('solution')
         username = chat_data.get('current_player_name')
         trials = chat_data.get('trials')
-        
+
         update_leaderboard(chat_id, chat_data.get('current_player'), username, trials, False)
         chat_data['game_active'] = False
-        
+
         await context.bot.send_message(
             chat_id,
-            f"Game stopped due to inactivity. The word was '{solution.upper()}'"
+            f"Game ended due to inactivity. The word was '{solution.upper()}'."
         )
 
-async def wordle_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def wordle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_wordle_game(update, context, WORD_LIST, "wordle")
 
-async def cricketwordle_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cricketwordle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start_wordle_game(update, context, CRICKET_WORD_LIST, "cricketwordle")
 
-async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await display_leaderboard(update, group_only=True)
 
-async def global_leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def global_leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await display_leaderboard(update, group_only=False)
 
 async def display_leaderboard(update: Update, group_only=True):
@@ -177,32 +173,31 @@ async def display_leaderboard(update: Update, group_only=True):
         cid = update.effective_chat.id
         query = {"chat_id": cid} if group_only else {"chat_id": "global"}
         top = list(wordle_col.find(query).sort([("wins", -1), ("best_score", 1)]).limit(10))
-        
+
         if not top:
             await update.message.reply_text("No leaderboard data available yet.")
             return
-        
+
         title = "🏆 WORDLE LEADERBOARD 🏆\n\n" if group_only else "🌎 GLOBAL WORDLE LEADERBOARD 🌎\n\n"
         message = title
-        
+
         for i, user in enumerate(top, 1):
             win_rate = (user['wins'] / user['games']) * 100 if user['games'] else 0
             best = user['best_score'] if user['best_score'] <= MAX_TRIALS else "N/A"
             message += f"{i}. {user['username']}: {user['wins']}/{user['games']} wins ({win_rate:.1f}%), Best: {best}\n"
-        
+
         await update.message.reply_text(message)
     except Exception as e:
         logger.error(f"Error displaying leaderboard: {e}")
-        await update.message.reply_text("An error occurred while retrieving the leaderboard.")
+        await update.message.reply_text("Error retrieving leaderboard.")
 
-async def handle_start_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_start_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await start_command(update, context)
     await query.message.edit_text("You've started the bot! You can now play Wordle games.")
 
-async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if 'game_active' not in context.chat_data or not context.chat_data['game_active']:
+async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.chat_data.get('game_active'):
         return
 
     user = update.effective_user
@@ -214,7 +209,7 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         keyboard = [[InlineKeyboardButton("Start Bot", callback_data="start_bot")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "You need to start the bot first to play. Click below to start.", reply_markup=reply_markup
+            "You need to start the bot first. Click below.", reply_markup=reply_markup
         )
         return
 
@@ -233,12 +228,9 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         result = check_with_solution(guess, solution)
         colored_row = "".join(BLOCKS[r] for r in result)
-        
-        if 'guess_history' not in context.chat_data:
-            context.chat_data['guess_history'] = []
-        context.chat_data['guess_history'].append(colored_row + "   " + guess.upper())
+        context.chat_data['guess_history'].append(f"{colored_row}   {guess.upper()} by {username}")
 
-        game_won = all(r == 2 for r in result)
+        game_won = all(r == CORRECT for r in result)
         final_message = "\n".join(context.chat_data['guess_history'])
 
         if game_won:
@@ -246,7 +238,7 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             context.chat_data['game_active'] = False
             update_leaderboard(update.effective_chat.id, user_id, username, trials, True)
         elif trials == MAX_TRIALS:
-            final_message += f"\n❌ {username} failed! The word was '{solution.upper()}'"
+            final_message += f"\n❌ Game over! The word was '{solution.upper()}'."
             context.chat_data['game_active'] = False
             update_leaderboard(update.effective_chat.id, user_id, username, trials, False)
 
@@ -254,6 +246,7 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     except Exception as e:
         logger.error(f"Error processing guess: {e}")
         await update.message.reply_text("An error occurred while processing your guess.")
+
 
 # Command handlers
 wordle_handlers = [
@@ -263,7 +256,7 @@ wordle_handlers = [
     CommandHandler("wordglobal", global_leaderboard_command),
     CallbackQueryHandler(handle_start_button, pattern="start_bot"),
     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_guess)
-]
+
 
 # Initialize the bot
 setup_logger()
