@@ -45,7 +45,7 @@ class GameObject:
         random.shuffle(self.letter_row)
 
     def can_spell(self, word):
-        temp_letters = self.letter_row.copy()  # Make a copy of the letter row
+        temp_letters = self.letter_row.copy()
         for letter in word:
             if letter in temp_letters:
                 temp_letters.remove(letter)
@@ -54,7 +54,6 @@ class GameObject:
         return True
 
     def create_score_words(self):
-        # Find all words that can be formed with the current letter row
         self.score_words = [word for word in self.line_list if self.can_spell(word)]
         logging.info(f"Generated {len(self.score_words)} score words")
 
@@ -84,11 +83,17 @@ class GameObject:
 def upper_letters(letters):
     return ' '.join(letter.upper() for letter in letters)
 
+def format_word_table(words):
+    table = "<b>🔍 Try these words:</b>\n"
+    for i in range(0, len(words), 10):
+        row = words[i:i+10]
+        table += " | ".join(row) + "\n"
+    return table
+
 # --- Command Handlers ---
 async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
-    # Prevent starting if game is already running
     if chat_id in games and games[chat_id].ongoing_game:
         await update.message.reply_text("⛔ A game is already in progress. Please wait for it to finish.")
         return
@@ -96,23 +101,19 @@ async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     games[chat_id] = GameObject()
     game = games[chat_id]
 
-    # Ensure game has valid state before starting
     if not game.line_list:
         await update.message.reply_text("⚠️ Word list not loaded. Game cannot start.")
         return
 
     game.start()
 
-    # Check if game initialized properly
     if not game.letter_row:
         await update.message.reply_text("⚠️ Failed to generate letters. Game cannot start.")
         del games[chat_id]
         return
 
-    # Set game duration
     timers[chat_id] = context.job_queue.run_once(end_game, 90, chat_id=chat_id)
 
-    # Send initial messages
     try:
         await context.bot.send_message(chat_id=chat_id, text="🧠 Generating Letters...")
         await context.bot.send_message(chat_id=chat_id, text=upper_letters(game.letter_row))
@@ -132,8 +133,7 @@ async def scoring(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or f"User_{update.effective_user.id}"
     game = games[chat_id]
 
-    # Add validation for the guess
-    if len(guess) < 2:  # Minimum word length should be 2
+    if len(guess) < 2:
         return
 
     if guess in game.found_words:
@@ -154,13 +154,14 @@ async def scoring(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"<i>{username}</i> found <b>{guess}</b> for {score} points!\n{upper_letters(game.letter_row)}",
             parse_mode=ParseMode.HTML
         )
-
-        # Check if all words are found
-        if not game.score_words:
-            job = timers.get(chat_id)
-            if job:
-                job.schedule_removal()
-            await end_game(context)
+    else:
+        logging.info(f"Word '{guess}' not found in score_words")
+        sample_words = random.sample(game.score_words, min(100, len(game.score_words)))
+        word_table = format_word_table(sample_words)
+        await update.message.reply_text(
+            f"❌ <b>{guess}</b> is not valid. Try these words:\n{word_table}",
+            parse_mode=ParseMode.HTML
+        )
 
 async def end_game(context: ContextTypes.DEFAULT_TYPE, manual_chat_id=None):
     chat_id = manual_chat_id if manual_chat_id else context.job.chat_id
