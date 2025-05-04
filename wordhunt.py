@@ -1,5 +1,5 @@
-from telegram import Update, Random
-from telegram.ext import CommandHandler, MessageHandler, filters, CallbackContext
+from telegram import Update
+from telegram.ext import Random,CommandHandler, MessageHandler, filters, CallbackContext
 from telegram.constants import ParseMode
 
 
@@ -12,6 +12,7 @@ class GameObject:
         self.line_list = []
         self.ongoing_game = False
         self.letter_row = []
+        
         self.score_words = []
         self.found_words = []
         self.player_scores = {}
