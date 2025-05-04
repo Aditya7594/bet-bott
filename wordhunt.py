@@ -4,7 +4,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 games = {}
-timers = {}
+activity_timers = {}  # Store our activity timers
 
 THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
 letter_list_location = os.path.join(THIS_FOLDER, '8letters.txt')
@@ -24,6 +24,7 @@ class GameObject:
         self.player_scores = {}
         self.top_score_words = []
         self.player_words = {}
+        self.last_activity_time = None  # Track the time of last activity
 
     def create_letter_row(self):
         vowels = ['a','e','i','o','u']
@@ -57,6 +58,7 @@ class GameObject:
     def start(self):
         if self.ongoing_game == False:
             self.ongoing_game = True
+            self.last_activity_time = asyncio.get_event_loop().time()  # Set initial activity time
             while(len(self.score_words) < 125):
                 self.create_letter_row()
                 self.create_score_words()
@@ -69,6 +71,7 @@ class GameObject:
         self.player_scores = {}
         self.top_score_words = []
         self.player_words = {}
+        self.last_activity_time = None
 
     def ongoing_game_false(self):
         self.ongoing_game = False
@@ -76,6 +79,9 @@ class GameObject:
     def sort_player_words(self):
         for player in self.player_words:
             self.player_words[player] = sorted(self.player_words[player], key=len, reverse=True)
+
+    def update_activity_time(self):
+        self.last_activity_time = asyncio.get_event_loop().time()
 
 
 def upper_letters(letter_row):
@@ -87,24 +93,43 @@ def upper_letters(letter_row):
 
 async def play(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     global games
-    global timers
+    global activity_timers
     chat_id = update.effective_chat.id
     await update.message.reply_html("Generating Letters")
     if chat_id not in games:
         games[chat_id] = GameObject()
     games[chat_id].start()
 
-    # Using Job queue instead of Timer
-    if chat_id in timers and timers[chat_id] is not None:
-        timers[chat_id].schedule_removal()
+    # Cancel any existing timer
+    if chat_id in activity_timers and activity_timers[chat_id] is not None:
+        activity_timers[chat_id].schedule_removal()
     
-    # Schedule end_game to run in 45 seconds
-    timers[chat_id] = context.job_queue.run_once(
-        end_game_callback, 45, 
+    # Create a new inactivity timer (30 seconds)
+    activity_timers[chat_id] = context.job_queue.run_repeating(
+        check_activity, 5.0,  # Check activity every 5 seconds
         chat_id=chat_id, data=update
     )
     
     await update.message.reply_html(upper_letters(games[chat_id].letter_row))
+
+
+async def check_activity(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Check if there has been any activity in the last 30 seconds"""
+    job = context.job
+    chat_id = job.chat_id
+    update = job.data
+    
+    if chat_id not in games or not games[chat_id].ongoing_game:
+        # No active game, remove the timer
+        job.schedule_removal()
+        return
+    
+    current_time = asyncio.get_event_loop().time()
+    # If no activity for 30 seconds, end the game
+    if current_time - games[chat_id].last_activity_time > 30:
+        await end_game(update, context)
+        job.schedule_removal()
+
 
 async def scoring(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
@@ -121,6 +146,9 @@ async def scoring(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         found_notif = f"<b>{guess}</b> has already been found!"
         await update.message.reply_html(found_notif)
     elif guess in games[chat_id].score_words:
+        # Valid word found - update activity time
+        games[chat_id].update_activity_time()
+        
         score = len(guess) * len(guess)
         notif = f"<i>{username}</i> found <b>{guess}</b> for {score} points! \n{upper_letters(games[chat_id].letter_row)}"
         games[chat_id].score_words.remove(guess)
@@ -133,6 +161,7 @@ async def scoring(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         games[chat_id].player_scores[username] += score
         await update.message.reply_html(notif)
 
+
 async def end_game_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
     job = context.job
     chat_id = job.chat_id
@@ -140,6 +169,7 @@ async def end_game_callback(context: ContextTypes.DEFAULT_TYPE) -> None:
     
     if chat_id in games and games[chat_id].ongoing_game:
         await end_game(update, context)
+
 
 async def end_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
@@ -175,9 +205,10 @@ async def end_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     games[chat_id].end_clear()
     
     # Clean up the timer
-    if chat_id in timers and timers[chat_id] is not None:
-        timers[chat_id].schedule_removal()
-        timers[chat_id] = None
+    global activity_timers
+    if chat_id in activity_timers and activity_timers[chat_id] is not None:
+        activity_timers[chat_id].schedule_removal()
+        activity_timers[chat_id] = None
 
 
 def register_handlers(application: Application) -> None:
