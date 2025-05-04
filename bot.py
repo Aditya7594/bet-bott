@@ -26,7 +26,7 @@ from cricket import (
     setup_jobs,
 )
 from claim import get_claim_handlers, daily
-from wordle import wordle_handlers, setup_logger,load_word_lists
+from wordle import get_wordle_handlers, setup_logger,load_word_lists
 from wordhunt import register_handlers, games
 from bank import bank, store, withdraw, add_credits, blacklist, unblacklist, auto_ban,scan_blacklist
 from mines_game import get_mines_handlers
@@ -710,7 +710,7 @@ def main() -> None:
         application.add_handler(handler)
     for handler in get_genshin_handlers():
         application.add_handler(handler)
-    for handler in wordle_handlers:
+    for handler in get_wordle_handlers():
         application.add_handler(handler)
         
     application.add_handler(MessageHandler(
