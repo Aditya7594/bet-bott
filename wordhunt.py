@@ -45,7 +45,7 @@ class GameObject:
         random.shuffle(self.letter_row)
 
     def can_spell(self, word):
-        temp_letters = self.letter_row.copy()
+        temp_letters = self.letter_row.copy()  # Make a copy of the letter row
         for letter in word:
             if letter in temp_letters:
                 temp_letters.remove(letter)
@@ -56,6 +56,7 @@ class GameObject:
     def create_score_words(self):
         # Find all words that can be formed with the current letter row
         self.score_words = [word for word in self.line_list if self.can_spell(word)]
+        logging.info(f"Generated {len(self.score_words)} score words")
 
     def start(self):
         if not self.ongoing_game:
@@ -128,13 +129,10 @@ async def scoring(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     guess = update.message.text.lower()
-    if not guess.isalpha():
-        return
-
     username = update.effective_user.username or f"User_{update.effective_user.id}"
     game = games[chat_id]
 
-    # Validate the guess
+    # Add validation for the guess
     if len(guess) < 2:  # Minimum word length should be 2
         return
 
@@ -175,10 +173,9 @@ async def end_game(context: ContextTypes.DEFAULT_TYPE, manual_chat_id=None):
     game.sort_player_words()
 
     final_results = "<b>🎉 GAME ENDED!</b>\n\n<b>SCORES:</b>\n"
-    if game.player_scores:
-        for player, score in game.player_scores.items():
-            final_results += f"{player}: {score}\n"
-    else:
+    for player, score in game.player_scores.items():
+        final_results += f"{player}: {score}\n"
+    if not game.player_scores:
         final_results += "No one played!\n"
 
     if game.top_score_words:
