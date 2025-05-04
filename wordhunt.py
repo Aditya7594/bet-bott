@@ -1,5 +1,5 @@
 from telegram import Update
-from telegram.ext import Random,CommandHandler, MessageHandler, filters, CallbackContext
+from telegram.ext import CommandHandler, MessageHandler, filters, CallbackContext
 from telegram.constants import ParseMode
 import random
 
