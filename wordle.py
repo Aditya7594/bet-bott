@@ -28,9 +28,6 @@ PRESENT = 1
 CORRECT = 2
 MAX_TRIALS = 30
 BLOCKS = {0: "🟥", 1: "🟨", 2: "🟩"} 
-import os
-
-# ... (other imports and code)
 
 WORD_LIST = []
 CRICKET_WORD_LIST = []
@@ -38,8 +35,6 @@ CRICKET_WORD_LIST = []
 THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
 
 def load_word_lists():
-    try:
-        # Load classic word list
         word_list_path = os.path.join(THIS_FOLDER, 'word_list.txt')
         with open(word_list_path, "r", encoding="utf-8") as f:
             WORD_LIST.extend([line.strip().lower() for line in f if line.strip()])
@@ -48,8 +43,7 @@ def load_word_lists():
         cricket_word_list_path = os.path.join(THIS_FOLDER, 'cricket_word_list.txt')
         with open(cricket_word_list_path, "r", encoding="utf-8") as f:
             CRICKET_WORD_LIST.extend([line.strip().lower() for line in f if line.strip()])
-        
-load_word_lists()
+
 def setup_logger(level=logging.INFO):
     frm = (
         "%(levelname)-.3s [%(asctime)s] thr=%(thread)d %(name)s:%(lineno)d: %(message)s"
