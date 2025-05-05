@@ -34,13 +34,18 @@ WORD_LIST, CRICKET_WORD_LIST = [], []
 THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
 
 def load_word_list():
-    try:
-        with open(os.path.join(THIS_FOLDER, 'word_list.txt'), "r") as f:
-            WORD_LIST.extend(line.strip().lower() for line in f if line.strip())
-        with open(os.path.join(THIS_FOLDER, 'cricket_word_list.txt'), "r") as f:
-            CRICKET_WORD_LIST.extend(line.strip().lower() for line in f if line.strip())
-    except Exception as e:
-        logger.error(f"Failed to load word lists: {e}")
+    global WORD_LIST, CRICKET_WORD_LIST
+    # Only load if lists are empty
+    if not WORD_LIST or not CRICKET_WORD_LIST:
+        try:
+            logger.info(f"Loading word lists from {THIS_FOLDER}")
+            with open(os.path.join(THIS_FOLDER, 'word_list.txt'), "r") as f:
+                WORD_LIST = [line.strip().lower() for line in f if line.strip()]
+            with open(os.path.join(THIS_FOLDER, 'cricket_word_list.txt'), "r") as f:
+                CRICKET_WORD_LIST = [line.strip().lower() for line in f if line.strip()]
+            logger.info(f"Loaded {len(WORD_LIST)} regular words and {len(CRICKET_WORD_LIST)} cricket words")
+        except Exception as e:
+            logger.error(f"Failed to load word lists: {e}")
 
 def verify_solution(guess: str, solution: str) -> Sequence[int]:
     result = [-1] * len(solution)
@@ -94,6 +99,8 @@ async def stop_timeout(context: ContextTypes.DEFAULT_TYPE):
 
 async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     load_word_list()
+    logger.info("Wordle command received")
+    
     if not WORD_LIST:
         await update.message.reply_text("Word list is missing.")
         return
@@ -102,6 +109,8 @@ async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     word = random.choice(WORD_LIST)
+    logger.info(f"Selected word: {word}")
+    
     context.chat_data.update({
         'game_active': True,
         'solution': word,
@@ -114,10 +123,12 @@ async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         timeout_inactive(update, context)
     )
 
-    await update.message.reply_text(f"WORDLE started! Guess the word. You have {MAX_TRIALS} trials.")
+    await update.message.reply_text(f"WORDLE started! Guess the {len(word)}-letter word. You have {MAX_TRIALS} trials.")
 
 async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     load_word_list()
+    logger.info("Cricket Wordle command received")
+    
     if not CRICKET_WORD_LIST:
         await update.message.reply_text("Cricket word list is missing.")
         return
@@ -126,6 +137,8 @@ async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     word = random.choice(CRICKET_WORD_LIST)
+    logger.info(f"Selected cricket word: {word}")
+    
     context.chat_data.update({
         'game_active': True,
         'solution': word,
@@ -138,7 +151,7 @@ async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         timeout_inactive(update, context)
     )
 
-    await update.message.reply_text(f"CRICKETWORDLE started! Guess the cricket-related word. You have {MAX_TRIALS} trials.")
+    await update.message.reply_text(f"CRICKETWORDLE started! Guess the {len(word)}-letter cricket-related word. You have {MAX_TRIALS} trials.")
 
 async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await stop_timeout(context)
@@ -150,13 +163,20 @@ async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("No active game to end.")
 
 async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Log every message received to understand what's going on
+    logger.info(f"Message received: {update.message.text}")
+    
     if not context.chat_data.get('game_active'):
+        logger.info("No active game, ignoring message")
         return
 
     user = update.effective_user
     chat_id = update.effective_chat.id
     guess = update.message.text.strip().lower()
     solution = context.chat_data['solution']
+    
+    logger.info(f"Processing guess: {guess}, solution: {solution}")
+    
     word_list = CRICKET_WORD_LIST if context.chat_data['mode'] == 'cricketwordle' else WORD_LIST
 
     await stop_timeout(context)
@@ -164,14 +184,21 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         timeout_inactive(update, context)
     )
 
-    if guess in [g.lower().split()[-1] for g in context.chat_data['guesses']]:
+    # Simplify previous guess check - just check if the lowercase guess is in any previous guess
+    previous_guesses = [g.lower() for g in context.chat_data.get('guesses', [])]
+    if any(guess in g for g in previous_guesses):
+        logger.info(f"Duplicate guess: {guess}")
         await update.message.reply_text("You already tried that word!")
         return
 
     if len(guess) != len(solution):
+        logger.info(f"Wrong length: {len(guess)} vs {len(solution)}")
         await update.message.reply_text(f"Word must be {len(solution)} letters.")
         return
-    if guess not in word_list:
+    
+    # Check if word is in list
+    if word_list and guess not in word_list:
+        logger.info(f"Word not in list: {guess}")
         await update.message.reply_text("Word not in list.")
         return
 
@@ -183,16 +210,19 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     adjust_score(user.id, user.first_name, chat_id, 1)
 
     board_display = "\n".join(context.chat_data['guesses'])
+    logger.info(f"Current board: {board_display}")
 
     if all(r == CORRECT for r in result):
         board_display += f"\n🎉 You won in {context.chat_data['attempts']} tries!"
         adjust_score(user.id, user.first_name, chat_id, 20)
         await stop_timeout(context)
         context.chat_data.clear()
+        logger.info("Game won!")
     elif context.chat_data['attempts'] >= MAX_TRIALS:
         board_display += f"\n❌ Out of tries ({MAX_TRIALS}). The word was: {solution.upper()}"
         await stop_timeout(context)
         context.chat_data.clear()
+        logger.info("Game lost - out of tries")
 
     await update.message.reply_text(board_display)
 
@@ -216,8 +246,21 @@ async def wordglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         msg += f"{i}. {user.get('name', 'Anonymous')} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
 
+# Debug command to check word list
+async def check_wordlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    load_word_list()
+    regular_count = len(WORD_LIST)
+    cricket_count = len(CRICKET_WORD_LIST)
+    await update.message.reply_text(
+        f"Word lists status:\n"
+        f"Regular words: {regular_count}\n"
+        f"Cricket words: {cricket_count}\n"
+        f"Example regular words: {', '.join(random.sample(WORD_LIST, min(5, regular_count)))}\n"
+        f"Example cricket words: {', '.join(random.sample(CRICKET_WORD_LIST, min(5, cricket_count)))}"
+    )
+
 def registers_handlers(application: Application) -> None:
-    # Load word lists
+    # Load word lists at startup
     load_word_list()
 
     # Register all handlers
@@ -226,4 +269,9 @@ def registers_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("end", end))
     application.add_handler(CommandHandler("wordleaderboard", wordleaderboard))
     application.add_handler(CommandHandler("wordglobal", wordglobal))
+    application.add_handler(CommandHandler("checkwordlist", check_wordlist))
+    
+    # Make sure this handler is registered LAST
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_guess))
+    
+    logger.info("Wordle handlers registered successfully")
