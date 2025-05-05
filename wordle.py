@@ -4,7 +4,7 @@ import os
 import random
 import logging
 from collections import Counter
-from typing import Sequence, Optional
+from typing import Sequence, Optional, Dict, Any
 
 from telegram import Update
 from telegram.ext import (
@@ -30,6 +30,9 @@ MAX_TRIALS = 20
 # Load word lists
 WORD_LIST, CRICKET_WORD_LIST = [], []
 THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
+
+# Game state storage
+wordle_games: Dict[int, Dict[str, Any]] = {}
 
 def load_word_list():
     global WORD_LIST, CRICKET_WORD_LIST
@@ -85,20 +88,21 @@ async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not WORD_LIST:
         await update.message.reply_text("Word list is missing.")
         return
-    if context.chat_data.get('game_active'):
+    chat_id = update.effective_chat.id
+    if chat_id in wordle_games:
         await update.message.reply_text("Game already in progress.")
         return
 
     word = random.choice(WORD_LIST)
     logger.info(f"Selected word: {word}")
     
-    context.chat_data.update({
+    wordle_games[chat_id] = {
         'game_active': True,
         'solution': word,
         'attempts': 0,
         'mode': "wordle",
         'guesses': []
-    })
+    }
 
     await update.message.reply_text(f"WORDLE started! Guess the {len(word)}-letter word. You have {MAX_TRIALS} trials.")
 
@@ -109,37 +113,39 @@ async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not CRICKET_WORD_LIST:
         await update.message.reply_text("Cricket word list is missing.")
         return
-    if context.chat_data.get('game_active'):
+    chat_id = update.effective_chat.id
+    if chat_id in wordle_games:
         await update.message.reply_text("Game already in progress.")
         return
 
     word = random.choice(CRICKET_WORD_LIST)
     logger.info(f"Selected cricket word: {word}")
     
-    context.chat_data.update({
+    wordle_games[chat_id] = {
         'game_active': True,
         'solution': word,
         'attempts': 0,
         'mode': "cricketwordle",
         'guesses': []
-    })
+    }
 
     await update.message.reply_text(f"CRICKETWORDLE started! Guess the {len(word)}-letter cricket-related word. You have {MAX_TRIALS} trials.")
 
 async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not context.chat_data.get('game_active'):
+    chat_id = update.effective_chat.id
+    if chat_id not in wordle_games:
         return
 
+    game = wordle_games[chat_id]
     user = update.effective_user
-    chat_id = update.effective_chat.id
     guess = update.message.text.strip().lower()
-    solution = context.chat_data['solution']
+    solution = game['solution']
     
     logger.info(f"Processing guess: {guess}, solution: {solution}")
     
-    word_list = CRICKET_WORD_LIST if context.chat_data['mode'] == 'cricketwordle' else WORD_LIST
+    word_list = CRICKET_WORD_LIST if game['mode'] == 'cricketwordle' else WORD_LIST
 
-    previous_guess_words = [entry.split()[-1].lower() for entry in context.chat_data.get('guesses', [])]
+    previous_guess_words = [entry.split()[-1].lower() for entry in game['guesses']]
     if guess in previous_guess_words:
         logger.info(f"Duplicate guess: {guess}")
         await update.message.reply_text("You already tried that word!")
@@ -155,23 +161,23 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("Word not in list.")
         return
 
-    context.chat_data['attempts'] += 1
+    game['attempts'] += 1
     result = verify_solution(guess, solution)
     result_blocks = "".join(BLOCKS[r] for r in result)
 
-    context.chat_data['guesses'].append(f"{result_blocks}   {guess.upper()}")
+    game['guesses'].append(f"{result_blocks}   {guess.upper()}")
     adjust_score(user.id, user.first_name, chat_id, 1)
 
-    board_display = "\n".join(context.chat_data['guesses'])
+    board_display = "\n".join(game['guesses'])
 
     if all(r == CORRECT for r in result):
-        board_display += f"\n🎉 You won in {context.chat_data['attempts']} tries!"
+        board_display += f"\n🎉 You won in {game['attempts']} tries!"
         adjust_score(user.id, user.first_name, chat_id, 20)
-        context.chat_data.clear()
+        del wordle_games[chat_id]
         logger.info("Game won!")
-    elif context.chat_data['attempts'] >= MAX_TRIALS:
+    elif game['attempts'] >= MAX_TRIALS:
         board_display += f"\n❌ Out of tries ({MAX_TRIALS}). The word was: {solution.upper()}"
-        context.chat_data.clear()
+        del wordle_games[chat_id]
         logger.info("Game lost - out of tries")
 
     await update.message.reply_text(board_display)
@@ -179,18 +185,16 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def wordleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = str(update.effective_chat.id)
     pipeline = [
-        {"$project": {"name": {"$ifNull": ["$name", "Anonymous"]}, "points": {"$ifNull": [f"$group_points.{chat_id}", 0]}}},
-        {"$sort": {"points": -1}},
-        {"$limit": 10}
+        {"$project": {"name": {"$ifNull": ["$name", "Anonymous"]}, "points": {"$ifNull": [f"$group_points.{chat_id}", 0]}}}
     ]
     top = list(wordle_col.aggregate(pipeline))
     msg = "🏅 Group Word Leaderboard:\n\n"
     for i, user in enumerate(top, 1):
-        msg += f"{i}. {user['name']} - {user['points']} pts\n"
+        msg += f"{i}. {user['name']} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
 
 async def wordglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    top = list(wordle_col.find().sort("points", -1).limit(10))
+    top = list(wordle_col.find().sort("points", -1))
     msg = "🌍 Global Word Leaderboard:\n\n"
     for i, user in enumerate(top, 1):
         msg += f"{i}. {user.get('name', 'Anonymous')} - {user.get('points', 0)} pts\n"
