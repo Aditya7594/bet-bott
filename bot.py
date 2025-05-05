@@ -26,7 +26,7 @@ from cricket import (
     setup_jobs,
 )
 from claim import get_claim_handlers, daily
-from wordle import get_wordle_handlers
+from wordle import register_handlers
 from wordhunt import register_handlers, games
 from bank import bank, store, withdraw, add_credits, blacklist, unblacklist, auto_ban,scan_blacklist
 from mines_game import get_mines_handlers
