@@ -191,23 +191,21 @@ async def display_global_leaderboard(update: Update, context: ContextTypes.DEFAU
         msg += f"{i}. {user.get('name', 'Anonymous')} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
 
-def main():
-    load_word_list()
-    app = Application.builder().token("8104505314:AAHeleqAEIJPuGmxPw80c_BsCU6gsRKhYlo").build()
+def get_wordle_handlers() -> list:
+    load_word_lists()
 
-    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-        logger.error(f"Exception while handling an update: {context.error}")
-    app.add_error_handler(error_handler)
+    async def start_normal_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await start_wordle(update, context, WORD_LIST, "wordle")
 
-    app.add_handler(CommandHandler("wordle", lambda u, c: initiate_wordle(u, c, WORD_LIST, "wordle")))
-    app.add_handler(CommandHandler("cricketwordle", lambda u, c: initiate_wordle(u, c, CRICKET_WORD_LIST, "cricketwordle")))
-    app.add_handler(CommandHandler("leaderboard", display_global_leaderboard))
-    app.add_handler(CommandHandler("wordleaderboard", display_group_leaderboard))
-    app.add_handler(CommandHandler("wordglobal", display_global_leaderboard))
-    app.add_handler(CommandHandler("end", terminate_game))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_guess))
+    async def start_cricket_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await start_wordle(update, context, CRICKET_WORD_LIST, "cricketwordle")
 
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+    return [
+        CommandHandler("wordle", start_normal_wordle),
+        CommandHandler("cricketwordle", start_cricket_wordle),
+        CommandHandler("leaderboard", global_leaderboard),
+        CommandHandler("wordleaderboard", group_leaderboard),
+        CommandHandler("wordglobal", global_leaderboard),
+        CommandHandler("end", end_game),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_guess),
+    ]
