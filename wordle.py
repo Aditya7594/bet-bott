@@ -23,19 +23,17 @@ client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?r
 db = client['telegram_bot']
 wordle_col = db["leaderboard"]
 
-
-
 # Game constants
 ABSENT, PRESENT, CORRECT = 0, 1, 2
 BLOCKS = {0: "🟥", 1: "🟨", 2: "🟩"}
-MAX_TRIALS = 20  # Increased to 20 trials
-INACTIVITY_TIMEOUT = 30  # seconds
+MAX_TRIALS = 20
+INACTIVITY_TIMEOUT = 30
 
 # Load word lists
 WORD_LIST, CRICKET_WORD_LIST = [], []
 THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
 
-def load_word_lists():
+def load_word_list():
     try:
         with open(os.path.join(THIS_FOLDER, 'word_list.txt'), "r") as f:
             WORD_LIST.extend(line.strip().lower() for line in f if line.strip())
@@ -44,7 +42,7 @@ def load_word_lists():
     except Exception as e:
         logger.error(f"Failed to load word lists: {e}")
 
-def check_with_solution(guess: str, solution: str) -> Sequence[int]:
+def verify_solution(guess: str, solution: str) -> Sequence[int]:
     result = [-1] * len(solution)
     counter = Counter(solution)
     for i, l in enumerate(solution):
@@ -60,7 +58,7 @@ def check_with_solution(guess: str, solution: str) -> Sequence[int]:
                 result[i] = ABSENT
     return result
 
-def update_points(user_id, name, chat_id, points):
+def adjust_score(user_id, name, chat_id, points):
     user = wordle_col.find_one({"_id": user_id})
     if not user:
         wordle_col.insert_one({
@@ -78,7 +76,7 @@ def update_points(user_id, name, chat_id, points):
             {"$set": {"points": new_total, "group_points": group_points, "name": name}}
         )
 
-async def start_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE, word_list: list[str], mode: str):
+async def initiate_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE, word_list: list[str], mode: str):
     if not word_list:
         await update.message.reply_text("Word list is missing.")
         return
@@ -90,26 +88,25 @@ async def start_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE, word_
     context.chat_data.update({
         'game_active': True,
         'solution': word,
-        'trials': 0,
+        'attempts': 0,
         'mode': mode,
         'guesses': []
     })
 
-    # Setup inactivity timer
     context.chat_data['inactivity_task'] = asyncio.create_task(
-        inactivity_timeout(update, context)
+        timeout_inactive(update, context)
     )
 
     await update.message.reply_text(f"{mode.upper()} Wordle started! Guess the word. You have {MAX_TRIALS} trials.")
 
-async def inactivity_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def timeout_inactive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.sleep(INACTIVITY_TIMEOUT)
     if context.chat_data.get('game_active'):
         solution = context.chat_data.get('solution', '').upper()
         context.chat_data.clear()
         await update.message.reply_text(f"Game ended due to inactivity. The word was: {solution}")
 
-async def cancel_timeout(context: ContextTypes.DEFAULT_TYPE):
+async def stop_timeout(context: ContextTypes.DEFAULT_TYPE):
     task = context.chat_data.get('inactivity_task')
     if task:
         task.cancel()
@@ -118,8 +115,8 @@ async def cancel_timeout(context: ContextTypes.DEFAULT_TYPE):
         except asyncio.CancelledError:
             pass
 
-async def end_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await cancel_timeout(context)
+async def terminate_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await stop_timeout(context)
     if context.chat_data.get('game_active'):
         solution = context.chat_data.get('solution', '').upper()
         context.chat_data.clear()
@@ -127,7 +124,7 @@ async def end_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("No active game to end.")
 
-async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def process_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.chat_data.get('game_active'):
         return
 
@@ -137,13 +134,11 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     solution = context.chat_data['solution']
     word_list = CRICKET_WORD_LIST if context.chat_data['mode'] == 'cricketwordle' else WORD_LIST
 
-    # Reset inactivity timer
-    await cancel_timeout(context)
+    await stop_timeout(context)
     context.chat_data['inactivity_task'] = asyncio.create_task(
-        inactivity_timeout(update, context)
+        timeout_inactive(update, context)
     )
 
-    # Check for duplicate guesses
     if guess in [g.lower().split()[-1] for g in context.chat_data['guesses']]:
         await update.message.reply_text("You already tried that word!")
         return
@@ -155,28 +150,28 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Word not in list.")
         return
 
-    context.chat_data['trials'] += 1
-    result = check_with_solution(guess, solution)
+    context.chat_data['attempts'] += 1
+    result = verify_solution(guess, solution)
     result_blocks = "".join(BLOCKS[r] for r in result)
 
     context.chat_data['guesses'].append(f"{result_blocks}   {guess.upper()}")
-    update_points(user.id, user.first_name, chat_id, 1)
+    adjust_score(user.id, user.first_name, chat_id, 1)
 
     board_display = "\n".join(context.chat_data['guesses'])
 
     if all(r == CORRECT for r in result):
-        board_display += f"\n🎉 You won in {context.chat_data['trials']} tries!"
-        update_points(user.id, user.first_name, chat_id, 20)
-        await cancel_timeout(context)
+        board_display += f"\n🎉 You won in {context.chat_data['attempts']} tries!"
+        adjust_score(user.id, user.first_name, chat_id, 20)
+        await stop_timeout(context)
         context.chat_data.clear()
-    elif context.chat_data['trials'] >= MAX_TRIALS:
+    elif context.chat_data['attempts'] >= MAX_TRIALS:
         board_display += f"\n❌ Out of tries ({MAX_TRIALS}). The word was: {solution.upper()}"
-        await cancel_timeout(context)
+        await stop_timeout(context)
         context.chat_data.clear()
 
     await update.message.reply_text(board_display)
 
-async def group_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def display_group_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
     pipeline = [
         {"$project": {"name": {"$ifNull": ["$name", "Anonymous"]}, "points": {"$ifNull": [f"$group_points.{chat_id}", 0]}}},
@@ -189,21 +184,30 @@ async def group_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"{i}. {user['name']} - {user['points']} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
 
-async def global_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def display_global_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     top = list(wordle_col.find().sort("points", -1).limit(10))
     msg = "🌍 Global Word Leaderboard:\n\n"
     for i, user in enumerate(top, 1):
         msg += f"{i}. {user.get('name', 'Anonymous')} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
-    
-def get_wordle_handlers() -> list:
-    load_word_lists()
-    return [
-        CommandHandler("wordle", lambda u, c: start_wordle(u, c, WORD_LIST, "wordle")),
-        CommandHandler("cricketwordle", lambda u, c: start_wordle(u, c, CRICKET_WORD_LIST, "cricketwordle")),
-        CommandHandler("leaderboard", global_leaderboard),
-        CommandHandler("wordleaderboard", group_leaderboard),
-        CommandHandler("wordglobal", global_leaderboard),
-        CommandHandler("end", end_game),
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_guess),
-    ]
+
+def main():
+    load_word_list()
+    app = Application.builder().token("8104505314:AAHeleqAEIJPuGmxPw80c_BsCU6gsRKhYlo").build()
+
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+        logger.error(f"Exception while handling an update: {context.error}")
+    app.add_error_handler(error_handler)
+
+    app.add_handler(CommandHandler("wordle", lambda u, c: initiate_wordle(u, c, WORD_LIST, "wordle")))
+    app.add_handler(CommandHandler("cricketwordle", lambda u, c: initiate_wordle(u, c, CRICKET_WORD_LIST, "cricketwordle")))
+    app.add_handler(CommandHandler("leaderboard", display_global_leaderboard))
+    app.add_handler(CommandHandler("wordleaderboard", display_group_leaderboard))
+    app.add_handler(CommandHandler("wordglobal", display_global_leaderboard))
+    app.add_handler(CommandHandler("end", terminate_game))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_guess))
+
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
