@@ -27,7 +27,7 @@ wh_scores = db["wordhunt_scores"]
 # Game constants
 ABSENT, PRESENT, CORRECT = 0, 1, 2
 BLOCKS = {0: "🟥", 1: "🟨", 2: "🟩"}
-MAX_TRIALS = 6  # Standard Wordle is 6 trials
+MAX_TRIALS = 25  # Standard Wordle is 6 trials
 
 # Load word lists
 WORD_LIST, CRICKET_WORD_LIST = [], []
