@@ -192,7 +192,7 @@ async def display_global_leaderboard(update: Update, context: ContextTypes.DEFAU
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
 
 def get_wordle_handlers() -> list:
-    load_word_lists()
+    load_word_list()
 
     async def start_normal_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start_wordle(update, context, WORD_LIST, "wordle")
