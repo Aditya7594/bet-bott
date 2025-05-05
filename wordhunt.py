@@ -272,7 +272,25 @@ async def wordglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     for i, user in enumerate(top, 1):
         msg += f"{i}. {user.get('name', 'Anonymous')} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
-
+    
+async def end_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """End an active Wordle game"""
+    chat_id = update.effective_chat.id
+    
+    # Check if there's an active Wordle game
+    if chat_id not in wordle_games or not wordle_games[chat_id]['game_active']:
+        await update.message.reply_text("No active Wordle game to end.")
+        return
+    
+    # Get the solution and mark the game as ended
+    solution = wordle_games[chat_id]['solution']
+    wordle_games[chat_id]['game_active'] = False
+    
+    # Send message to the group
+    await update.message.reply_text(f"Game ended! The word was: {solution.upper()}")
+    
+    # Log the action
+    logger.info(f"Wordle game ended in chat {chat_id}. Solution was: {solution}")
 ###############################
 # WORDHUNT FUNCTIONS
 ###############################
@@ -526,6 +544,7 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("cricketwordle", cricketwordle))
     application.add_handler(CommandHandler("wordleaderboard", wordleaderboard))
     application.add_handler(CommandHandler("wordglobal", wordglobal))
+    application.add_handler(CommandHandler("endwordle", end_wordle))
     
     # WordHunt handlers
     application.add_handler(CommandHandler("wordhunt", wordhunt))
