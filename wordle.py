@@ -76,7 +76,7 @@ def adjust_score(user_id, name, chat_id, points):
             {"$set": {"points": new_total, "group_points": group_points, "name": name}}
         )
 
-async def initiate_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE, word_list: list[str], mode: str):
+async def start_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE, word_list: list[str], mode: str):
     if not word_list:
         await update.message.reply_text("Word list is missing.")
         return
@@ -115,7 +115,7 @@ async def stop_timeout(context: ContextTypes.DEFAULT_TYPE):
         except asyncio.CancelledError:
             pass
 
-async def terminate_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def end_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await stop_timeout(context)
     if context.chat_data.get('game_active'):
         solution = context.chat_data.get('solution', '').upper()
@@ -124,7 +124,7 @@ async def terminate_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("No active game to end.")
 
-async def process_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.chat_data.get('game_active'):
         return
 
@@ -171,7 +171,7 @@ async def process_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(board_display)
 
-async def display_group_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def group_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
     pipeline = [
         {"$project": {"name": {"$ifNull": ["$name", "Anonymous"]}, "points": {"$ifNull": [f"$group_points.{chat_id}", 0]}}},
@@ -194,15 +194,9 @@ async def global_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def get_wordle_handlers() -> list:
     load_word_list()
 
-    async def start_normal_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await start_wordle(update, context, WORD_LIST, "wordle")
-
-    async def start_cricket_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await start_wordle(update, context, CRICKET_WORD_LIST, "cricketwordle")
-
     return [
-        CommandHandler("wordle", start_normal_wordle),
-        CommandHandler("cricketwordle", start_cricket_wordle),
+        CommandHandler("wordle", lambda update, context: start_wordle(update, context, WORD_LIST, "wordle")),
+        CommandHandler("cricketwordle", lambda update, context: start_wordle(update, context, CRICKET_WORD_LIST, "cricketwordle")),
         CommandHandler("leaderboard", global_leaderboard),
         CommandHandler("wordleaderboard", group_leaderboard),
         CommandHandler("wordglobal", global_leaderboard),
