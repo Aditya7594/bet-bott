@@ -216,7 +216,7 @@ async def wordglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         msg += f"{i}. {user.get('name', 'Anonymous')} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
 
-def register_handlers(application: Application) -> None:
+def registers_handlers(application: Application) -> None:
     # Load word lists
     load_word_list()
 
