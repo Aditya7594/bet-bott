@@ -5,7 +5,6 @@ import random
 import logging
 from collections import Counter
 from typing import Sequence, Optional
-import asyncio
 
 from telegram import Update
 from telegram.ext import (
@@ -27,7 +26,6 @@ wordle_col = db["leaderboard"]
 ABSENT, PRESENT, CORRECT = 0, 1, 2
 BLOCKS = {0: "🟥", 1: "🟨", 2: "🟩"}
 MAX_TRIALS = 20
-INACTIVITY_TIMEOUT = 30
 
 # Load word lists
 WORD_LIST, CRICKET_WORD_LIST = [], []
@@ -35,7 +33,6 @@ THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
 
 def load_word_list():
     global WORD_LIST, CRICKET_WORD_LIST
-    # Only load if lists are empty
     if not WORD_LIST or not CRICKET_WORD_LIST:
         try:
             logger.info(f"Loading word lists from {THIS_FOLDER}")
@@ -81,22 +78,6 @@ def adjust_score(user_id, name, chat_id, points):
             {"$set": {"points": new_total, "group_points": group_points, "name": name}}
         )
 
-async def timeout_inactive(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await asyncio.sleep(INACTIVITY_TIMEOUT)
-    if context.chat_data.get('game_active'):
-        solution = context.chat_data.get('solution', '').upper()
-        context.chat_data.clear()
-        await update.message.reply_text(f"Game ended due to inactivity. The word was: {solution}")
-
-async def stop_timeout(context: ContextTypes.DEFAULT_TYPE):
-    task = context.chat_data.get('inactivity_task')
-    if task:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
 async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     load_word_list()
     logger.info("Wordle command received")
@@ -105,7 +86,7 @@ async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Word list is missing.")
         return
     if context.chat_data.get('game_active'):
-        await update.message.reply_text("Game already in progress. Use /end to stop.")
+        await update.message.reply_text("Game already in progress.")
         return
 
     word = random.choice(WORD_LIST)
@@ -119,10 +100,6 @@ async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         'guesses': []
     })
 
-    context.chat_data['inactivity_task'] = asyncio.create_task(
-        timeout_inactive(update, context)
-    )
-
     await update.message.reply_text(f"WORDLE started! Guess the {len(word)}-letter word. You have {MAX_TRIALS} trials.")
 
 async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -133,7 +110,7 @@ async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Cricket word list is missing.")
         return
     if context.chat_data.get('game_active'):
-        await update.message.reply_text("Game already in progress. Use /end to stop.")
+        await update.message.reply_text("Game already in progress.")
         return
 
     word = random.choice(CRICKET_WORD_LIST)
@@ -147,27 +124,10 @@ async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         'guesses': []
     })
 
-    context.chat_data['inactivity_task'] = asyncio.create_task(
-        timeout_inactive(update, context)
-    )
-
     await update.message.reply_text(f"CRICKETWORDLE started! Guess the {len(word)}-letter cricket-related word. You have {MAX_TRIALS} trials.")
 
-async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await stop_timeout(context)  # Cancel the inactivity timer
-    if context.chat_data.get('game_active'):
-        solution = context.chat_data.get('solution', '').upper()
-        context.chat_data.clear()
-        await update.message.reply_text(f"Game ended. The word was: {solution}")
-    else:
-        await update.message.reply_text("No active game to end.")
-
 async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Log every message received to understand what's going on
-    logger.info(f"Message received: {update.message.text}")
-    
     if not context.chat_data.get('game_active'):
-        logger.info("No active game, ignoring message")
         return
 
     user = update.effective_user
@@ -179,12 +139,6 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     
     word_list = CRICKET_WORD_LIST if context.chat_data['mode'] == 'cricketwordle' else WORD_LIST
 
-    await stop_timeout(context)  # Cancel existing timer
-    context.chat_data['inactivity_task'] = asyncio.create_task(
-    timeout_inactive(update, context)
-    )
-
-    # Simplify previous guess check - just check if the lowercase guess is in any previous guess
     previous_guess_words = [entry.split()[-1].lower() for entry in context.chat_data.get('guesses', [])]
     if guess in previous_guess_words:
         logger.info(f"Duplicate guess: {guess}")
@@ -196,7 +150,6 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(f"Word must be {len(solution)} letters.")
         return
     
-    # Check if word is in list
     if word_list and guess not in word_list:
         logger.info(f"Word not in list: {guess}")
         await update.message.reply_text("Word not in list.")
@@ -210,17 +163,14 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     adjust_score(user.id, user.first_name, chat_id, 1)
 
     board_display = "\n".join(context.chat_data['guesses'])
-    logger.info(f"Current board: {board_display}")
 
     if all(r == CORRECT for r in result):
         board_display += f"\n🎉 You won in {context.chat_data['attempts']} tries!"
         adjust_score(user.id, user.first_name, chat_id, 20)
-        await stop_timeout(context)
         context.chat_data.clear()
         logger.info("Game won!")
     elif context.chat_data['attempts'] >= MAX_TRIALS:
         board_display += f"\n❌ Out of tries ({MAX_TRIALS}). The word was: {solution.upper()}"
-        await stop_timeout(context)
         context.chat_data.clear()
         logger.info("Game lost - out of tries")
 
@@ -246,32 +196,11 @@ async def wordglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         msg += f"{i}. {user.get('name', 'Anonymous')} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
 
-# Debug command to check word list
-async def check_wordlist(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    load_word_list()
-    regular_count = len(WORD_LIST)
-    cricket_count = len(CRICKET_WORD_LIST)
-    await update.message.reply_text(
-        f"Word lists status:\n"
-        f"Regular words: {regular_count}\n"
-        f"Cricket words: {cricket_count}\n"
-        f"Example regular words: {', '.join(random.sample(WORD_LIST, min(5, regular_count)))}\n"
-        f"Example cricket words: {', '.join(random.sample(CRICKET_WORD_LIST, min(5, cricket_count)))}"
-    )
-
 def registers_handlers(application: Application) -> None:
-    # Load word lists at startup
     load_word_list()
-
-    # Register all handlers
     application.add_handler(CommandHandler("wordle", wordle))
     application.add_handler(CommandHandler("cricketwordle", cricketwordle))
-    application.add_handler(CommandHandler("end", end))
     application.add_handler(CommandHandler("wordleaderboard", wordleaderboard))
     application.add_handler(CommandHandler("wordglobal", wordglobal))
-    application.add_handler(CommandHandler("checkwordlist", check_wordlist))
-    
-    # Make sure this handler is registered LAST
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_guess))
-    
     logger.info("Wordle handlers registered successfully")
