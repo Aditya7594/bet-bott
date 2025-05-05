@@ -711,8 +711,6 @@ def main() -> None:
         application.add_handler(handler)
     for handler in get_genshin_handlers():
         application.add_handler(handler)
-    for handler in get_wordle_handlers():
-        application.add_handler(handler)
         
     application.add_handler(MessageHandler(
         (filters.TEXT | filters.Sticker.ALL) & ~filters.COMMAND,
