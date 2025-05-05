@@ -184,7 +184,7 @@ async def display_group_leaderboard(update: Update, context: ContextTypes.DEFAUL
         msg += f"{i}. {user['name']} - {user['points']} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
 
-async def display_global_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def global_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     top = list(wordle_col.find().sort("points", -1).limit(10))
     msg = "🌍 Global Word Leaderboard:\n\n"
     for i, user in enumerate(top, 1):
