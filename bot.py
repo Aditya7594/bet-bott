@@ -48,7 +48,7 @@ groups_collection = db['groups']  # Collection for tracking groups
 
 # Global variable for tracking last interaction time
 last_interaction_time = {}
-load_word_lists()
+
 
 def get_user_by_id(user_id):
     return user_collection.find_one({"user_id": user_id})
