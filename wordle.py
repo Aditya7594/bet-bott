@@ -76,29 +76,6 @@ def adjust_score(user_id, name, chat_id, points):
             {"$set": {"points": new_total, "group_points": group_points, "name": name}}
         )
 
-async def start_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE, word_list: list[str], mode: str):
-    if not word_list:
-        await update.message.reply_text("Word list is missing.")
-        return
-    if context.chat_data.get('game_active'):
-        await update.message.reply_text("Game already in progress. Use /end to stop.")
-        return
-
-    word = random.choice(word_list)
-    context.chat_data.update({
-        'game_active': True,
-        'solution': word,
-        'attempts': 0,
-        'mode': mode,
-        'guesses': []
-    })
-
-    context.chat_data['inactivity_task'] = asyncio.create_task(
-        timeout_inactive(update, context)
-    )
-
-    await update.message.reply_text(f"{mode.upper()} Wordle started! Guess the word. You have {MAX_TRIALS} trials.")
-
 async def timeout_inactive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.sleep(INACTIVITY_TIMEOUT)
     if context.chat_data.get('game_active'):
@@ -115,7 +92,55 @@ async def stop_timeout(context: ContextTypes.DEFAULT_TYPE):
         except asyncio.CancelledError:
             pass
 
-async def end_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    load_word_list()
+    if not WORD_LIST:
+        await update.message.reply_text("Word list is missing.")
+        return
+    if context.chat_data.get('game_active'):
+        await update.message.reply_text("Game already in progress. Use /end to stop.")
+        return
+
+    word = random.choice(WORD_LIST)
+    context.chat_data.update({
+        'game_active': True,
+        'solution': word,
+        'attempts': 0,
+        'mode': "wordle",
+        'guesses': []
+    })
+
+    context.chat_data['inactivity_task'] = asyncio.create_task(
+        timeout_inactive(update, context)
+    )
+
+    await update.message.reply_text(f"WORDLE started! Guess the word. You have {MAX_TRIALS} trials.")
+
+async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    load_word_list()
+    if not CRICKET_WORD_LIST:
+        await update.message.reply_text("Cricket word list is missing.")
+        return
+    if context.chat_data.get('game_active'):
+        await update.message.reply_text("Game already in progress. Use /end to stop.")
+        return
+
+    word = random.choice(CRICKET_WORD_LIST)
+    context.chat_data.update({
+        'game_active': True,
+        'solution': word,
+        'attempts': 0,
+        'mode': "cricketwordle",
+        'guesses': []
+    })
+
+    context.chat_data['inactivity_task'] = asyncio.create_task(
+        timeout_inactive(update, context)
+    )
+
+    await update.message.reply_text(f"CRICKETWORDLE started! Guess the cricket-related word. You have {MAX_TRIALS} trials.")
+
+async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await stop_timeout(context)
     if context.chat_data.get('game_active'):
         solution = context.chat_data.get('solution', '').upper()
@@ -124,7 +149,7 @@ async def end_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("No active game to end.")
 
-async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.chat_data.get('game_active'):
         return
 
@@ -171,7 +196,7 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(board_display)
 
-async def group_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def wordleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = str(update.effective_chat.id)
     pipeline = [
         {"$project": {"name": {"$ifNull": ["$name", "Anonymous"]}, "points": {"$ifNull": [f"$group_points.{chat_id}", 0]}}},
@@ -184,22 +209,21 @@ async def group_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"{i}. {user['name']} - {user['points']} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
 
-async def global_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def wordglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     top = list(wordle_col.find().sort("points", -1).limit(10))
     msg = "🌍 Global Word Leaderboard:\n\n"
     for i, user in enumerate(top, 1):
         msg += f"{i}. {user.get('name', 'Anonymous')} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
 
-def get_wordle_handlers() -> list:
+def register_handlers(application: Application) -> None:
+    # Load word lists
     load_word_list()
 
-    return [
-        CommandHandler("wordle", lambda update, context: start_wordle(update, context, WORD_LIST, "wordle")),
-        CommandHandler("cricketwordle", lambda update, context: start_wordle(update, context, CRICKET_WORD_LIST, "cricketwordle")),
-        CommandHandler("leaderboard", global_leaderboard),
-        CommandHandler("wordleaderboard", group_leaderboard),
-        CommandHandler("wordglobal", global_leaderboard),
-        CommandHandler("end", end_game),
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_guess),
-    ]
+    # Register all handlers
+    application.add_handler(CommandHandler("wordle", wordle))
+    application.add_handler(CommandHandler("cricketwordle", cricketwordle))
+    application.add_handler(CommandHandler("end", end))
+    application.add_handler(CommandHandler("wordleaderboard", wordleaderboard))
+    application.add_handler(CommandHandler("wordglobal", wordglobal))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_guess))
