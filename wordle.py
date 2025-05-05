@@ -154,7 +154,7 @@ async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(f"CRICKETWORDLE started! Guess the {len(word)}-letter cricket-related word. You have {MAX_TRIALS} trials.")
 
 async def end(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await stop_timeout(context)
+    await stop_timeout(context)  # Cancel the inactivity timer
     if context.chat_data.get('game_active'):
         solution = context.chat_data.get('solution', '').upper()
         context.chat_data.clear()
@@ -179,14 +179,14 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     
     word_list = CRICKET_WORD_LIST if context.chat_data['mode'] == 'cricketwordle' else WORD_LIST
 
-    await stop_timeout(context)
+    await stop_timeout(context)  # Cancel existing timer
     context.chat_data['inactivity_task'] = asyncio.create_task(
-        timeout_inactive(update, context)
+    timeout_inactive(update, context)
     )
 
     # Simplify previous guess check - just check if the lowercase guess is in any previous guess
-    previous_guesses = [g.lower() for g in context.chat_data.get('guesses', [])]
-    if any(guess in g for g in previous_guesses):
+    previous_guess_words = [entry.split()[-1].lower() for entry in context.chat_data.get('guesses', [])]
+    if guess in previous_guess_words:
         logger.info(f"Duplicate guess: {guess}")
         await update.message.reply_text("You already tried that word!")
         return
