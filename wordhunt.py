@@ -308,7 +308,6 @@ async def end_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     
 
     logger.info(f"Wordle game ended in chat {chat_id}. Solution was: {solution}")
-]
 class WordHuntGame:
     """Class to represent a WordHunt game"""
     
