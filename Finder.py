@@ -849,32 +849,24 @@ async def collect_reward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             parse_mode="Markdown"
         )
 
-from telegram import Update
-from telegram.ext import ContextTypes
 
 async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Fetch top users sorted by score descending
-    users = user_collection.find({}).sort("score", -1)
+    # Fetch users with score >= 0, sorted by score descending
+    users = user_collection.find({"score": {"$gte": 0}}).sort("score", -1)
 
     leaderboard_lines = ["🏆 *GLOBAL LEADERBOARD* 🏆", ""]
-    medals = ["🥇", "🥈", "🥉"]
 
     for idx, user in enumerate(users):
         if idx >= 10:
             break
 
-        # Try to get first_name, then username, then default
         name = user.get("first_name") or user.get("username") or "Player"
-
-        # Medal or numeric rank prefix
-        if idx < 3:
-            prefix = medals[idx]
-        else:
-            prefix = f"{idx+1}."
-
         level = user.get("level", 1)
         score = user.get("score", 0)
         words = user.get("words_found", 0)
+
+        # Simple numeric rank
+        prefix = f"{idx + 1}."
 
         leaderboard_lines.append(
             f"{prefix} *{name}* — Level *{level}* | Score *{score}* | Words *{words}*"
@@ -889,6 +881,10 @@ async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+    await update.message.reply_text(
+        "\n".join(leaderboard_lines),
+        parse_mode="Markdown"
+    )
     
 def finder_handlers(application: Application) -> None:
     """Register all command and message handlers for the game"""
