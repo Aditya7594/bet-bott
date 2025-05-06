@@ -1265,31 +1265,49 @@ def setup_jobs(application):
         first=10
     )
 
+async def post_initialization(application: Application):
+    # Schedule with 10 second delay before first run to ensure app is ready
+    application.job_queue.run_repeating(
+        cleanup_inactive_games,
+        interval=300,  # 5 minutes between checks
+        first=10  # 10 second delay before first run
+    )
+
+# When creating your application
+application = Application.builder() \
+    .token(TOKEN) \
+    .post_init(post_initialization) \
+    .build()
+
+# Your existing cleanup function (slightly modified for safety)
 async def cleanup_inactive_games(context: CallbackContext):
     current_time = datetime.utcnow()
     
-    # Clean up in-memory games
-    games_to_remove = []
-    for game_id, game in list(cricket_games.items()):
-        last_move = game.get("last_move", datetime.utcnow() - timedelta(minutes=11))
-        if (current_time - last_move).total_seconds() > 600:  # 10 minutes of inactivity
-            games_to_remove.append(game_id)
-            try:
-                db['cricket_games'].update_one(
+    try:
+        # Clean up in-memory games
+        games_to_remove = []
+        for game_id, game in list(cricket_games.items()):
+            last_move = game.get("last_move", datetime.utcnow() - timedelta(minutes=11))
+            if (current_time - last_move).total_seconds() > 600:
+                games_to_remove.append(game_id)
+                await context.application.run_async(
+                    db['cricket_games'].update_one,
                     {"game_id": game_id},
                     {"$set": {"active": False}}
                 )
-            except:
-                pass
-    
-    for game_id in games_to_remove:
-        cricket_games.pop(game_id, None)
-    
-    # Clean up MongoDB games
-    db['cricket_games'].update_many(
-        {"last_move": {"$lte": current_time - timedelta(minutes=10)}},
-        {"$set": {"active": False}}
-    )
+        
+        for game_id in games_to_remove:
+            cricket_games.pop(game_id, None)
+        
+        # Clean up MongoDB games
+        await context.application.run_async(
+            db['cricket_games'].update_many,
+            {"last_move": {"$lte": current_time - timedelta(minutes=10)}},
+            {"$set": {"active": False}}
+        )
+    except Exception as e:
+        print(f"Cleanup error: {str(e)}")
+        # Consider adding proper error logging here
     
 
 async def show_achievements_by_category(update: Update, context: CallbackContext, category_index: int = 0) -> None:
