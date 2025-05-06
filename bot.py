@@ -22,8 +22,7 @@ from cricket import (
     handle_watch_button,
     toss_button,
     choose_button,
-    play_button,
-    setup_jobs,
+    play_button
 )
 from claim import get_claim_handlers, daily
 from wordhunt import register_handlers, wordle_games,wordhunt_games
@@ -717,8 +716,7 @@ def main() -> None:
         handle_genshin_group_message
     ))
     application.add_error_handler(error_handler)
-    
-    setup_jobs(application)
+   
     application.run_polling()
 
 if __name__ == '__main__':
