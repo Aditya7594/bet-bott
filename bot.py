@@ -27,6 +27,7 @@ from cricket import (
 )
 from claim import get_claim_handlers, daily
 from wordhunt import register_handlers, wordle_games,wordhunt_games
+from Finder import finder_handlers
 from bank import bank, store, withdraw, add_credits, blacklist, unblacklist, auto_ban,scan_blacklist
 from mines_game import get_mines_handlers
 from hilo_game import get_hilo_handlers
@@ -697,6 +698,7 @@ def main() -> None:
     for handler in get_claim_handlers():        
         application.add_handler(handler)
     register_handlers(application)
+    finder_handlers(application)
     for handler in get_bdice_handlers():
         application.add_handler(handler)
     for handler in get_mines_handlers():
