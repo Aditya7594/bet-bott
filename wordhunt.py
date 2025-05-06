@@ -1,892 +1,568 @@
-import logging
-import random
-import json
-import os
-from datetime import datetime
-from typing import List, Dict, Tuple, Set, Any
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    ConversationHandler,
-)
+from __future__ import annotations
 
+import os
+import random
+import logging
+import asyncio
+from collections import Counter, defaultdict
+from typing import Sequence, Optional, Dict, Any
+
+from telegram import Update
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, ContextTypes,
+    filters
+)
 from pymongo import MongoClient
 
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+# Logging setup
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-PLAYING = 1
-
-PREFIX_LETTER = "letter_"
-PREFIX_RESET = "reset"
-PREFIX_HINT = "hint"
-PREFIX_QUIT = "quit"
-PREFIX_NEXT = "next"
-PREFIX_COLLECT = "collect"
-
+# MongoDB setup
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
 db = client['telegram_bot']
-user_collection = db["users"]
+wordle_col = db["leaderboard"]
+wh_scores = db["wordhunt_scores"]
 
-levels_file = "levels.json"
-rewards_file = "rewards.json"
+# Game constants
+ABSENT, PRESENT, CORRECT = 0, 1, 2
+BLOCKS = {0: "🟥", 1: "🟨", 2: "🟩"}
+MAX_TRIALS = 25  # Standard Wordle is 6 trials
 
-with open(levels_file, "r") as f:
-    levels = json.load(f)
+# Load word lists
+WORD_LIST, CRICKET_WORD_LIST = [], []
+EASY_WORD_LIST = []  # First 17000 words (easier words)
+THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
 
-with open(rewards_file, "r") as f:
-    rewards = json.load(f)
+# Game state storage
+wordle_games: Dict[int, Dict[str, Any]] = {}
+wordhunt_games = {}
+activity_timers = {}  # Store activity timers for wordhunt
 
-STYLE_GREEN = '🟢'
-STYLE_BLUE = '🔵'
-STYLE_WHITE = '⚪'
+###############################
+# SHARED FUNCTIONS
+###############################
 
-def get_user_game_state(user_id: int) -> Dict:
-    user_data = user_collection.find_one({"_id": user_id})
-    if not user_data:
-        user_collection.insert_one({
+def load_word_lists():
+    global WORD_LIST, CRICKET_WORD_LIST, EASY_WORD_LIST
+    if not WORD_LIST or not CRICKET_WORD_LIST:
+        try:
+            logger.info(f"Loading word lists from {THIS_FOLDER}")
+            with open(os.path.join(THIS_FOLDER, 'word_list.txt'), "r") as f:
+                all_words = [line.strip().lower() for line in f if line.strip()]
+                WORD_LIST = all_words
+                # Take only the first 17000 words (easier words)
+                EASY_WORD_LIST = all_words[:17000]
+                logger.info(f"Loaded {len(WORD_LIST)} total words and {len(EASY_WORD_LIST)} easy words")
+                
+            with open(os.path.join(THIS_FOLDER, 'cricket_word_list.txt'), "r") as f:
+                CRICKET_WORD_LIST = [line.strip().lower() for line in f if line.strip()]
+            logger.info(f"Loaded {len(CRICKET_WORD_LIST)} cricket words")
+        except Exception as e:
+            logger.error(f"Failed to load word lists: {e}")
+
+# Load wordhunt word list
+try:
+    letter_list_location = os.path.join(THIS_FOLDER, '8letters.txt')
+    with open(letter_list_location, "r") as word_list:
+        wordhunt_word_list = [line.rstrip('\n').lower() for line in word_list]
+    logger.info(f"Loaded {len(wordhunt_word_list)} words for WordHunt")
+except Exception as e:
+    logger.error(f"Failed to load wordhunt word list: {e}")
+    wordhunt_word_list = []
+
+###############################
+# WORDLE FUNCTIONS
+###############################
+
+def verify_solution(guess: str, solution: str) -> Sequence[int]:
+    """
+    Verifies a wordle guess against the solution.
+    Returns a list where each element indicates:
+    - CORRECT (2): Letter is correct and in correct position
+    - PRESENT (1): Letter is in the word but in wrong position
+    - ABSENT (0): Letter is not in the word
+    """
+    if len(guess) != len(solution):
+        return []
+    
+    result = [-1] * len(solution)
+    counter = Counter(solution)
+    
+    # First pass: Mark correct positions
+    for i, letter in enumerate(solution):
+        if i < len(guess) and guess[i] == letter:
+            result[i] = CORRECT
+            counter[letter] -= 1
+    
+    # Second pass: Mark present letters
+    for i, letter in enumerate(guess):
+        if i < len(result) and result[i] == -1:
+            if counter.get(letter, 0) > 0:
+                result[i] = PRESENT
+                counter[letter] -= 1
+            else:
+                result[i] = ABSENT
+    
+    return result
+
+def adjust_score(user_id, name, chat_id, points):
+    """Update user score in MongoDB for Wordle games"""
+    user = wordle_col.find_one({"_id": user_id})
+    if not user:
+        wordle_col.insert_one({
             "_id": user_id,
-            "level": 1,
-            "score": 0,
-            "storage": {
-                "items": [],
-                "rare_items": [],
-                "special_items": []
-            },
-            "current_level_start": None,
-            "words_found": 0,
-            "hints_used": 0,
-            "levels_completed": 0
+            "name": name,
+            "points": points,
+            "group_points": {str(chat_id): points}
         })
-        return {
-            "level": 1,
-            "score": 0,
-            "storage": {
-                "items": [],
-                "rare_items": [],
-                "special_items": []
-            },
-            "current_level_start": None,
-            "words_found": 0,
-            "hints_used": 0,
-            "levels_completed": 0
-        }
+    else:
+        new_total = user.get("points", 0) + points
+        group_points = user.get("group_points", {})
+        group_points[str(chat_id)] = group_points.get(str(chat_id), 0) + points
+        wordle_col.update_one(
+            {"_id": user_id},
+            {"$set": {"points": new_total, "group_points": group_points, "name": name}}
+        )
+
+def get_random_wordle_word():
+    """Get a random word from the EASY_WORD_LIST between 4-8 letters"""
+    # Filter words that are between 4 and 8 letters long
+    eligible_words = [word for word in EASY_WORD_LIST if 4 <= len(word) <= 8]
+    return random.choice(eligible_words)
+
+async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Start a new Wordle game"""
+    load_word_lists()
+    logger.info("Wordle command received")
     
-    storage = user_data.get("storage", {})
-    if isinstance(storage, list):
-        storage = {
-            "items": storage,
-            "rare_items": [],
-            "special_items": []
-        }
+    if not EASY_WORD_LIST:
+        await update.message.reply_text("Word list is missing.")
+        return
     
-    return {
-        "level": user_data.get("level", 1),
-        "score": user_data.get("score", 0),
-        "storage": storage,
-        "current_level_start": user_data.get("current_level_start", None),
-        "words_found": user_data.get("words_found", 0),
-        "hints_used": user_data.get("hints_used", 0),
-        "levels_completed": user_data.get("levels_completed", 0)
+    chat_id = update.effective_chat.id
+    if chat_id in wordle_games and wordle_games[chat_id]['game_active']:
+        await update.message.reply_text("Wordle game already in progress.")
+        return
+
+    word = get_random_wordle_word()
+    logger.info(f"Selected word: {word}")
+    
+    wordle_games[chat_id] = {
+        'game_active': True,
+        'solution': word,
+        'attempts': 0,
+        'mode': "wordle",
+        'guesses': [],
+        'last_message_id': None
     }
 
-def update_user_data(user_id: int, update_data: Dict):
-    user_collection.update_one(
-        {"_id": user_id},
-        {"$set": update_data},
+    await update.message.reply_text(f"WORDLE started! Guess the {len(word)}-letter word. You have {MAX_TRIALS} trials.")
+
+async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Start a new Cricket Wordle game"""
+    load_word_lists()
+    logger.info("Cricket Wordle command received")
+    
+    if not CRICKET_WORD_LIST:
+        await update.message.reply_text("Cricket word list is missing.")
+        return
+    
+    chat_id = update.effective_chat.id
+    if chat_id in wordle_games and wordle_games[chat_id]['game_active']:
+        await update.message.reply_text("Game already in progress.")
+        return
+
+    # Filter cricket words to match 4-8 length requirement
+    eligible_cricket_words = [word for word in CRICKET_WORD_LIST if 4 <= len(word) <= 8]
+    if not eligible_cricket_words:
+        await update.message.reply_text("No suitable cricket words found.")
+        return
+        
+    word = random.choice(eligible_cricket_words)
+    logger.info(f"Selected cricket word: {word}")
+    
+    wordle_games[chat_id] = {
+        'game_active': True,
+        'solution': word,
+        'attempts': 0,
+        'mode': "cricketwordle",
+        'guesses': [],
+        'last_message_id': None
+    }
+
+    await update.message.reply_text(f"CRICKETWORDLE started! Guess the {len(word)}-letter cricket-related word. You have {MAX_TRIALS} trials.")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle both Wordle guesses and WordHunt words"""
+    chat_id = update.effective_chat.id
+    message_text = update.message.text.strip().lower()
+    
+    # First check if there's an active Wordle game
+    if chat_id in wordle_games and wordle_games[chat_id]['game_active']:
+        await handle_wordle_guess(update, context)
+    
+    # Then check if there's an active WordHunt game
+    elif chat_id in wordhunt_games and wordhunt_games[chat_id].ongoing_game:
+        await scoring_wordhunt(update, context)
+
+async def handle_wordle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Process a guess for an active Wordle game"""
+    chat_id = update.effective_chat.id
+    if chat_id not in wordle_games or not wordle_games[chat_id]['game_active']:
+        return
+
+    game = wordle_games[chat_id]
+    user = update.effective_user
+    guess = update.message.text.strip().lower()
+    solution = game['solution']
+    
+    logger.info(f"Processing wordle guess: {guess}, solution: {solution}")
+    
+    # Choose the appropriate word list for validating guesses
+    # Note: We validate against the ENTIRE word list, not just the easy words
+    word_list = CRICKET_WORD_LIST if game['mode'] == 'cricketwordle' else WORD_LIST
+
+    # Check for duplicate guesses
+    previous_guess_words = [entry.split()[-1].lower() for entry in game['guesses']]
+    if guess in previous_guess_words:
+        logger.info(f"Duplicate guess: {guess}")
+        await update.message.reply_text("You already tried that word!")
+        return
+
+    # Check if guess has correct length
+    if len(guess) != len(solution):
+        logger.info(f"Wrong length: {len(guess)} vs {len(solution)}")
+        await update.message.reply_text(f"Word must be {len(solution)} letters.")
+        return
+    
+    # Check if guess is in the word list
+    if word_list and guess not in word_list:
+        logger.info(f"Word not in list: {guess}")
+        await update.message.reply_text("Word not in list.")
+        return
+
+    # Process valid guess
+    game['attempts'] += 1
+    result = verify_solution(guess, solution)
+    result_blocks = "".join(BLOCKS[r] for r in result)
+
+    game['guesses'].append(f"{result_blocks}   {guess.upper()}")
+    
+    # Award points for attempt
+    adjust_score(user.id, user.first_name, chat_id, 1)
+
+    board_display = "\n".join(game['guesses'])
+
+    # Check win condition
+    if guess == solution:
+        board_display += f"\n🎉 You won in {game['attempts']} tries!"
+        # Award bonus points for winning
+        points_award = MAX_TRIALS - game['attempts'] + 1
+        adjust_score(user.id, user.first_name, chat_id, 10 + points_award)
+        wordle_games[chat_id]['game_active'] = False
+        logger.info("Game won!")
+    elif game['attempts'] >= MAX_TRIALS:
+        board_display += f"\n❌ Out of tries ({MAX_TRIALS}). The word was: {solution.upper()}"
+        wordle_games[chat_id]['game_active'] = False
+        logger.info("Game lost - out of tries")
+
+    await update.message.reply_text(board_display)
+
+async def wordleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Display Wordle leaderboard for current group"""
+    chat_id = str(update.effective_chat.id)
+    pipeline = [
+        {"$project": {"name": {"$ifNull": ["$name", "Anonymous"]}, "points": {"$ifNull": [f"$group_points.{chat_id}", 0]}}},
+        {"$match": {"points": {"$gt": 0}}},
+        {"$sort": {"points": -1}},
+        {"$limit": 10}
+    ]
+    top = list(wordle_col.aggregate(pipeline))
+    msg = "🏅 Group Word Leaderboard:\n\n"
+    for i, user in enumerate(top, 1):
+        msg += f"{i}. {user['name']} - {user.get('points', 0)} pts\n"
+    await update.message.reply_text(msg.strip() or "No leaderboard data.")
+
+async def wordglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Display global Wordle leaderboard"""
+    top = list(wordle_col.find().sort("points", -1).limit(10))
+    msg = "🌍 Global Word Leaderboard:\n\n"
+    for i, user in enumerate(top, 1):
+        msg += f"{i}. {user.get('name', 'Anonymous')} - {user.get('points', 0)} pts\n"
+    await update.message.reply_text(msg.strip() or "No leaderboard data.")
+    
+async def end_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """End an active Wordle game"""
+    chat_id = update.effective_chat.id
+    
+    if chat_id not in wordle_games or not wordle_games[chat_id]['game_active']:
+        await update.message.reply_text("No active Wordle game to end.")
+        return
+    
+    solution = wordle_games[chat_id]['solution']
+    wordle_games[chat_id]['game_active'] = False
+    
+
+    await update.message.reply_text(f"Game ended! The word was: {solution.upper()}")
+    
+
+    logger.info(f"Wordle game ended in chat {chat_id}. Solution was: {solution}")
+class WordHuntGame:
+    """Class to represent a WordHunt game"""
+    
+    def __init__(self):
+        global wordhunt_word_list
+   
+        self.line_list = [word for word in wordhunt_word_list if len(word) >= 3]
+        self.ongoing_game = False
+        self.letter_row = []
+        self.score_words = []
+        self.found_words = []
+        self.player_scores = {}
+        self.top_score_words = []
+        self.player_words = {}
+        self.last_activity_time = None 
+
+    def create_letter_row(self):
+        vowels = ['a','e','i','o','u']
+        non_vowels_common = ['b', 'c', 'd', 'f', 'g', 'h', 'k', 'l', 'm', 'n', 'p', 'r', 's', 't','w','y']
+        non_vowels_rare = ['j', 'q', 'x', 'z','v']
+        num_vowels = random.randint(2,3)
+        self.letter_row = []
+        for i in range(num_vowels):
+            self.letter_row.append(random.choice(vowels))
+        for j in range(7 - num_vowels):
+            self.letter_row.append(random.choice(non_vowels_common))
+        self.letter_row.append(random.choice(non_vowels_rare))
+        random.shuffle(self.letter_row)
+
+    def create_score_words(self):
+        self.score_words = []
+        for word in self.line_list:
+            if self.can_spell(word):
+                self.score_words.append(word)
+
+    def can_spell(self, word):
+        word_letters = list(word)
+        available_letters = self.letter_row.copy()
+        for letter in word_letters:
+            if letter in available_letters:
+                available_letters.remove(letter)
+            else:
+                return False
+        return True
+
+    def start(self):
+        if self.ongoing_game == False:
+            self.ongoing_game = True
+            self.last_activity_time = asyncio.get_event_loop().time()  # Set initial activity time
+            while(len(self.score_words) < 35):
+                self.create_letter_row()
+                self.create_score_words()
+            self.top_score_words = sorted(self.score_words, key=len, reverse=True)[0:5]
+
+    def end_clear(self):
+        self.letter_row = []
+        self.score_words = []
+        self.found_words = []
+        self.player_scores = {}
+        self.top_score_words = []
+        self.player_words = {}
+        self.last_activity_time = None
+
+    def ongoing_game_false(self):
+        self.ongoing_game = False
+
+    def sort_player_words(self):
+        for player in self.player_words:
+            self.player_words[player] = sorted(self.player_words[player], key=len, reverse=True)
+
+    def update_activity_time(self):
+        self.last_activity_time = asyncio.get_event_loop().time()
+
+def update_wordhunt_score(group_id, player_name, score):
+    """Update user score in MongoDB for WordHunt games"""
+    wh_scores.update_one(
+        {"group_id": group_id, "player_name": player_name},
+        {"$inc": {"score": score}},
         upsert=True
     )
 
-def get_words_for_level(level: int) -> List[str]:
-    level_key = f"level_{level}"
-    level_words = levels.get(level_key)
-    if not level_words:
-        logger.warning(f"No words found for {level_key} in levels.json. Using fallback words.")
-        return ["FALLBACK", "WORD", "LIST"]
-    return level_words.copy()
+def upper_letters(letter_row):
+    """Format letter row for display"""
+    upper = ""
+    for letter in letter_row:
+        upper = upper + " " + letter.upper()
+    return upper
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    user = update.effective_user
-    user_id = user.id
-    game_state = get_user_game_state(user_id)
+async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Start a new WordHunt game"""
+    global wordhunt_games
+    global activity_timers
     
-    if update.effective_chat.type != "private":
-        await update.message.reply_text(
-            f"Hello {user.first_name}! This game can only be played in private chat. "
-            f"Please message me directly to play!"
-        )
-        return ConversationHandler.END
+    chat_id = update.effective_chat.id
     
-    await update.message.reply_text(
-        f"🎮 *WORD FINDER GAME* 🎮\n\n"
-        f"Welcome {user.first_name}! Let's find some hidden words!\n\n"
-        f"{STYLE_GREEN} = Found letters\n"
-        f"{STYLE_BLUE} = Selected letters\n"
-        f"{STYLE_WHITE} = Unselected letters\n\n"
-        f"Words can be: horizontal, vertical, diagonal, L-shaped, or zig-zag\n"
-        f"Find all words to complete the level and earn rewards!",
-        parse_mode="Markdown"
+
+    if chat_id in wordle_games and wordle_games[chat_id]['game_active']:
+        await update.message.reply_text("There's already an active Wordle game. Please finish it first.")
+        return
+    
+    await update.message.reply_html("Generating Letters")
+    if chat_id not in wordhunt_games:
+        wordhunt_games[chat_id] = WordHuntGame()
+    wordhunt_games[chat_id].start()
+
+    if chat_id in activity_timers and activity_timers[chat_id] is not None:
+        activity_timers[chat_id].schedule_removal()
+    
+
+    activity_timers[chat_id] = context.job_queue.run_repeating(
+        check_activity, 5.0,  
+        chat_id=chat_id, data=update
     )
     
-    game_state["current_level_start"] = datetime.now().isoformat()
-    update_user_data(user_id, {"current_level_start": game_state["current_level_start"]})
-    
-    await start_level(update, context)
-    
-    return PLAYING
+    await update.message.reply_html(upper_letters(wordhunt_games[chat_id].letter_row))
 
-async def start_level(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    user_id = user.id
-    game_state = get_user_game_state(user_id)
-    level = game_state["level"]
+async def check_activity(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Check if there has been any activity in WordHunt in the last 30 seconds"""
+    job = context.job
+    chat_id = job.chat_id
+    update = job.data
     
-    is_callback = hasattr(update, 'callback_query') and update.callback_query is not None
-    
-    words = get_words_for_level(level)
-    if not words:
-        logger.error(f"No words available for level {level}")
-        words = ["FALLBACK", "WORD", "LIST"]
-    
-    rows, columns = 7, 7
-    
-    grid, word_positions = generate_grid(words, rows, columns)
-    
-    context.user_data["grid"] = grid
-    context.user_data["words"] = words
-    context.user_data["word_positions"] = word_positions
-    context.user_data["found_words"] = []
-    context.user_data["selected_positions"] = []
-    context.user_data["found_positions"] = set()
-    context.user_data["selection_pattern"] = None
-    
-    keyboard = create_grid_keyboard(grid)
-    
-    successfully_placed_words = list(word_positions.keys())
-    not_placed_words = [w for w in words if w not in successfully_placed_words]
-    
-    if not_placed_words:
-        logger.warning(f"Some words couldn't be placed: {not_placed_words}")
-    
-    words_text = ", ".join([f"*{word}*" for word in words])
-    message_text = (
-        f"🎮 *Level {level}* 🎮\n\n"
-        f"Find: {words_text}\n\n"
-        f"(horizontal, vertical, diagonal, L-shaped, zig-zag)"
-    )
-    
-    if is_callback:
-        await update.callback_query.message.reply_text(
-            message_text,
-            reply_markup=keyboard,
-            parse_mode="Markdown"
-        )
-    else:
-        await update.message.reply_text(
-            message_text,
-            reply_markup=keyboard,
-            parse_mode="Markdown"
-        )
+    if chat_id not in wordhunt_games or not wordhunt_games[chat_id].ongoing_game:
 
-def generate_grid(words: List[str], rows: int, columns: int) -> Tuple[List[List[str]], Dict[str, List[Tuple[int, int]]]]:
-    grid = [['' for _ in range(columns)] for _ in range(rows)]
-    word_positions: Dict[str, List[Tuple[int, int]]] = {}
-
-    words_to_place = sorted(words, key=len, reverse=True)
+        job.schedule_removal()
+        return
     
-    pattern_success = {"straight": 0, "l_shape": 0, "zig_zag": 0, "multi_turn": 0}
-    pattern_attempts = {"straight": 0, "l_shape": 0, "zig_zag": 0, "multi_turn": 0}
+    current_time = asyncio.get_event_loop().time()
 
-    for word in words_to_place:
-        placed = False
-        attempts = 0
-        max_attempts = 150
-        word_length = len(word)
+    if current_time - wordhunt_games[chat_id].last_activity_time > 30:
+        await end_wordhunt(update, context)
+        job.schedule_removal()
+
+async def scoring_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Process a word submission for WordHunt"""
+    chat_id = update.effective_chat.id
+    if chat_id not in wordhunt_games or not wordhunt_games[chat_id].ongoing_game:
+        return
+
+    guess = update.message.text.lower()
+    player_name = update.effective_user.first_name or update.effective_user.username
+
+    if len(guess) < 3:
+
+        return
         
-        available_patterns = []
-        
-        # Try straight placement for all words
-        if word_length <= max(rows, columns):
-            available_patterns.append("straight")
-        
-        # Try L-shape for medium words
-        if 4 <= word_length <= rows + columns - 1:
-            available_patterns.append("l_shape")
-        
-        # Try zig-zag for longer words
-        if word_length >= 4 and word_length <= min(rows * 2, columns * 2):
-            available_patterns.append("zig_zag")
-        
-        # Try multi-turn for very long words
-        if word_length > max(rows, columns) and word_length <= rows * columns // 2:
-            available_patterns.append("multi_turn")
-        
-        if not available_patterns:
-            logger.warning(f"Word '{word}' is too long ({word_length}) for grid size ({rows}x{columns})")
-            continue
-        
-        pattern_rotation = available_patterns.copy()
-        
-        while not placed and attempts < max_attempts:
-            if not pattern_rotation:
-                pattern_rotation = available_patterns.copy()
-            pattern_type = pattern_rotation.pop(0) if pattern_rotation else random.choice(available_patterns)
-            
-            pattern_attempts[pattern_type] = pattern_attempts.get(pattern_type, 0) + 1
-            positions: List[Tuple[int, int]] = []
+    if guess in wordhunt_games[chat_id].found_words:
+        await update.message.reply_html(f"<b>{guess}</b> has already been found!")
+    elif guess in wordhunt_games[chat_id].score_words:
+        wordhunt_games[chat_id].update_activity_time()
+        score = len(guess) * len(guess)
+        notif = f"<i>{player_name}</i> found <b>{guess}</b> for {score} points!\n{upper_letters(wordhunt_games[chat_id].letter_row)}"
+        wordhunt_games[chat_id].score_words.remove(guess)
+        wordhunt_games[chat_id].found_words.append(guess)
 
-            if pattern_type == "straight":
-                direction = random.randint(0, 3)
-                if direction == 0:  # horizontal
-                    max_x = columns - word_length
-                    if max_x >= 0:
-                        x = random.randint(0, max_x)
-                        y = random.randint(0, rows - 1)
-                        positions = [(x + i, y) for i in range(word_length)]
-                elif direction == 1:  # vertical
-                    max_y = rows - word_length
-                    if max_y >= 0:
-                        x = random.randint(0, columns - 1)
-                        y = random.randint(0, max_y)
-                        positions = [(x, y + i) for i in range(word_length)]
-                elif direction == 2:  # diagonal down-right
-                    max_x = columns - word_length
-                    max_y = rows - word_length
-                    if max_x >= 0 and max_y >= 0:
-                        x = random.randint(0, max_x)
-                        y = random.randint(0, max_y)
-                        positions = [(x + i, y + i) for i in range(word_length)]
-                else:  # diagonal up-right
-                    max_x = columns - word_length
-                    min_y = word_length - 1
-                    if max_x >= 0 and min_y < rows:
-                        x = random.randint(0, max_x)
-                        y = random.randint(min_y, rows - 1)
-                        positions = [(x + i, y - i) for i in range(word_length)]
+        if player_name not in wordhunt_games[chat_id].player_scores:
+            wordhunt_games[chat_id].player_scores[player_name] = 0
+        if player_name not in wordhunt_games[chat_id].player_words:
+            wordhunt_games[chat_id].player_words[player_name] = []
+        wordhunt_games[chat_id].player_words[player_name].append(guess)
+        wordhunt_games[chat_id].player_scores[player_name] += score
+        update_wordhunt_score(chat_id, player_name, score)
 
-            elif pattern_type == "l_shape" and word_length >= 4:
-                positions = generate_l_shape_positions(word_length, rows, columns)
-                if not positions:
-                    continue
-            
-            elif pattern_type == "zig_zag" and word_length >= 4:
-                primary = random.choice(["horizontal", "vertical"])
-                
-                if primary == "horizontal":
-                    max_horiz_span = min(columns, word_length)
-                    if max_horiz_span < 4 or rows < 3:
-                        continue
-                    
-                    x = random.randint(0, columns - max_horiz_span)
-                    y = random.randint(1, rows - 2)
-                    
-                    current_x, current_y = x, y
-                    up = random.choice([True, False])
-                    positions = []
-                    
-                    for i in range(word_length):
-                        if current_x >= columns or current_y < 0 or current_y >= rows:
-                            break
-                        positions.append((current_x, current_y))
-                        current_x += 1
-                        if i < word_length - 1:
-                            current_y += -1 if up else 1
-                            up = not up
-                
-                else:
-                    max_vert_span = min(rows, word_length)
-                    if max_vert_span < 4 or columns < 3:
-                        continue
-                    
-                    x = random.randint(1, columns - 2)
-                    y = random.randint(0, rows - max_vert_span)
-                    
-                    current_x, current_y = x, y
-                    left = random.choice([True, False])
-                    positions = []
-                    
-                    for i in range(word_length):
-                        if current_y >= rows or current_x < 0 or current_x >= columns:
-                            break
-                        positions.append((current_x, current_y))
-                        current_y += 1
-                        if i < word_length - 1:
-                            current_x += -1 if left else 1
-                            left = not left
-                
-                if len(positions) < word_length:
-                    positions = []
-            
-            elif pattern_type == "multi_turn" and word_length > 4:
-                x = random.randint(0, columns - 1)
-                y = random.randint(0, rows - 1)
-                
-                positions = [(x, y)]
-                current_x, current_y = x, y
-                
-                directions = [(1, 0), (0, 1), (-1, 0), (0, -1)]
-                previous_direction = None
-                
-                for _ in range(word_length - 1):
-                    random.shuffle(directions)
-                    placed_next = False
-                    
-                    for dx, dy in directions:
-                        next_x, next_y = current_x + dx, current_y + dy
-                        
-                        if (0 <= next_x < columns and 
-                            0 <= next_y < rows and 
-                            (next_x, next_y) not in positions):
-                            
-                            positions.append((next_x, next_y))
-                            current_x, current_y = next_x, next_y
-                            previous_direction = (dx, dy)
-                            placed_next = True
-                            break
-                    
-                    if not placed_next:
-                        positions = []
-                        break
+        await update.message.reply_html(notif)
 
-            if positions and len(positions) == word_length:
-                valid = True
-                for px, py in positions:
-                    if not (0 <= px < columns and 0 <= py < rows):
-                        valid = False
-                        break
-                    cell_content = grid[py][px]
-                    if cell_content and cell_content != word[positions.index((px, py))]:
-                        valid = False
-                        break
-
-                if valid:
-                    for idx, (px, py) in enumerate(positions):
-                        grid[py][px] = word[idx]
-                    word_positions[word] = positions
-                    placed = True
-                    pattern_success[pattern_type] = pattern_success.get(pattern_type, 0) + 1
-
-            attempts += 1
-
-        if not placed:
-            logger.warning(f"Failed to place word: '{word}' after {max_attempts} attempts")
-
-    for y in range(rows):
-        for x in range(columns):
-            if not grid[y][x]:
-                grid[y][x] = chr(random.randint(65, 90))
-
-    total_words = len(words_to_place)
-    placed_words = len(word_positions)
-    logger.info(f"Placed {placed_words}/{total_words} words ({placed_words/total_words*100:.1f}%)")
-    for pattern in pattern_success:
-        attempts = pattern_attempts.get(pattern, 0)
-        success = pattern_success.get(pattern, 0)
-        if attempts > 0:
-            success_rate = success / attempts * 100
-            logger.info(f"{pattern}: {success}/{attempts} ({success_rate:.1f}%)")
-
-    return grid, word_positions
-
-def generate_l_shape_positions(word_length, rows, columns):
-    split = random.randint(2, word_length - 2)
-    first_len, second_len = split, word_length - split
-    orientations = ['right_down', 'right_up', 'down_right', 'down_left', 'left_up', 'left_down', 'up_right', 'up_left']
-    for _ in range(50):
-        orient = random.choice(orientations)
-        x, y = random.randint(0, columns - 1), random.randint(0, rows - 1)
-        
-        if orient == 'right_down':
-            seg1 = [(x+i, y) for i in range(first_len)]
-            seg2 = [(seg1[-1][0], seg1[-1][1]+j) for j in range(1, second_len+1)]
-        elif orient == 'right_up':
-            seg1 = [(x+i, y) for i in range(first_len)]
-            seg2 = [(seg1[-1][0], seg1[-1][1]-j) for j in range(1, second_len+1)]
-        elif orient == 'left_down':
-            seg1 = [(x-i, y) for i in range(first_len)]
-            seg2 = [(seg1[-1][0], seg1[-1][1]+j) for j in range(1, second_len+1)]
-        elif orient == 'left_up':
-            seg1 = [(x-i, y) for i in range(first_len)]
-            seg2 = [(seg1[-1][0], seg1[-1][1]-j) for j in range(1, second_len+1)]
-        elif orient == 'down_right':
-            seg1 = [(x, y+i) for i in range(first_len)]
-            seg2 = [(seg1[-1][0]+j, seg1[-1][1]) for j in range(1, second_len+1)]
-        elif orient == 'down_left':
-            seg1 = [(x, y+i) for i in range(first_len)]
-            seg2 = [(seg1[-1][0]-j, seg1[-1][1]) for j in range(1, second_len+1)]
-        elif orient == 'up_right':
-            seg1 = [(x, y-i) for i in range(first_len)]
-            seg2 = [(seg1[-1][0]+j, seg1[-1][1]) for j in range(1, second_len+1)]
-        elif orient == 'up_left':
-            seg1 = [(x, y-i) for i in range(first_len)]
-            seg2 = [(seg1[-1][0]-j, seg1[-1][1]) for j in range(1, second_len+1)]
-        else:
-            continue
-        
-        positions = seg1 + seg2
-        if all(0 <= px < columns and 0 <= py < rows for px, py in positions):
-            return positions
-    return []
-
-def create_grid_keyboard(grid: List[List[str]], selected_positions: List[Tuple[int, int]] = None, found_positions: Set[Tuple[int, int]] = None) -> InlineKeyboardMarkup:
-    if selected_positions is None:
-        selected_positions = []
-    if found_positions is None:
-        found_positions = set()
+async def end_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """End an active WordHunt game"""
+    chat_id = update.effective_chat.id
+    if chat_id not in wordhunt_games or not wordhunt_games[chat_id].ongoing_game:
+        await update.message.reply_html("No active WordHunt game to end.")
+        return
     
-    keyboard = []
-    for y, row in enumerate(grid):
-        keyboard_row = []
-        for x, letter in enumerate(row):
-            callback_data = f"{PREFIX_LETTER}{x},{y}"
-            
-            if (x, y) in selected_positions:
-                display_text = f"{letter} {STYLE_BLUE}"
-            elif (x, y) in found_positions:
-                display_text = f"{letter} {STYLE_GREEN}"
-            else:
-                display_text = f"{letter} {STYLE_WHITE}"
-                
-            keyboard_row.append(InlineKeyboardButton(display_text, callback_data=callback_data))
-        keyboard.append(keyboard_row)
+    wordhunt_games[chat_id].ongoing_game_false()
+    await update.message.reply_html("<b>Game Ended!</b>")
     
-    control_row = [
-        InlineKeyboardButton("🔄 Reset", callback_data=PREFIX_RESET),
-        InlineKeyboardButton("💡 Hint", callback_data=PREFIX_HINT),
-        InlineKeyboardButton("❌ Quit", callback_data=PREFIX_QUIT)
+    final_results = "🎉 SCORES: \n"
+    for player, score in wordhunt_games[chat_id].player_scores.items():
+        final_results = final_results + player + ": " + str(score) + "\n"
+    if not bool(wordhunt_games[chat_id].player_scores): # player_scores dict is empty
+        final_results = "No one played! \n"
+
+    total_possible_words = len(wordhunt_games[chat_id].score_words) + len(wordhunt_games[chat_id].found_words)
+    final_results += f"\n💡 BEST POSSIBLE WORDS ({total_possible_words} total): \n"
+    for word in wordhunt_games[chat_id].top_score_words:
+        final_results += word + "\n"
+    
+
+    wordhunt_games[chat_id].sort_player_words()
+    final_results += "\n🔎 WORDS FOUND \n"
+    for player in wordhunt_games[chat_id].player_words:
+        final_results += f"<b>{player}({len(wordhunt_games[chat_id].player_words[player])})</b> \n"
+        for word in wordhunt_games[chat_id].player_words[player]:
+            final_results += word + " "
+        final_results += "\n"
+    
+    await update.message.reply_html(final_results)
+    wordhunt_games[chat_id].end_clear()
+
+    global activity_timers
+    if chat_id in activity_timers and activity_timers[chat_id] is not None:
+        activity_timers[chat_id].schedule_removal()
+        activity_timers[chat_id] = None
+
+async def whleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Display WordHunt leaderboard for current group"""
+    chat_id = update.effective_chat.id
+    top_players = list(wh_scores.find({"group_id": chat_id}).sort("score", -1).limit(10))
+    
+    if not top_players:
+        await update.message.reply_text("No leaderboard data found for this group.")
+        return
+
+    reply = "🏆 <b>WordHunt Group Leaderboard</b> 🏆\n"
+    for idx, player in enumerate(top_players, 1):
+        reply += f"{idx}. {player['player_name']} - {player['score']} pts\n"
+    
+    await update.message.reply_html(reply)
+
+async def whglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Display global WordHunt leaderboard"""
+    pipeline = [
+        {"$group": {"_id": "$player_name", "score": {"$sum": "$score"}}},
+        {"$sort": {"score": -1}},
+        {"$limit": 10}
     ]
-    keyboard.append(control_row)
-    
-    return InlineKeyboardMarkup(keyboard)
+    top_players = list(wh_scores.aggregate(pipeline))
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    
-    user = query.from_user
-    user_id = user.id
-    game_state = get_user_game_state(user_id)
-    
-    if query.data.startswith(PREFIX_LETTER):
-        return await handle_letter_press(update, context)
-    
-    elif query.data == PREFIX_RESET:
-        context.user_data["selected_positions"] = []
-        context.user_data["selection_pattern"] = None
-        grid = context.user_data["grid"]
-        found_positions = context.user_data["found_positions"]
-        keyboard = create_grid_keyboard(grid, [], found_positions)
-        await query.edit_message_reply_markup(reply_markup=keyboard)
-        
-    elif query.data == PREFIX_HINT:
-        game_state["hints_used"] += 1
-        update_user_data(user_id, {"hints_used": game_state["hints_used"]})
-        return await provide_hint(update, context)
-    
-    elif query.data == PREFIX_QUIT:
-        await query.edit_message_text("Game ended. Type /finder to play again!")
-        return ConversationHandler.END
-    
-    elif query.data == PREFIX_NEXT:
-        game_state["level"] += 1
-        game_state["levels_completed"] += 1
-        update_user_data(user_id, {
-            "level": game_state["level"],
-            "levels_completed": game_state["levels_completed"]
-        })
-        await query.edit_message_text(f"✨ Loading level {game_state['level']}...")
-        await start_level(update, context)
-    
-    elif query.data == PREFIX_COLLECT:
-        await collect_reward(update, context)
-    
-    return PLAYING
+    if not top_players:
+        await update.message.reply_text("No global leaderboard data found.")
+        return
 
-def get_pattern_type(positions: List[Tuple[int, int]]) -> str:
-    if len(positions) < 2:
-        return 'unknown'
-    
-    dirs = []
-    for (x1, y1), (x2, y2) in zip(positions, positions[1:]):
-        dx, dy = x2 - x1, y2 - y1
-        if dx == 0 and dy > 0:
-            dirs.append('down')
-        elif dx == 0 and dy < 0:
-            dirs.append('up')
-        elif dy == 0 and dx > 0:
-            dirs.append('right')
-        elif dy == 0 and dx < 0:
-            dirs.append('left')
-        else:
-            dirs.append('other')
-    
-    changes = sum(1 for i in range(1, len(dirs)) if dirs[i] != dirs[i-1])
-    
-    if changes == 0:
-        return 'straight'
-    if changes == 1:
-        return 'l_shape'
-    if all(dirs[i] != dirs[i+1] for i in range(len(dirs)-1)):
-        return 'zig_zag'
-    return 'complex'
+    reply = "🌍 <b>WordHunt Global Leaderboard</b> 🌍\n"
+    for idx, player in enumerate(top_players, 1):
+        reply += f"{idx}. {player['_id']} - {player['score']} pts\n"
 
-def is_valid_selection(selected_positions: List[Tuple[int, int]], new_pos: Tuple[int, int]) -> bool:
-    if not selected_positions:
-        return True
-    
-    last_pos = selected_positions[-1]
-    
-    if max(abs(new_pos[0] - last_pos[0]), abs(new_pos[1] - last_pos[1])) > 1:
-        return False
-    
-    if new_pos in selected_positions:
-        return False
-    
-    return True
-
-async def handle_letter_press(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    user = query.from_user
-    user_id = user.id
-    
-    _, pos_str = query.data.split("_")
-    x, y = map(int, pos_str.split(","))
-    
-    grid = context.user_data["grid"]
-    selected_positions = context.user_data["selected_positions"]
-    found_positions = context.user_data["found_positions"]
-    word_positions = context.user_data["word_positions"]
-    words = context.user_data["words"]
-    found_words = context.user_data["found_words"]
-    
-    current_pos = (x, y)
-    
-    previous_selected = selected_positions.copy()
-    
-    if not selected_positions:
-        selected_positions.append(current_pos)
-        
-    elif current_pos == selected_positions[-1]:
-        selected_positions.pop()
-        
-    elif current_pos not in selected_positions:
-        if is_valid_selection(selected_positions, current_pos):
-            selected_positions.append(current_pos)
-            pattern_type = get_pattern_type(selected_positions)
-            context.user_data["selection_pattern"] = pattern_type
-        else:
-            await query.answer("⚠️ Selection must follow a valid pattern!")
-            return PLAYING
-    
-    if not selected_positions:
-        context.user_data["selection_pattern"] = None
-    
-    if len(selected_positions) >= 2:
-        selected_word = ''.join([grid[y][x] for x, y in selected_positions])
-        
-        for word in words:
-            if word not in found_words and len(word) == len(selected_positions):
-                word_pos = word_positions.get(word, [])
-                
-                positions_match = False
-                if word_pos == selected_positions:
-                    positions_match = True
-                elif word_pos == selected_positions[::-1]:
-                    positions_match = True
-                elif set(word_pos) == set(selected_positions) and selected_word == word:
-                    positions_match = True
-                
-                if positions_match and selected_word == word:
-                    found_words.append(word)
-                    game_state = get_user_game_state(user_id)
-                    game_state["words_found"] += 1
-                    update_user_data(user_id, {"words_found": game_state["words_found"]})
-                    
-                    for pos in selected_positions:
-                        found_positions.add(pos)
-                    
-                    selected_positions.clear()
-                    context.user_data["selection_pattern"] = None
-                    
-                    if len(found_words) == len(words):
-                        game_state = get_user_game_state(user_id)
-                        level_complete_score = calculate_score(game_state)
-                        game_state["score"] += level_complete_score
-                        update_user_data(user_id, {"score": game_state["score"]})
-                        
-                        next_keyboard = InlineKeyboardMarkup([
-                            [
-                                InlineKeyboardButton("🎮 Next Level", callback_data=PREFIX_NEXT),
-                                InlineKeyboardButton("🎁 Collect Reward", callback_data=PREFIX_COLLECT)
-                            ]
-                        ])
-                        
-                        formatted_found_words = ", ".join([f"✅ *{w}*" for w in found_words])
-                        
-                        await query.edit_message_text(
-                            f"🏆 *Level {game_state['level']} completed!* 🏆\n\n"
-                            f"Words found:\n{formatted_found_words}\n\n"
-                            f"⭐ Score: {level_complete_score} points\n"
-                            f"⏱️ Time: {calculate_level_time(game_state)} seconds",
-                            reply_markup=next_keyboard,
-                            parse_mode="Markdown"
-                        )
-                        return PLAYING
-                    words_to_find = [w for w in words if w not in found_words]
-                    words_text = ", ".join([f"*{w}*" for w in words_to_find])
-                    
-                    await query.edit_message_text(
-                        f"🎮 *Level {game_state['level']}* 🎮\n\n"
-                        f"✅ Word found: *{word}*!\n\n"
-                        f"Still to find: {words_text}",
-                        reply_markup=create_grid_keyboard(grid, selected_positions, found_positions),
-                        parse_mode="Markdown"
-                    )
-                    return PLAYING
-    
-    if previous_selected != selected_positions:
-        keyboard = create_grid_keyboard(grid, selected_positions, found_positions)
-        await query.edit_message_reply_markup(reply_markup=keyboard)
-    
-    return PLAYING
-
-async def provide_hint(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    
-    words = context.user_data["words"]
-    found_words = context.user_data["found_words"]
-    word_positions = context.user_data["word_positions"]
-    grid = context.user_data["grid"]
-    
-    unfound_words = [w for w in words if w not in found_words]
-    if not unfound_words:
-        await query.answer("You've found all words!")
-        return PLAYING
-    
-    hint_word = random.choice(unfound_words)
-    
-    if hint_word not in word_positions:
-        await query.answer(f"Hint not available for '{hint_word}'. Try again!")
-        return PLAYING
-    
-    first_pos = word_positions[hint_word][0]
-    hint_letter = grid[first_pos[1]][first_pos[0]]
-    
-    pattern = "unknown"
-    if len(word_positions[hint_word]) >= 3:
-        pattern = get_pattern_type(word_positions[hint_word])
-    
-    row_position = first_pos[1] + 1  
-    col_position = first_pos[0] + 1
-    
-    if pattern == "l_shape":
-        await query.answer(f"Look for '{hint_word}', starting with '{hint_letter}' at position ({col_position},{row_position}). It follows an L-shape!")
-    elif pattern == "zig_zag":
-        await query.answer(f"Look for '{hint_word}', starting with '{hint_letter}' at position ({col_position},{row_position}). It follows a zig-zag pattern!")
-    elif pattern == "multi_turn":
-        await query.answer(f"Look for '{hint_word}', starting with '{hint_letter}' at position ({col_position},{row_position}). It has multiple turns!")
-    else:
-        direction = "unknown"
-        if len(word_positions[hint_word]) >= 2:
-            first_pos = word_positions[hint_word][0]
-            second_pos = word_positions[hint_word][1]
-            
-            if first_pos[0] == second_pos[0]:  
-                direction = "vertical"
-            elif first_pos[1] == second_pos[1]:  
-                direction = "horizontal"
-            elif first_pos[0] < second_pos[0] and first_pos[1] < second_pos[1]:  
-                direction = "diagonal down"
-            elif first_pos[0] < second_pos[0] and first_pos[1] > second_pos[1]:  
-                direction = "diagonal up"
-        
-        await query.answer(f"Look for '{hint_word}', starting with '{hint_letter}' at position ({col_position},{row_position}) going {direction}!")
-    
-    return PLAYING
-
-def calculate_score(game_state):
-    level = game_state["level"]
-    base_score = level * 100
-    time_taken = calculate_level_time(game_state)
-    time_bonus = max(0, 300 - int(time_taken / 3))  
-    hint_penalty = game_state["hints_used"] * 25
-    return max(0, base_score + time_bonus - hint_penalty)
-
-def calculate_level_time(game_state):
-    if not game_state["current_level_start"]:
-        return 0
-    start_time = datetime.fromisoformat(game_state["current_level_start"])
-    end_time = datetime.now()
-    return (end_time - start_time).total_seconds()
+    await update.message.reply_html(reply)
 
 
-async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    user_id = user.id
-    game_state = get_user_game_state(user_id)
-    
-    level = game_state["level"]
-    score = game_state["score"]
-    words_found = game_state["words_found"]
-    hints_used = game_state["hints_used"]
-    levels_completed = game_state["levels_completed"]
-    
-    avg_time = "No data"
-    if game_state["current_level_start"] and levels_completed > 0:
-        start_time = datetime.fromisoformat(game_state["current_level_start"])
-        end_time = datetime.now()
-        total_time = (end_time - start_time).total_seconds()
-        avg_time = f"{total_time/levels_completed:.1f} seconds"
-    
-    storage = game_state["storage"]
-    total_items = len(storage.get("items", [])) + len(storage.get("rare_items", [])) + len(storage.get("special_items", []))
-    
-    await update.message.reply_text(
-        f"📊 *YOUR STATUS* 📊\n\n"
-        f"🎮 Current Level: *{level}*\n"
-        f"🏆 Total Score: *{score}*\n"
-        f"✅ Words Found: *{words_found}*\n"
-        f"⭐ Levels Completed: *{levels_completed}*\n"
-        f"💡 Hints Used: *{hints_used}*\n"
-        f"⏱️ Avg. Time per Level: *{avg_time}*\n"
-        f"🎁 Collected Items: *{total_items}*\n\n"
-        f"Type /finder to play!",
-        parse_mode="Markdown"
-    )
-
-async def storage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user = update.effective_user
-    user_id = user.id
-    game_state = get_user_game_state(user_id)
-    storage = game_state["storage"]
-    
-    if not storage or (not storage.get("items") and not storage.get("rare_items") and not storage.get("special_items")):
-        await update.message.reply_text(
-            f"📦 *YOUR STORAGE* 📦\n\n"
-            "Your storage is empty. Complete levels to collect rewards!\n"
-            "Use /finder to play and find treasures!",
-            parse_mode="Markdown"
-        )
-    else:
-        message = f"📦 *YOUR STORAGE* 📦\n\n"
-        
-        if storage.get("items"):
-            message += "*Common Items:*\n"
-            for item in storage["items"]:
-                message += f"• {item}\n"
-            message += "\n"
-        
-        if storage.get("rare_items"):
-            message += f"*Rare Items:*\n"
-            for item in storage["rare_items"]:
-                message += f"• {item}\n"
-            message += "\n"
-        
-        if storage.get("special_items"):
-            message += f"*Special Items:*\n"
-            for item in storage["special_items"]:
-                message += f"• {item}\n"
-            message += "\n"
-        
-        message += "Type /finder to collect more rewards!"
-        
-        await update.message.reply_text(
-            message,
-            parse_mode="Markdown"
-        )
-
-async def collect_reward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    is_callback = hasattr(update, 'callback_query') and update.callback_query is not None
-    
-    if is_callback:
-        query = update.callback_query
-        user = query.from_user
-        user_id = user.id
-        message_method = query.edit_message_text
-    else:
-        user = update.effective_user
-        user_id = user.id
-        message_method = update.message.reply_text
-    
-    game_state = get_user_game_state(user_id)
-    
-    chance = random.random()
-    
-    if chance < 0.5:  
-        category_chance = random.random()
-        
-        if category_chance < 0.7:  
-            category = "items"
-        elif category_chance < 0.95:   
-            category = "rare_items"
-        else:  
-            category = "special_items"
-        
-        if category in rewards:
-            reward_item = random.choice(rewards[category])
-            
-            if category not in game_state["storage"]:
-                game_state["storage"][category] = []
-            
-            game_state["storage"][category].append(reward_item)
-            update_user_data(user_id, {"storage": game_state["storage"]})
-            
-            await message_method(
-                f"🎉 *TREASURE FOUND!* 🎉\n\n"
-                f"You received: {reward_item}\n\n"
-                f"Check your storage with /storage",
-                parse_mode="Markdown"
-            )
-        else:
-            await message_method("Reward list is empty!")
-    else:
-        await message_method(
-            f"🔍 You searched but found nothing this time.\n\n"
-            f"Complete more levels to increase your chances!",
-            parse_mode="Markdown"
-        )
-
-async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    users = user_collection.find({}).sort("score", -1)
-    
-    leaderboard_text = f"🏆 *GLOBAL LEADERBOARD* 🏆\n\n"
-    
-    medals = ["🥇", "🥈", "🥉"]
-    
-    for index, user in enumerate(users):
-        if index >= 10:
-            break
-            
-        if index < 3:
-            prefix = medals[index]
-        else:
-            prefix = f"{index + 1}."
-            
-        level = user.get('level', 1)
-        score = user.get('score', 0)
-        words = user.get('words_found', 0)
-        
-        leaderboard_text += f"{prefix} Level *{level}* - Score *{score}* - Words *{words}*\n"
-    
-    leaderboard_text += "\n✨ Complete more levels to climb the leaderboard! ✨"
-    
-    await update.message.reply_text(leaderboard_text, parse_mode="Markdown")
-    
 def register_handlers(application: Application) -> None:
-    """Register all command and message handlers for the game"""
+    """Register all command and message handlers"""
+
+    load_word_lists()
     
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("finder", start)],
-        states={PLAYING: [CallbackQueryHandler(button_handler)]},
-        fallbacks=[CommandHandler("finder", start)],
-    )
+
+    application.add_handler(CommandHandler("wordle", wordle))
+    application.add_handler(CommandHandler("cricketwordle", cricketwordle))
+    application.add_handler(CommandHandler("wordleaderboard", wordleaderboard))
+    application.add_handler(CommandHandler("wordglobal", wordglobal))
+    application.add_handler(CommandHandler("endwordle", end_wordle))
     
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("status", status_command))
-    application.add_handler(CommandHandler("storage", storage_command))
-    application.add_handler(CommandHandler("leaderboard", leaderboard_command))
+    application.add_handler(CommandHandler("wordhunt", wordhunt))
+    application.add_handler(CommandHandler("end", end_wordhunt))
+    application.add_handler(CommandHandler("whleaderboard", whleaderboard))
+    application.add_handler(CommandHandler("whglobal", whglobal))
+    
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     logger.info("All game handlers registered successfully")
