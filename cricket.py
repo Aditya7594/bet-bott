@@ -1255,16 +1255,6 @@ async def leaderboard(update: Update, context: CallbackContext) -> None:
 
     await update.message.reply_text(text, parse_mode="Markdown")
     
-def setup_jobs(application):
-    job_queue = application.job_queue
-
-    # Clean up inactive games every 5 minutes
-    job_queue.run_repeating(
-        callback=cleanup_inactive_games,
-        interval=300,
-        first=10
-    )
-   
 
 async def show_achievements_by_category(update: Update, context: CallbackContext, category_index: int = 0) -> None:
     user = update.effective_user
