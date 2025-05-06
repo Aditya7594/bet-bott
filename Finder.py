@@ -849,31 +849,46 @@ async def collect_reward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             parse_mode="Markdown"
         )
 
+from telegram import Update
+from telegram.ext import ContextTypes
+
 async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # Fetch top users sorted by score descending
     users = user_collection.find({}).sort("score", -1)
-    
-    leaderboard_text = f"🏆 *GLOBAL LEADERBOARD* 🏆\n\n"
-    
+
+    leaderboard_lines = ["🏆 *GLOBAL LEADERBOARD* 🏆", ""]
     medals = ["🥇", "🥈", "🥉"]
-    
-    for index, user in enumerate(users):
-        if index >= 10:
+
+    for idx, user in enumerate(users):
+        if idx >= 10:
             break
-            
-        if index < 3:
-            prefix = medals[index]
+
+        # Try to get first_name, then username, then default
+        name = user.get("first_name") or user.get("username") or "Player"
+
+        # Medal or numeric rank prefix
+        if idx < 3:
+            prefix = medals[idx]
         else:
-            prefix = f"{index + 1}."
-            
-        level = user.get('level', 1)
-        score = user.get('score', 0)
-        words = user.get('words_found', 0)
-        
-        leaderboard_text += f"{prefix} Level *{level}* - Score *{score}* - Words *{words}*\n"
-    
-    leaderboard_text += "\n✨ Complete more levels to climb the leaderboard! ✨"
-    
-    await update.message.reply_text(leaderboard_text, parse_mode="Markdown")
+            prefix = f"{idx+1}."
+
+        level = user.get("level", 1)
+        score = user.get("score", 0)
+        words = user.get("words_found", 0)
+
+        leaderboard_lines.append(
+            f"{prefix} *{name}* — Level *{level}* | Score *{score}* | Words *{words}*"
+        )
+
+    leaderboard_lines.append("")
+    leaderboard_lines.append("✨ Complete more levels to climb the leaderboard! ✨")
+
+    await update.message.reply_text(
+        "\n".join(leaderboard_lines),
+        parse_mode="Markdown"
+    )
+
+
     
 def finder_handlers(application: Application) -> None:
     """Register all command and message handlers for the game"""
