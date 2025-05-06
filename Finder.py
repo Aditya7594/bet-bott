@@ -887,6 +887,6 @@ def finder_handlers(application: Application) -> None:
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("storage", storage_command))
-    application.add_handler(CommandHandler("leaderboard", leaderboard_command))
+    application.add_handler(CommandHandler("finderleaderboard", leaderboard_command))
     
     logger.info("All game handlers registered successfully")
