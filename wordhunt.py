@@ -31,6 +31,7 @@ MAX_TRIALS = 25  # Standard Wordle is 6 trials
 
 # Load word lists
 WORD_LIST, CRICKET_WORD_LIST = [], []
+EASY_WORD_LIST = []  # First 17000 words (easier words)
 THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
 
 # Game state storage
@@ -43,15 +44,20 @@ activity_timers = {}  # Store activity timers for wordhunt
 ###############################
 
 def load_word_lists():
-    global WORD_LIST, CRICKET_WORD_LIST
+    global WORD_LIST, CRICKET_WORD_LIST, EASY_WORD_LIST
     if not WORD_LIST or not CRICKET_WORD_LIST:
         try:
             logger.info(f"Loading word lists from {THIS_FOLDER}")
             with open(os.path.join(THIS_FOLDER, 'word_list.txt'), "r") as f:
-                WORD_LIST = [line.strip().lower() for line in f if line.strip()]
+                all_words = [line.strip().lower() for line in f if line.strip()]
+                WORD_LIST = all_words
+                # Take only the first 17000 words (easier words)
+                EASY_WORD_LIST = all_words[:17000]
+                logger.info(f"Loaded {len(WORD_LIST)} total words and {len(EASY_WORD_LIST)} easy words")
+                
             with open(os.path.join(THIS_FOLDER, 'cricket_word_list.txt'), "r") as f:
                 CRICKET_WORD_LIST = [line.strip().lower() for line in f if line.strip()]
-            logger.info(f"Loaded {len(WORD_LIST)} regular words and {len(CRICKET_WORD_LIST)} cricket words")
+            logger.info(f"Loaded {len(CRICKET_WORD_LIST)} cricket words")
         except Exception as e:
             logger.error(f"Failed to load word lists: {e}")
 
@@ -119,12 +125,18 @@ def adjust_score(user_id, name, chat_id, points):
             {"$set": {"points": new_total, "group_points": group_points, "name": name}}
         )
 
+def get_random_wordle_word():
+    """Get a random word from the EASY_WORD_LIST between 4-8 letters"""
+    # Filter words that are between 4 and 8 letters long
+    eligible_words = [word for word in EASY_WORD_LIST if 4 <= len(word) <= 8]
+    return random.choice(eligible_words)
+
 async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Start a new Wordle game"""
     load_word_lists()
     logger.info("Wordle command received")
     
-    if not WORD_LIST:
+    if not EASY_WORD_LIST:
         await update.message.reply_text("Word list is missing.")
         return
     
@@ -133,7 +145,7 @@ async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Wordle game already in progress.")
         return
 
-    word = random.choice(WORD_LIST)
+    word = get_random_wordle_word()
     logger.info(f"Selected word: {word}")
     
     wordle_games[chat_id] = {
@@ -161,7 +173,13 @@ async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Game already in progress.")
         return
 
-    word = random.choice(CRICKET_WORD_LIST)
+    # Filter cricket words to match 4-8 length requirement
+    eligible_cricket_words = [word for word in CRICKET_WORD_LIST if 4 <= len(word) <= 8]
+    if not eligible_cricket_words:
+        await update.message.reply_text("No suitable cricket words found.")
+        return
+        
+    word = random.choice(eligible_cricket_words)
     logger.info(f"Selected cricket word: {word}")
     
     wordle_games[chat_id] = {
@@ -201,7 +219,8 @@ async def handle_wordle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     logger.info(f"Processing wordle guess: {guess}, solution: {solution}")
     
-    # Choose the appropriate word list
+    # Choose the appropriate word list for validating guesses
+    # Note: We validate against the ENTIRE word list, not just the easy words
     word_list = CRICKET_WORD_LIST if game['mode'] == 'cricketwordle' else WORD_LIST
 
     # Check for duplicate guesses
@@ -277,30 +296,26 @@ async def end_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     """End an active Wordle game"""
     chat_id = update.effective_chat.id
     
-    # Check if there's an active Wordle game
     if chat_id not in wordle_games or not wordle_games[chat_id]['game_active']:
         await update.message.reply_text("No active Wordle game to end.")
         return
     
-    # Get the solution and mark the game as ended
     solution = wordle_games[chat_id]['solution']
     wordle_games[chat_id]['game_active'] = False
     
-    # Send message to the group
+
     await update.message.reply_text(f"Game ended! The word was: {solution.upper()}")
     
-    # Log the action
-    logger.info(f"Wordle game ended in chat {chat_id}. Solution was: {solution}")
-###############################
-# WORDHUNT FUNCTIONS
-###############################
 
+    logger.info(f"Wordle game ended in chat {chat_id}. Solution was: {solution}")
+]
 class WordHuntGame:
     """Class to represent a WordHunt game"""
     
     def __init__(self):
         global wordhunt_word_list
-        self.line_list = wordhunt_word_list
+   
+        self.line_list = [word for word in wordhunt_word_list if len(word) >= 3]
         self.ongoing_game = False
         self.letter_row = []
         self.score_words = []
@@ -308,7 +323,7 @@ class WordHuntGame:
         self.player_scores = {}
         self.top_score_words = []
         self.player_words = {}
-        self.last_activity_time = None  # Track the time of last activity
+        self.last_activity_time = None 
 
     def create_letter_row(self):
         vowels = ['a','e','i','o','u']
@@ -326,7 +341,7 @@ class WordHuntGame:
     def create_score_words(self):
         self.score_words = []
         for word in self.line_list:
-            if(self.can_spell(word)):
+            if self.can_spell(word):
                 self.score_words.append(word)
 
     def can_spell(self, word):
@@ -389,7 +404,7 @@ async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     chat_id = update.effective_chat.id
     
-    # Check if there's an active Wordle game
+
     if chat_id in wordle_games and wordle_games[chat_id]['game_active']:
         await update.message.reply_text("There's already an active Wordle game. Please finish it first.")
         return
@@ -399,13 +414,12 @@ async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         wordhunt_games[chat_id] = WordHuntGame()
     wordhunt_games[chat_id].start()
 
-    # Cancel any existing timer
     if chat_id in activity_timers and activity_timers[chat_id] is not None:
         activity_timers[chat_id].schedule_removal()
     
-    # Create a new inactivity timer (30 seconds)
+
     activity_timers[chat_id] = context.job_queue.run_repeating(
-        check_activity, 5.0,  # Check activity every 5 seconds
+        check_activity, 5.0,  
         chat_id=chat_id, data=update
     )
     
@@ -418,12 +432,12 @@ async def check_activity(context: ContextTypes.DEFAULT_TYPE) -> None:
     update = job.data
     
     if chat_id not in wordhunt_games or not wordhunt_games[chat_id].ongoing_game:
-        # No active game, remove the timer
+
         job.schedule_removal()
         return
     
     current_time = asyncio.get_event_loop().time()
-    # If no activity for 30 seconds, end the game
+
     if current_time - wordhunt_games[chat_id].last_activity_time > 30:
         await end_wordhunt(update, context)
         job.schedule_removal()
@@ -437,6 +451,10 @@ async def scoring_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     guess = update.message.text.lower()
     player_name = update.effective_user.first_name or update.effective_user.username
 
+    if len(guess) < 3:
+
+        return
+        
     if guess in wordhunt_games[chat_id].found_words:
         await update.message.reply_html(f"<b>{guess}</b> has already been found!")
     elif guess in wordhunt_games[chat_id].score_words:
@@ -471,14 +489,13 @@ async def end_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         final_results = final_results + player + ": " + str(score) + "\n"
     if not bool(wordhunt_games[chat_id].player_scores): # player_scores dict is empty
         final_results = "No one played! \n"
-    
-    # Best Possible Words
+
     total_possible_words = len(wordhunt_games[chat_id].score_words) + len(wordhunt_games[chat_id].found_words)
     final_results += f"\n💡 BEST POSSIBLE WORDS ({total_possible_words} total): \n"
     for word in wordhunt_games[chat_id].top_score_words:
         final_results += word + "\n"
     
-    # Player Scoring Words
+
     wordhunt_games[chat_id].sort_player_words()
     final_results += "\n🔎 WORDS FOUND \n"
     for player in wordhunt_games[chat_id].player_words:
@@ -489,8 +506,7 @@ async def end_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     
     await update.message.reply_html(final_results)
     wordhunt_games[chat_id].end_clear()
-    
-    # Clean up the timer
+
     global activity_timers
     if chat_id in activity_timers and activity_timers[chat_id] is not None:
         activity_timers[chat_id].schedule_removal()
@@ -530,29 +546,24 @@ async def whglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_html(reply)
 
-###############################
-# MAIN
-###############################
 
 def register_handlers(application: Application) -> None:
     """Register all command and message handlers"""
-    # Load word lists at startup
+
     load_word_lists()
     
-    # Wordle handlers
+
     application.add_handler(CommandHandler("wordle", wordle))
     application.add_handler(CommandHandler("cricketwordle", cricketwordle))
     application.add_handler(CommandHandler("wordleaderboard", wordleaderboard))
     application.add_handler(CommandHandler("wordglobal", wordglobal))
     application.add_handler(CommandHandler("endwordle", end_wordle))
     
-    # WordHunt handlers
     application.add_handler(CommandHandler("wordhunt", wordhunt))
     application.add_handler(CommandHandler("end", end_wordhunt))
     application.add_handler(CommandHandler("whleaderboard", whleaderboard))
     application.add_handler(CommandHandler("whglobal", whglobal))
     
-    # Shared message handler for both games
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     logger.info("All game handlers registered successfully")
