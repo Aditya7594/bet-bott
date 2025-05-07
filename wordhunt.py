@@ -548,6 +548,7 @@ async def whglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def register_handlers(application: Application) -> None:
     """Register all command and message handlers"""
+    time.sleep(5)
 
     load_word_lists()
     
