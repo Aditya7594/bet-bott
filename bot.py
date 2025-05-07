@@ -471,7 +471,7 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
     # Determine the target audience
     target = "all"  # Default: broadcast to all
     message_start = 0
-
+    
     if context.args[0] == "-u":
         target = "users"
         message_start = 1
@@ -481,37 +481,31 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
     elif context.args[0] == "-a":
         target = "all"
         message_start = 1
-
+    
     # Combine the arguments into a single message
     broadcast_message = " ".join(context.args[message_start:])
-
+    
     # Send progress message
     progress_msg = await update.message.reply_text("🔄 Broadcasting in progress...")
-
+    
     # Counters for tracking
     successful_users = 0
     failed_users = 0
     successful_groups = 0
     failed_groups = 0
-
+    
     # Send to users if requested
-    if target in ["users", "all", "genshin_users"]: 
-        # Fetch from both collections
-        users_cursor = user_collection.find({}, {"user_id": 1})
-        genshin_users_cursor = genshin_collection.find({}, {"user_id": 1})
-
-        # Combine all unique user IDs from both
-        user_ids = set()
-        user_ids.update(user["user_id"] for user in users_cursor)
-        user_ids.update(user["user_id"] for user in genshin_users_cursor)
-
-        total_users = len(user_ids)
+    if target in ["users", "all"]:
+        # Fetch all users from the database
+        users = user_collection.find({}, {"user_id": 1})
+        total_users = user_collection.count_documents({})
+        
         current_count = 0
-
-        for user_id in user_ids:
+        for user in users:
+            user_id = user["user_id"]
             try:
                 await context.bot.send_message(
-                    chat_id=user_id,
+                    chat_id=user_id, 
                     text=f"📢 <b>Broadcast Message</b>\n\n{broadcast_message}",
                     parse_mode="HTML"
                 )
@@ -519,25 +513,26 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
             except Exception as e:
                 logger.error(f"Failed to send broadcast to user {user_id}: {e}")
                 failed_users += 1
-
+            
             current_count += 1
-            if current_count % 50 == 0:
+            if current_count % 50 == 0:  # Update progress every 50 users
                 try:
-                    await progress_msg.edit_text(f"🔄 Broadcasting to users... {current_count}/{total_users} processed")
+                    await progress_msg.edit_text(f"🔄 Broadcasting in progress... {current_count}/{total_users} users processed")
                 except:
                     pass
-
+    
     # Send to groups if requested
     if target in ["groups", "all"]:
+        # Fetch all groups from the database
         groups = groups_collection.find({}, {"group_id": 1})
         total_groups = groups_collection.count_documents({})
+        
         current_count = 0
-
         for group in groups:
             group_id = group["group_id"]
             try:
                 await context.bot.send_message(
-                    chat_id=group_id,
+                    chat_id=group_id, 
                     text=f"📢 <b>Broadcast Message</b>\n\n{broadcast_message}",
                     parse_mode="HTML"
                 )
@@ -545,14 +540,14 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
             except Exception as e:
                 logger.error(f"Failed to send broadcast to group {group_id}: {e}")
                 failed_groups += 1
-
+            
             current_count += 1
-            if current_count % 10 == 0:
+            if current_count % 10 == 0:  # Update progress every 10 groups
                 try:
                     await progress_msg.edit_text(f"🔄 Broadcasting to groups... {current_count}/{total_groups} groups processed")
                 except:
                     pass
-
+    
     # Send a report to the owner
     report_message = (
         "📊 <b>Broadcast Report</b>\n\n"
@@ -563,6 +558,7 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
     )
 
     await progress_msg.edit_text(report_message, parse_mode="HTML")
+
 
 
 async def give(update: Update, context: CallbackContext) -> None:
