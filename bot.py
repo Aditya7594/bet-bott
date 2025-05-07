@@ -495,7 +495,7 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
     failed_groups = 0
 
     # Send to users if requested
-    if target in ["users", "all"]:
+    if target in ["users", "all", "genshin_users"]: 
         # Fetch from both collections
         users_cursor = user_collection.find({}, {"user_id": 1})
         genshin_users_cursor = genshin_collection.find({}, {"user_id": 1})
