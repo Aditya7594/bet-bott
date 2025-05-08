@@ -1254,6 +1254,14 @@ async def leaderboard(update: Update, context: CallbackContext) -> None:
         text += f"{idx}. {name} - Wins: {wins}, Runs: {runs}\n"
 
     await update.message.reply_text(text, parse_mode="Markdown")
+    try:
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=text,
+        parse_mode="Markdown"
+        )
+    except Exception as e:
+    logger.error(f"Error sending message: {e}")
     
 
 async def show_achievements_by_category(update: Update, context: CallbackContext, category_index: int = 0) -> None:
@@ -1491,105 +1499,7 @@ async def check_streaks(user_id: int, context: CallbackContext) -> None:
                 except Exception as e:
                     logger.error(f"Error sending streak achievement notification: {e}")
 
-async def tag_active_users(update: Update, context: CallbackContext) -> None:
-    if not await check_user_started_bot(update, context):
-        return
-    
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    
-    # Check if user is an admin in the chat
-    chat_member = await context.bot.get_chat_member(chat_id, user_id)
-    if chat_member.status not in ['creator', 'administrator']:
-        await update.message.reply_text(
-            "Only group administrators can use this command."
-        )
-        return
-    
-    # Send a typing indicator
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-    
-    # Get current time in UTC
-    now_utc = datetime.utcnow()
-    
-    # Convert to IST for display
-    ist_timezone = pytz.timezone('Asia/Kolkata')
-    now_ist = pytz.utc.localize(now_utc).astimezone(ist_timezone)
-    
-    # Calculate 5 minutes ago in UTC for database query
-    five_minutes_ago_utc = now_utc - timedelta(minutes=5)
-    
-    logger.info(f"Current IST time: {now_ist.strftime('%H:%M:%S')}, Checking activity since: {five_minutes_ago_utc}")
-    
-    # Find users who were active in the last 5 minutes
-    try:
-        active_users = list(user_collection.find({
-            "$or": [
-                {"last_active": {"$gte": five_minutes_ago_utc}},
-                {"last_seen": {"$gte": five_minutes_ago_utc}}
-            ]
-        }))
-        
-        logger.info(f"Found {len(active_users)} active users in the last 5 minutes")
-    except Exception as e:
-        logger.error(f"Error querying database: {e}")
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="An error occurred while retrieving active users.",
-        )
-        return
-    
-    tagged_users = []
-    for user_doc in active_users:
-        user_id = user_doc.get("user_id")
-        if not user_id:
-            continue
-            
-        try:
-            # Get user's first name or fallback to user ID
-            user_name = user_doc.get("first_name", str(user_id))
-            last_active_utc = user_doc.get("last_active") or user_doc.get("last_seen")
-            
-            # Convert UTC time to IST
-            if isinstance(last_active_utc, datetime):
-                # Localize the datetime object to UTC then convert to IST
-                last_active_ist = pytz.utc.localize(last_active_utc).astimezone(ist_timezone)
-                time_str = last_active_ist.strftime("%H:%M:%S")
-            else:
-                # If it's not a datetime object, just use it as is
-                time_str = "unknown"
-                
-            tagged_users.append(f"[{user_name}](tg://user?id={user_id}) - active at {time_str} IST")
-        except Exception as e:
-            logger.error(f"Error processing user {user_id}: {e}")
-    
-    if not tagged_users:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="No active users found in the last 5 minutes.",
-            parse_mode="Markdown"
-        )
-        return
-    
-    # Limit the number of users tagged to prevent message too long errors
-    max_users_per_message = 50
-    
-    for i in range(0, len(tagged_users), max_users_per_message):
-        chunk = tagged_users[i:i + max_users_per_message]
-        message = f"Active users in the last 5 minutes ({len(chunk)}):\n" + "\n".join(chunk)
-        
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=message,
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logger.error(f"Error sending tagged users message: {e}")
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="An error occurred while tagging users.",
-            )
+
 def get_cricket_handlers():
     return [
         CommandHandler("chatcricket",chat_cricket),
