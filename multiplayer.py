@@ -131,7 +131,9 @@ async def multiplayer(update: Update, context: CallbackContext) -> None:
         "innings": 1,
         "last_action": get_current_utc_time(),
         "batter_stats": {},
-        "bowler_stats": {}
+        "bowler_stats": {},
+        "team_a": [],  # Original batters
+        "team_b": []   # Original bowlers
     }
 
     logger.info(f"[multiplayer] Creating new game with ID: {playing_id}")
@@ -450,6 +452,10 @@ async def start_game(playing_id: str, context: CallbackContext) -> None:
     # Initialize player messages dict
     game["player_messages"] = {}
     
+    # Store original teams
+    game["team_a"] = game["batters"].copy()
+    game["team_b"] = game["bowlers"].copy()
+    
     # Send initial notification message to all players
     for user_id in game["batters"] + game["bowlers"]:
         try:
@@ -508,7 +514,7 @@ async def game_timeout_checker(playing_id: str, context: CallbackContext):
         now = datetime.now(pytz.utc)
         elapsed = (now - game["last_action"]).total_seconds()
         
-        if elapsed > 15:
+        if elapsed > 30:  # Increased timeout to 30 seconds
             if game["current_batter"] and game["current_batter"] in game["batters"]:
                 game["batters"].remove(game["current_batter"])
                 game["batters"].append(game["current_batter"])
@@ -579,7 +585,7 @@ async def update_group_message(playing_id: str, context: CallbackContext) -> Non
     if game["innings"] == 2 and game.get("target"):
         status.extend([
             f"🎯 Target: {game['target']} runs",
-            f"💯 Need {max(0, game['target'] - game['score'])} more runs"
+            f"💯 Need {game['target'] - game['score']} more runs"
         ])
 
     status.extend([
@@ -603,6 +609,9 @@ async def update_game_interface(playing_id: str, context: CallbackContext) -> No
     game = await get_game_data(playing_id)
     if not game:
         logger.error(f"Game {playing_id} not found when updating interface")
+        return
+    
+    if game["status"] != "started":
         return
     
     game["batter_choice"] = None
@@ -642,13 +651,13 @@ async def update_game_interface(playing_id: str, context: CallbackContext) -> No
         user_id_str = str(user_id)
         try:
             if user_id == batter_id:
-                message_text = status_text + f"🔸 Your turn to bat! Choose a number (1-6):"
+                message_text = f"{await get_user_name_cached(user_id, context)}, it's your turn to bat! Choose a number (1-6):"
                 markup = InlineKeyboardMarkup([
                     [InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}|{i}") for i in range(1,4)],
                     [InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}|{i}") for i in range(4,7)]
                 ])
             elif user_id == bowler_id:
-                message_text = status_text + f"🔹 Your turn to bowl! Choose a number (1-6):"
+                message_text = f"{await get_user_name_cached(user_id, context)}, it's your turn to bowl! Choose a number (1-6):"
                 markup = InlineKeyboardMarkup([
                     [InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}|{i}") for i in range(1,4)],
                     [InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}|{i}") for i in range(4,7)]
@@ -856,6 +865,7 @@ async def process_ball_result(playing_id: str, context: CallbackContext) -> None
                     "bowler_stats": game["bowler_stats"]
                 }}
             )
+            
             await end_innings(playing_id, context)
             return
         
@@ -995,10 +1005,12 @@ async def end_innings(playing_id: str, context: CallbackContext) -> None:
         game["over"] = 0
         game["ball"] = 0
         game["wickets"] = 0
+        game["last_action"] = datetime.now(pytz.utc)
+        
+        # Swap teams
         game["batters"], game["bowlers"] = game["bowlers"], game["batters"]
         game["current_batter"] = game["batters"][0] if game["batters"] else None
         game["current_bowler"] = game["bowlers"][0] if game["bowlers"] else None
-        game["last_action"] = datetime.now(pytz.utc)
         
         async with games_lock:
             multiplayer_games[playing_id] = game
@@ -1064,33 +1076,22 @@ async def declare_winner(playing_id: str, context: CallbackContext, innings_resu
         logger.error(f"Game {playing_id} not found when declaring winner")
         return
     
-    target = game.get("target", 0)
-    first_innings_score = target - 1 if target else 0
+    first_innings_score = game.get("target", 0) - 1 if game.get("target") else 0
     second_innings_score = game["score"]
     
-    # Determine team names based on innings
-    team_a = "Team A" if game["innings"] == 2 else "Team B"
-    team_b = "Team B" if game["innings"] == 2 else "Team A"
+    team_a = "Team A"
+    team_b = "Team B"
     
-    # Get player names for both teams
-    team_a_players = []
-    for uid in game["batters"] if game["innings"] == 2 else game["bowlers"]:
-        try:
-            name = await get_user_name_cached(uid, context)
-            team_a_players.append(name)
-        except:
-            team_a_players.append(f"Player {uid}")
+    # Get original team players
+    team_a_players = game.get("team_a", [])
+    team_b_players = game.get("team_b", [])
     
-    team_b_players = []
-    for uid in game["bowlers"] if game["innings"] == 2 else game["batters"]:
-        try:
-            name = await get_user_name_cached(uid, context)
-            team_b_players.append(name)
-        except:
-            team_b_players.append(f"Player {uid}")
+    # Format player lists
+    team_a_text = "\n".join([f"- {await get_user_name_cached(uid, context)}" for uid in team_a_players]) if team_a_players else "None"
+    team_b_text = "\n".join([f"- {await get_user_name_cached(uid, context)}" for uid in team_b_players]) if team_b_players else "None"
     
     if game["innings"] == 2:
-        if second_innings_score >= target:
+        if second_innings_score >= game["target"]:
             winner = team_b
             if game["wickets"] < game["max_wickets"]:
                 margin = f"by {game['max_wickets'] - game['wickets']} wickets"
@@ -1098,14 +1099,10 @@ async def declare_winner(playing_id: str, context: CallbackContext, innings_resu
                 margin = "by last wicket"
         else:
             winner = team_a
-            margin = f"by {target - second_innings_score - 1} runs"
+            margin = f"by {game['target'] - second_innings_score - 1} runs"
     else:
         winner = "No winner"
         margin = "Game ended early"
-    
-    # Format player lists
-    team_a_text = "\n".join([f"- {name}" for name in team_a_players]) if team_a_players else "None"
-    team_b_text = "\n".join([f"- {name}" for name in team_b_players]) if team_b_players else "None"
     
     # Prepare detailed statistics
     batter_stats_text = ""
