@@ -23,8 +23,12 @@ async def get_user_name_cached(user_id, context):
     except:
         return get_user_name_cached_sync(user_id)
 
-
-
+def escape_markdown(text: str) -> str:
+    """Escape special characters for Markdown."""
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    for char in escape_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
 # Set up logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -1233,8 +1237,6 @@ async def stats(update: Update, context: CallbackContext) -> None:
     text += f"▫️ Wickets Taken: {stats.get('wickets', 0)}\n"
     await update.message.reply_text(text, parse_mode="Markdown")
     
-    
-
 async def leaderboard(update: Update, context: CallbackContext) -> None:
     """Handle the /leaderboard command"""
     top_players = user_collection.find(
@@ -1251,17 +1253,22 @@ async def leaderboard(update: Update, context: CallbackContext) -> None:
         name = player.get("first_name", "Unknown")
         wins = stats.get("wins", 0)
         runs = stats.get("runs", 0)
+        
+        # Escape Markdown special characters in the name
+        name = escape_markdown(name)
+        
         text += f"{idx}. {name} - Wins: {wins}, Runs: {runs}\n"
 
-    await update.message.reply_text(text, parse_mode="Markdown")
+    text += "\n*Note: Stats are updated in real-time.*"
+
     try:
-      await context.bot.send_message(
-        chat_id=chat_id,
-        text=text,
-        parse_mode="Markdown"
+        await update.message.reply_text(
+            text,
+            parse_mode="Markdown"
         )
     except Exception as e:
-     logger.error(f"Error sending message: {e}")
+        logger.error(f"Error sending leaderboard message: {e}")
+        await update.message.reply_text("Failed to retrieve the leaderboard. Please try again later.")
     
 
 async def show_achievements_by_category(update: Update, context: CallbackContext, category_index: int = 0) -> None:
