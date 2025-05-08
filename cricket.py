@@ -1239,8 +1239,9 @@ async def stats(update: Update, context: CallbackContext) -> None:
     
 async def leaderboard(update: Update, context: CallbackContext) -> None:
     """Handle the /leaderboard command"""
+    # Query users with valid first_name and non-zero wins or runs
     top_players = user_collection.find(
-        {},
+        {"first_name": {"$exists": True}, "stats": {"$exists": True}},
         {"_id": 0, "user_id": 1, "first_name": 1, "stats": 1}
     ).sort([
         ("stats.wins", -1),
@@ -1253,6 +1254,10 @@ async def leaderboard(update: Update, context: CallbackContext) -> None:
         name = player.get("first_name", "Unknown")
         wins = stats.get("wins", 0)
         runs = stats.get("runs", 0)
+        
+        # Skip players with Unknown name
+        if name == "Unknown":
+            continue
         
         # Escape Markdown special characters in the name
         name = escape_markdown(name)
@@ -1269,7 +1274,6 @@ async def leaderboard(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"Error sending leaderboard message: {e}")
         await update.message.reply_text("Failed to retrieve the leaderboard. Please try again later.")
-    
 
 async def show_achievements_by_category(update: Update, context: CallbackContext, category_index: int = 0) -> None:
     user = update.effective_user
