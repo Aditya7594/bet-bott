@@ -585,7 +585,7 @@ async def update_group_message(playing_id: str, context: CallbackContext) -> Non
     if game["innings"] == 2 and game.get("target"):
         status.extend([
             f"🎯 Target: {game['target']} runs",
-            f"💯 Need {game['target'] - game['score']} more runs"
+            f"💯 Need {max(0, game['target'] - game['score'])} more runs"
         ])
 
     status.extend([
@@ -594,11 +594,16 @@ async def update_group_message(playing_id: str, context: CallbackContext) -> Non
         "\nCheck your DMs to play your turn!"
     ])
 
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh_{playing_id}")]
+    ])
+
     try:
         await context.bot.edit_message_text(
             chat_id=game["group_chat_id"],
             message_id=game["message_id"],
             text="\n".join(status),
+            reply_markup=keyboard,
             parse_mode="Markdown",
             disable_web_page_preview=True
         )
@@ -613,6 +618,27 @@ async def update_game_interface(playing_id: str, context: CallbackContext) -> No
     
     if game["status"] != "started":
         return
+    
+    # Group notification for current players
+    try:
+        batter_name = await get_user_name_cached(game["current_batter"], context)
+        bowler_name = await get_user_name_cached(game["current_bowler"], context)
+        
+        notification_text = (
+            f"🎯 *Current Turn*\n\n"
+            f"Batter: {batter_name}\n"
+            f"Bowler: {bowler_name}\n\n"
+            f"Select your moves in your DMs with the bot!"
+        )
+        
+        # Send notification to group
+        await context.bot.send_message(
+            chat_id=game["group_chat_id"],
+            text=notification_text,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Error sending group notification: {e}")
     
     game["batter_choice"] = None
     game["bowler_choice"] = None
@@ -643,7 +669,7 @@ async def update_game_interface(playing_id: str, context: CallbackContext) -> No
     
     if game["innings"] == 2 and game.get("target"):
         status_text += f"🎯 Target: {game['target']} runs\n"
-        status_text += f"💯 Need {game['target'] - game['score']} more runs\n\n"
+        status_text += f"💯 Need {max(0, game['target'] - game['score'])} more runs\n\n"
     else:
         status_text += "\n"
     
