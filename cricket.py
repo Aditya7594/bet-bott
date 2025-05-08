@@ -1507,7 +1507,6 @@ def get_cricket_handlers():
         CommandHandler("leaderboard", leaderboard),
         CommandHandler("history", game_history),
         CommandHandler("chat", chat_command),
-        CommandHandler("tagactive", tag_active_users),
         CommandHandler("achievements", achievements_command),
         CallbackQueryHandler(toss_button, pattern="^toss_"),
         CallbackQueryHandler(choose_button, pattern="^choose_"),
