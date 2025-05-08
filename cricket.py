@@ -1253,7 +1253,7 @@ async def leaderboard(update: Update, context: CallbackContext) -> None:
         runs = stats.get("runs", 0)
         text += f"{idx}. {name} - Wins: {wins}, Runs: {runs}\n"
 
-     await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text, parse_mode="Markdown")
     try:
       await context.bot.send_message(
         chat_id=chat_id,
