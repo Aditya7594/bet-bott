@@ -1253,15 +1253,15 @@ async def leaderboard(update: Update, context: CallbackContext) -> None:
         runs = stats.get("runs", 0)
         text += f"{idx}. {name} - Wins: {wins}, Runs: {runs}\n"
 
-    await update.message.reply_text(text, parse_mode="Markdown")
+     await update.message.reply_text(text, parse_mode="Markdown")
     try:
-    await context.bot.send_message(
+      await context.bot.send_message(
         chat_id=chat_id,
         text=text,
         parse_mode="Markdown"
         )
     except Exception as e:
-    logger.error(f"Error sending message: {e}")
+     logger.error(f"Error sending message: {e}")
     
 
 async def show_achievements_by_category(update: Update, context: CallbackContext, category_index: int = 0) -> None:
