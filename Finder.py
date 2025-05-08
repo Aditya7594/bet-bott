@@ -860,7 +860,16 @@ async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         if idx >= 10:
             break
 
-        name = user.get("first_name") or user.get("username") or "Player"
+        user_id = user.get("_id")
+        name = user.get("first_name")  # Try to get from database
+        if not name:  # If not available, fetch from Telegram
+            try:
+                chat = await context.bot.get_chat(user_id)
+                name = chat.first_name
+            except Exception as e:
+                logger.error(f"Error fetching user name: {e}")
+                name = "Player"
+
         level = user.get("level", 1)
         score = user.get("score", 0)
         words = user.get("words_found", 0)
@@ -874,12 +883,6 @@ async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     leaderboard_lines.append("")
     leaderboard_lines.append("✨ Complete more levels to climb the leaderboard! ✨")
-
-    await update.message.reply_text(
-        "\n".join(leaderboard_lines),
-        parse_mode="Markdown"
-    )
-
 
     await update.message.reply_text(
         "\n".join(leaderboard_lines),
