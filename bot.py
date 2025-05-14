@@ -4,7 +4,7 @@ import os
 import secrets
 import requests
 import logging
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters, ChatMemberHandler
 from telegram.constants import ChatType
