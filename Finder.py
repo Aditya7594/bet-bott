@@ -34,10 +34,10 @@ user_collection = db["users"]
 levels_file = "levels.json"
 rewards_file = "rewards.json"
 
-with open(levels_file, "r") as f:
+with open(levels_file, "r", encoding='utf-8') as f:
     levels = json.load(f)
 
-with open(rewards_file, "r") as f:
+with open(rewards_file, "r", encoding='utf-8') as f:
     rewards = json.load(f)
 
 STYLE_GREEN = '🟢'
