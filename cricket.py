@@ -248,7 +248,7 @@ async def chat_cricket(update: Update, context: CallbackContext) -> None:
         "wickets": 0,
         "max_wickets": max_wickets,
         "max_overs": max_overs,
-        "spectators": set(),
+        "spectators": set(),  # Ensure spectators is always a set
         "last_move": datetime.utcnow(),
         "last_reminder": None
     }

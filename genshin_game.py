@@ -3,7 +3,7 @@ from telegram.ext import CallbackContext,CommandHandler,CallbackQueryHandler
 import random
 from pymongo import MongoClient
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Tuple
 from telegram.ext import JobQueue
 import os
@@ -80,8 +80,8 @@ WEAPONS = {
 ARTIFACTS_FOLDER = "artifacts"
 ARTIFACTS = {os.path.splitext(file)[0].replace("_", " "): os.path.join(ARTIFACTS_FOLDER, file) for file in os.listdir(ARTIFACTS_FOLDER) if file.endswith(".png")}
 
-artifact_thresholds = {}
 message_counts = {}
+last_artifact_time = {}
 
 def get_genshin_user_by_id(user_id):
     return genshin_collection.find_one({"user_id": user_id})
@@ -179,37 +179,101 @@ def update_group_settings(chat_id: int, settings: dict):
         upsert=True
     )
 
-async def handle_message(update: Update, context: CallbackContext) -> None:
+async def handle_genshin_group_message(update: Update, context: CallbackContext):
+    """Handle messages in groups for primogem rewards."""
+    user = update.effective_user
+    user_id = str(user.id)
     chat_id = str(update.effective_chat.id)
-
-    # Skip if the message is not from a group
-    if update.effective_chat.type not in ["group", "supergroup"]:
-        return
-
-    # Get group settings
-    settings = get_group_settings(chat_id)
     
-    # Skip if artifacts are disabled
-    if not settings.get("artifact_enabled", True):
+    # Determine message type using message attributes
+    message_type = "text"
+    if update.message.sticker:
+        message_type = "sticker"
+    elif update.message.photo:
+        message_type = "photo"
+    elif update.message.video:
+        message_type = "video"
+    elif update.message.document:
+        message_type = "document"
+    elif update.message.audio:
+        message_type = "audio"
+    elif update.message.voice:
+        message_type = "voice"
+    elif update.message.animation:
+        message_type = "animation"
+
+    logger.info(f"Processing message - User: {user_id}, Chat: {chat_id}, Type: {message_type}")
+
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        logger.info(f"Skipping message - Not a group chat. Chat type: {update.effective_chat.type}")
         return
 
-    # Initialize message count for the chat if it doesn't exist
+    # Handle artifact system first
     if chat_id not in message_counts:
         message_counts[chat_id] = 0
-
-    # Increment message count
     message_counts[chat_id] += 1
-
-    # Get the threshold for the chat
-    threshold = settings.get("artifact_threshold", 50)
-
-    # Check if the threshold is reached
+    threshold = 100  # Default threshold
+    now = datetime.now(timezone.utc)
+    if chat_id in last_artifact_time:
+        time_since_last = (now - last_artifact_time[chat_id]).total_seconds()
+        if time_since_last < 300:  # 5 minutes in seconds
+            logger.info(f"Not enough time since last artifact in chat {chat_id}")
+            # Do not return here, continue to primogem logic
     if message_counts[chat_id] >= threshold:
-        # Reset message count
         message_counts[chat_id] = 0
-
-        # Send artifact reward
+        logger.info(f"Threshold reached for chat {chat_id}, sending artifact reward")
         await send_artifact_reward(chat_id, context)
+
+    # Primogem reward logic (always run for every message)
+    user_data = get_genshin_user_by_id(user_id)
+    now = datetime.now(timezone.utc)
+    if not user_data:
+        logger.info(f"Creating new user data for user {user_id}")
+        user_data = {
+            "user_id": user_id,
+            "primos": 0,
+            "bag": {},
+            "message_primo": {
+                "count": 0,
+                "earned": 0,
+                "last_reset": now
+            }
+        }
+        save_genshin_user(user_data)
+        return
+    if "message_primo" not in user_data:
+        logger.info(f"Initializing message_primo for user {user_id}")
+        user_data["message_primo"] = {
+            "count": 0,
+            "earned": 0,
+            "last_reset": now
+        }
+    elif user_data["message_primo"].get("last_reset") is None:
+        logger.info(f"Setting last_reset for user {user_id}")
+        user_data["message_primo"]["last_reset"] = now
+    last_reset = user_data["message_primo"]["last_reset"]
+    if isinstance(last_reset, datetime) and last_reset.tzinfo is None:
+        logger.info(f"Converting last_reset to timezone-aware for user {user_id}")
+        last_reset = last_reset.replace(tzinfo=timezone.utc)
+        user_data["message_primo"]["last_reset"] = last_reset
+    time_diff = (now - last_reset).total_seconds()
+    logger.info(f"Time since last reset for user {user_id}: {time_diff} seconds")
+    if time_diff > 3600:
+        logger.info(f"Resetting message count for user {user_id}")
+        user_data["message_primo"]["count"] = 0
+        user_data["message_primo"]["earned"] = 0
+        user_data["message_primo"]["last_reset"] = now
+    current_earned = user_data["message_primo"]["earned"]
+    logger.info(f"Current earned primos for user {user_id}: {current_earned}")
+    if current_earned < 100:
+        user_data["message_primo"]["count"] += 1
+        user_data["message_primo"]["earned"] += 5
+        user_data["primos"] = user_data.get("primos", 0) + 5
+        logger.info(f"Awarded 5 primos to user {user_id}. New total: {user_data['primos']}")
+    else:
+        logger.info(f"User {user_id} has reached hourly limit of 100 primos")
+    save_genshin_user(user_data)
+    logger.info(f"Saved updated user data for user {user_id}")
 
 async def set_threshold(update: Update, context: CallbackContext) -> None:
     """Set the artifact drop threshold for a group."""
@@ -288,38 +352,37 @@ async def artifact_settings(update: Update, context: CallbackContext) -> None:
 
     await update.message.reply_text(message, parse_mode='Markdown')
 
-async def send_artifact_reward(chat_id: int, context: CallbackContext) -> None:
-    """Send an artifact reward to a group."""
-    artifact_name, artifact_image = random.choice(list(ARTIFACTS.items()))
-
+async def send_artifact_reward(chat_id: str, context: CallbackContext):
+    """Send artifact reward to the group."""
     try:
-        with open(artifact_image, "rb") as image_file:
-            keyboard = [[InlineKeyboardButton("Get", callback_data=f"artifact_{artifact_name}")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            message = await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=image_file,
-                caption=f"🎉 **Artifact Reward!** 🎉\n\n"
-                        f"An artifact has appeared: **{artifact_name}**\n\n"
-                        f"Click the button below to claim it!",
-                reply_markup=reply_markup
-            )
-            # Store artifact-specific data
-            context.chat_data[f"artifact_{artifact_name}"] = {
-                "message_id": message.message_id,
-                "claimed": False  # Initialize as not claimed
-            }
-
-            # Schedule a job to reset the artifact after 1 minute
-            context.job_queue.run_once(
-                reset_artifact_claimed,
-                60,  # 1 minute
-                chat_id=chat_id,
-                name=f"reset_{artifact_name}"  # Unique job name
-            )
-    except FileNotFoundError:
-        logger.error(f"Artifact image file not found: {artifact_image}")
-        await context.bot.send_message(chat_id=chat_id, text="❌ Failed to send artifact reward. Please try again.")
+        # Get random artifact
+        artifact = random.choice(list(ARTIFACTS.keys()))
+        artifact_image = ARTIFACTS[artifact]
+        
+        # Create artifact message
+        message = (
+            f"🎉 <b>Artifact Found!</b>\n\n"
+            f"<b>{artifact}</b>\n\n"
+            f"Click the button below to claim it!"
+        )
+        
+        # Send message with claim button
+        keyboard = [[InlineKeyboardButton("Claim", callback_data=f"claim_artifact_{artifact}")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=open(artifact_image, "rb"),
+            caption=message,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+        
+        # Update last artifact time
+        last_artifact_time[chat_id] = datetime.now(timezone.utc)
+        
+    except Exception as e:
+        logger.error(f"Error sending artifact reward: {e}")
 
 async def handle_artifact_button(update: Update, context: CallbackContext) -> None:
     """Handle the action when a user clicks the 'Get' button for an artifact."""
@@ -667,23 +730,31 @@ def get_all_genshin_users():
     return list(genshin_collection.find({}, {"_id": 0, "user_id": 1, "primos": 1, "first_name": 1}))
 
 async def primo_leaderboard(update: Update, context: CallbackContext) -> None:
-    users = list(genshin_collection.find({}, {"_id": 0, "user_id": 1, "first_name": 1, "primos": 1}))
+    """Show the top 25 users by primogems."""
+    # Get top 25 users by primogems
+    top_users = genshin_collection.find().sort("primos", -1).limit(25)
     
-    if not users:
-        await update.message.reply_text("❗ No users found.")
-        return
-
-    users.sort(key=lambda x: x.get("primos", 0), reverse=True)
-
-    leaderboard_message = "🔹 **Leaderboard:**\n\n"
-    for idx, user in enumerate(users[:10]):
-        first_name = user.get('first_name', 'Unknown')
-        primogems = user.get('primos', 0)
-        leaderboard_message += (
-            f"{idx + 1}. 🏆 {first_name} - **{primogems}** Primogems\n"
-        )
-
-    await update.message.reply_text(leaderboard_message, parse_mode='Markdown')
+    # Create leaderboard message
+    leaderboard = "💎 <b>Primogems Leaderboard</b>\n\n"
+    
+    for i, user in enumerate(top_users, 1):
+        # Try to get the name from different possible fields
+        name = user.get('first_name') or user.get('username') or user.get('name')
+        
+        # If no name is found, try to get it from the user collection
+        if not name:
+            user_data = user_collection.find_one({"user_id": user.get('user_id')})
+            if user_data:
+                name = user_data.get('first_name') or user_data.get('username') or user_data.get('name')
+        
+        # If still no name, use a placeholder
+        if not name:
+            name = f"User {user.get('user_id', 'Unknown')}"
+            
+        primos = user.get('primos', 0)
+        leaderboard += f"{i}. {name}: {primos:,} primogems\n"
+    
+    await update.message.reply_text(leaderboard, parse_mode='HTML')
 
 async def reset_bag_data(update: Update, context: CallbackContext) -> None:
     user_id = str(update.effective_user.id)

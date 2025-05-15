@@ -112,6 +112,9 @@ game_manager = HiLoGameManager()
 # Start HiLo game
 async def start_hilo(update: Update, context):
     """Start a new HiLo game."""
+    if update.effective_chat.type != "private":
+        await update.message.reply_text("HiLo can only be played in private chat. Please DM the bot to play!")
+        return
     user_id = str(update.effective_user.id)
     user_data = game_manager.get_user(user_id)
     
