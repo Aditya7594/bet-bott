@@ -1,25 +1,10 @@
-from flask import Flask
-from threading import Thread
-
-# Flask app for health check
-app = Flask(__name__)
-
-@app.route('/')
-def hello_world():
-    return 'Shadow'
-
-def run_flask():
-    app.run(host="0.0.0.0", port=8000)
-
-flask_thread = Thread(target=run_flask)
-flask_thread.start()
 import asyncio
 from pymongo import MongoClient
 import os
 import secrets
 import requests
 import logging
-from datetime import datetime, timedelta, timezone, time
+from datetime import datetime, timedelta, UTC, timezone, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters, ChatMemberHandler
 from telegram.constants import ChatType
@@ -68,6 +53,12 @@ last_interaction_time = {}
 
 # Global variable for tracking message counts for artifact rewards
 message_counts = {}
+
+# Constants
+PRIMO_REWARD_AMOUNT = 5
+MESSAGE_COOLDOWN_SECONDS = 5
+RESET_INTERVAL_SECONDS = 3600  # 1 hour
+MAX_DAILY_PRIMOS = 100
 
 def get_group_settings(chat_id):
     # TODO: Replace with actual group settings retrieval
@@ -838,66 +829,75 @@ async def handle_group_message(update: Update, context: CallbackContext):
 def main() -> None:
     application = Application.builder().token(token).build()
 
-    # Add all handlers inside the main function
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("profile", profile))
-    application.add_handler(CommandHandler("reach", reach))    
-    application.add_handler(CommandHandler("reffer", reffer))
-    application.add_handler(CommandHandler("reset", reset))
-    application.add_handler(CommandHandler("broadcast", broadcast))
-    application.add_handler(CommandHandler("daily", daily))
-    application.add_handler(CommandHandler("give", give))
-    application.add_handler(CallbackQueryHandler(reset_confirmation, pattern="^reset_"))
-    application.add_handler(CommandHandler("bank", bank))
-    application.add_handler(CommandHandler("store", store))
-    application.add_handler(CommandHandler("withdraw", withdraw))
-    application.add_handler(CommandHandler("addcredits", add_credits))
-    application.add_handler(CommandHandler("blacklist", blacklist))
-    application.add_handler(CommandHandler("unblacklist", unblacklist))
-    application.add_handler(CommandHandler("scan_blacklist", scan_blacklist))
+    # Add command handlers
+    command_handlers = [
+        ("start", start),
+        ("profile", profile),
+        ("reach", reach),
+        ("reffer", reffer),
+        ("reset", reset),
+        ("broadcast", broadcast),
+        ("daily", daily),
+        ("give", give),
+        ("bank", bank),
+        ("store", store),
+        ("withdraw", withdraw),
+        ("addcredits", add_credits),
+        ("blacklist", blacklist),
+        ("unblacklist", unblacklist),
+        ("scan_blacklist", scan_blacklist),
+        ("chatcricket", chat_cricket),
+        ("join", handle_join_button),
+        ("watch", handle_watch_button),
+        ("limbo", limbo),
+        ("multiplayer", multiplayer),
+        ("current", show_current_players),
+        ("extend", extend_time),
+        ("stop", stop_game),
+        ("list", list_players),
+    ]
+    
+    for command, handler in command_handlers:
+        application.add_handler(CommandHandler(command, handler))
+    
+    # Add callback query handlers
+    callback_handlers = [
+        ("^reset_", reset_confirmation),
+        ("^toss_", toss_button),
+        ("^choose_", choose_button),
+        ("^play_", play_button),
+        ("^join_", handle_join_button),
+        ("^watch_", handle_watch_button),
+        ("^(take|next)_", handle_limbo_buttons),
+        ("^Mjoin_.*$", MButton_join),
+        ("^Mremove_.*$", Mhandle_remove_button),
+        ("^Mplay_.*$", Mhandle_play_button),
+        ("^Mcancel_.*$", Mhandle_cancel_button),
+    ]
+    
+    for pattern, handler in callback_handlers:
+        application.add_handler(CallbackQueryHandler(handler, pattern=pattern))
+    
+    # Add special handlers
     application.add_handler(ChatMemberHandler(auto_ban, ChatMemberHandler.CHAT_MEMBER))
-    application.add_handler(CommandHandler("chatcricket", chat_cricket))    
-    application.add_handler(CommandHandler("join", handle_join_button))    
-    application.add_handler(CommandHandler("watch", handle_watch_button))    
-    application.add_handler(CallbackQueryHandler(toss_button, pattern="^toss_"))    
-    application.add_handler(CallbackQueryHandler(choose_button, pattern="^choose_"))    
-    application.add_handler(CallbackQueryHandler(play_button, pattern="^play_"))    
-    application.add_handler(CallbackQueryHandler(handle_join_button, pattern=r"^join_"))    
-    application.add_handler(CallbackQueryHandler(handle_watch_button, pattern=r"watch_"))
-
-    # Add limbo handlers
-    application.add_handler(CommandHandler("limbo", limbo))
-    application.add_handler(CallbackQueryHandler(handle_limbo_buttons, pattern="^(take|next)_"))
-
-    application.add_handler(MessageHandler(        
-        filters.Regex(r"^/start ([0-9]{3})$"),        
-        handle_join_button    
-    ))    
-    application.add_handler(MessageHandler(        
-        filters.Regex(r"^/start watch_([0-9]{3})$"),        
-        handle_watch_button    
-    ))
-    for handler in get_multiplayer_handlers():
-        application.add_handler(handler)
-    for handler in get_claim_handlers():        
-        application.add_handler(handler)
-    register_handlers(application)
-    finder_handlers(application)
-    for handler in get_bdice_handlers():
-        application.add_handler(handler)
-    for handler in get_mines_handlers():
-        application.add_handler(handler)
-    for handler in get_hilo_handlers():
-        application.add_handler(handler)
-    for handler in get_xox_handlers():
-        application.add_handler(handler)
-    for handler in get_cricket_handlers():
-        application.add_handler(handler)
-    for handler in get_genshin_handlers():
-        application.add_handler(handler)
-    for handler in get_gambling_handlers():
-        application.add_handler(handler)
-        
+    
+    # Add module handlers
+    modules_to_register = [
+        get_multiplayer_handlers(),
+        get_claim_handlers(),
+        get_bdice_handlers(),
+        get_mines_handlers(),
+        get_hilo_handlers(),
+        get_xox_handlers(),
+        get_cricket_handlers(),
+        get_genshin_handlers(),
+        get_gambling_handlers(),
+    ]
+    
+    for handlers in modules_to_register:
+        for handler in handlers:
+            application.add_handler(handler)
+    
     # Update message handler to handle all message types in groups
     application.add_handler(MessageHandler(
         filters.ChatType.GROUPS & filters.ALL & ~filters.COMMAND,

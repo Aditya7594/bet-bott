@@ -121,37 +121,36 @@ async def check_user_started_bot(update: Update, context: CallbackContext) -> bo
 
 async def get_game_data(playing_id: str) -> dict:
     playing_id = str(playing_id)
-    if playing_id in multiplayer_games:
-        return multiplayer_games[playing_id]
-    game_data = game_collection.find_one({"playing_id": playing_id})
-    if game_data:
-        # Convert all relevant datetime fields
-        for key in ["last_move", "start_time", "last_action"]:
-            if key in game_data:
-                game_data[key] = ensure_utc(game_data[key])
-        game = {k: v for k, v in game_data.items() if k != "_id"}
-        # Convert spectators list to set for in-memory operations
-        if "spectators" in game:
-            game["spectators"] = set(game["spectators"])
-        async with games_lock:
+    async with games_lock:
+        if playing_id in multiplayer_games:
+            return multiplayer_games[playing_id]
+        game_data = game_collection.find_one({"playing_id": playing_id})
+        if game_data:
+            # Convert all relevant datetime fields
+            for key in ["last_move", "start_time", "last_action"]:
+                if key in game_data:
+                    game_data[key] = ensure_utc(game_data[key])
+            game = {k: v for k, v in game_data.items() if k != "_id"}
             multiplayer_games[playing_id] = game
-        return game
-    return None
+            return game
+        return None
 
 async def multiplayer(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     chat_id = update.effective_chat.id
-
+    
     if update.effective_chat.type == "private":
-        await context.bot.send_message(chat_id=chat_id, text="⚠️ This command can only be used in group chats!")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ This command can only be used in group chats!")
         return
-
+    
     if not await check_user_started_bot(update, context):
         return
-
-    max_overs = 5
-    max_wickets = 5
-
+    
+    max_overs = 5  # Default to 5 overs
+    max_wickets = 5  # Default to 5 wickets
+    
     if context.args:
         try:
             if len(context.args) >= 1:
@@ -163,17 +162,20 @@ async def multiplayer(update: Update, context: CallbackContext) -> None:
             if max_wickets < 1:
                 max_wickets = 1
         except ValueError:
-            await context.bot.send_message(chat_id=chat_id, text="⚠️ Invalid format! Use: /multiplayer [overs] [wickets]")
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Invalid parameters! Format: /multiplayer [overs] [wickets]")
             return
-
+    
     game_id = f"{chat_id}_{int(time.time())}"
     
-    # Create game data with spectators as a list instead of a set
+    # Create game data
     game_data = {
         "player1": user.id,
         "player2": None,
         "score1": 0,
         "score2": 0,
+        "score": 0,
         "message_id": {},
         "over": 0,
         "ball": 0,
@@ -192,27 +194,27 @@ async def multiplayer(update: Update, context: CallbackContext) -> None:
         "wickets": 0,
         "max_wickets": max_wickets,
         "max_overs": max_overs,
-        "spectators": [],  # Initialize as empty list instead of set
         "last_move": datetime.utcnow(),
-        "last_reminder": None
+        "last_reminder": None,
+        "status": "waiting",
+        "batters": [],
+        "bowlers": [],
+        "batter_stats": {},
+        "bowler_stats": {},
+        "admin_id": user.id
     }
     
-    # Store in memory as a set for efficient operations
+    # Store in memory
     multiplayer_games[game_id] = game_data.copy()
-    multiplayer_games[game_id]["spectators"] = set()  # Convert to set in memory
 
     logger.info(f"[multiplayer] Creating new game with ID: {game_id}")
     async with games_lock:
         multiplayer_games[game_id] = multiplayer_games[game_id]
 
     try:
-        # Convert spectators to list before saving to MongoDB
-        db_game_data = game_data.copy()
-        db_game_data["spectators"] = list(game_data["spectators"])
-        
         game_collection.update_one(
             {"playing_id": game_id},
-            {"$set": db_game_data},
+            {"$set": game_data},
             upsert=True
         )
     except Exception as e:
@@ -231,23 +233,27 @@ async def multiplayer(update: Update, context: CallbackContext) -> None:
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"Mjoin_batter_{game_id}")],
         [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"Mjoin_bowler_{game_id}")],
-        [InlineKeyboardButton("👁️ Watch Game", callback_data=f"Mwatch_{game_id}")],
         [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/{bot_username}")]
     ])
 
     try:
-        sent_message = await context.bot.send_message(chat_id=chat_id, text=game_desc, reply_markup=keyboard, parse_mode="Markdown")
-        multiplayer_games[game_id]["message_id"] = sent_message.message_id
+        msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=game_desc,
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        game_data["message_id"] = msg.message_id
         async with games_lock:
-            multiplayer_games[game_id]["message_id"] = sent_message.message_id
+            multiplayer_games[game_id] = game_data
         game_collection.update_one(
             {"playing_id": game_id},
-            {"$set": {"message_id": sent_message.message_id}}
+            {"$set": {"message_id": msg.message_id}}
         )
-        logger.info(f"[multiplayer] Game created and message_id stored: {sent_message.message_id}")
     except Exception as e:
         logger.error(f"Error sending game message: {e}")
-        await context.bot.send_message(chat_id=chat_id, text="⚠️ Error creating game message. Please try again.")
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Error creating game. Please try again.")
+        return
 
 async def MButton_join(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -291,16 +297,6 @@ async def MButton_join(update: Update, context: CallbackContext) -> None:
     async with games_lock:
         multiplayer_games[playing_id] = game
     
-    # Convert spectators set to list before saving to MongoDB
-    db_game_data = game.copy()
-    if "spectators" in db_game_data:
-        db_game_data["spectators"] = list(db_game_data["spectators"])
-    
-    game_collection.update_one(
-        {"playing_id": playing_id}, 
-        {"$set": db_game_data}
-    )
-
     batter_names = []
     for uid in game["batters"]:
         try:
@@ -432,14 +428,9 @@ async def Mhandle_remove_button(update: Update, context: CallbackContext) -> Non
     async with games_lock:
         multiplayer_games[playing_id] = game
     
-    # Convert spectators set to list before saving to MongoDB
-    db_game_data = game.copy()
-    if "spectators" in db_game_data:
-        db_game_data["spectators"] = list(db_game_data["spectators"])
-    
     game_collection.update_one(
         {"playing_id": playing_id},
-        {"$set": db_game_data}
+        {"$set": game}
     )
     
     batter_names = []
@@ -557,77 +548,57 @@ async def start_game(playing_id: str, context: CallbackContext) -> None:
 async def send_player_buttons(playing_id: str, context: CallbackContext) -> None:
     """Send appropriate buttons to current batter and bowler in DMs, delete old ones, and send clean group notification."""
     game = await get_game_data(playing_id)
-    if not game or game["status"] != "playing":
+    if not game:
         return
 
-    current_batter = game["current_batter"]
-    current_bowler = game["current_bowler"]
+    current_batter = game.get("current_batter")
+    current_bowler = game.get("current_bowler")
+    
+    if not current_batter or not current_bowler:
+        logger.error(f"Missing current players in game {playing_id}")
+        return
 
-    # Create number buttons for both batter and bowler
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(str(i), callback_data=f"Mplay_{i}_{playing_id}") for i in range(1, 4)],
-        [InlineKeyboardButton(str(i), callback_data=f"Mplay_{i}_{playing_id}") for i in range(4, 7)],
-        [InlineKeyboardButton("❌ Cancel", callback_data=f"Mcancel_{playing_id}")]
-    ])
-
-    # Clean up previous DMs before sending new ones
-    for player_id, role in [(current_batter, 'bat'), (current_bowler, 'bowl')]:
-        prev_dm_id = player_dm_message_ids.get((player_id, role))
-        if prev_dm_id:
-            try:
-                await context.bot.delete_message(chat_id=player_id, message_id=prev_dm_id)
-            except Exception as e:
-                logger.error(f"Error deleting previous DM for {player_id}: {e}")
+    # Create keyboard for players
+    keyboard = [
+        [
+            InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}_{i}")
+            for i in range(1, 4)
+        ],
+        [
+            InlineKeyboardButton(str(i), callback_data=f"Mplay_{playing_id}_{i}")
+            for i in range(4, 7)
+        ]
+    ]
 
     # Send buttons to current batter
-    if current_batter:
-        try:
-            batter_msg = await context.bot.send_message(
-                chat_id=current_batter,
-                text=(
-                    "🏏 *Your Turn to Bat!*\n\n"
-                    f"📊 Score: {game['score']}/{game['wickets']}\n"
-                    f"⏳ Over: {game['over']}.{game['ball']}\n"
-                    f"🎯 Target: {game.get('target', 'Not set')}\n\n"
-                    "Choose a number (1-6)\n"
-                    "⚠️ If your number matches the bowler's, you're OUT!\n"
-                    "⏰ You have 30 seconds to choose!"
-                ),
-                reply_markup=keyboard,
-                parse_mode="Markdown"
-            )
-            player_dm_message_ids[(current_batter, 'bat')] = batter_msg.message_id
-        except Exception as e:
-            logger.error(f"Failed to send batting buttons to {current_batter}: {e}")
+    try:
+        batter_msg = await context.bot.send_message(
+            chat_id=current_batter,
+            text="🎯 Your turn to bat! Choose a number (1-6):",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        game["message_id"][current_batter] = batter_msg.message_id
+    except Exception as e:
+        logger.error(f"Error sending batter buttons: {e}")
 
     # Send buttons to current bowler
-    if current_bowler:
-        try:
-            bowler_msg = await context.bot.send_message(
-                chat_id=current_bowler,
-                text=(
-                    "🎳 *Your Turn to Bowl!*\n\n"
-                    f"📊 Score: {game['score']}/{game['wickets']}\n"
-                    f"⏳ Over: {game['over']}.{game['ball']}\n"
-                    f"🎯 Target: {game.get('target', 'Not set')}\n\n"
-                    "Choose a number (1-6)\n"
-                    "⚠️ If your number matches the batter's, it's a WICKET!\n"
-                    "⏰ You have 30 seconds to choose!"
-                ),
-                reply_markup=keyboard,
-                parse_mode="Markdown"
-            )
-            player_dm_message_ids[(current_bowler, 'bowl')] = bowler_msg.message_id
-        except Exception as e:
-            logger.error(f"Failed to send bowling buttons to {current_bowler}: {e}")
+    try:
+        bowler_msg = await context.bot.send_message(
+            chat_id=current_bowler,
+            text="🎯 Your turn to bowl! Choose a number (1-6):",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        game["message_id"][current_bowler] = bowler_msg.message_id
+    except Exception as e:
+        logger.error(f"Error sending bowler buttons: {e}")
 
-    # Clean up previous group messages
-    prev_msg_id = group_message_ids.get(playing_id)
-    if prev_msg_id:
-        try:
-            await context.bot.delete_message(chat_id=game["group_chat_id"], message_id=prev_msg_id)
-        except Exception as e:
-            logger.error(f"Error deleting previous group message: {e}")
+    # Update game state
+    async with games_lock:
+        multiplayer_games[playing_id] = game
+    game_collection.update_one(
+        {"playing_id": playing_id},
+        {"$set": {"message_id": game["message_id"]}}
+    )
 
     # Send stylized notification in group (no buttons)
     batter_name = await get_user_name_cached(current_batter, context) if current_batter else 'None'
@@ -641,11 +612,8 @@ async def send_player_buttons(playing_id: str, context: CallbackContext) -> None
         batter_tag = batter_name
         bowler_tag = bowler_name
 
-    spectator_count = len(game.get("spectators", []))
-    spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
-
     group_text = (
-        f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
+        f"⏳ Over: {game['over']}.{game['ball']}\n"
         f"🔸 Batting: {batter_tag}\n"
         f"🔹 Bowling: {bowler_tag}\n"
         f"📊 Score: {game['score']}/{game['wickets']}"
@@ -953,15 +921,10 @@ async def declare_winner(playing_id: str, context: CallbackContext = None) -> No
         logger.error(f"Game {playing_id} not found when declaring winner")
         return
     
-    # Convert spectators set to list before saving to MongoDB
-    db_game_data = game.copy()
-    if "spectators" in db_game_data:
-        db_game_data["spectators"] = list(db_game_data["spectators"])
-    
     # Save final game state
     game_collection.update_one(
         {"playing_id": playing_id},
-        {"$set": db_game_data}
+        {"$set": game}
     )
     
     # Clean up game state
@@ -1197,6 +1160,7 @@ async def Mhandle_play_button(update: Update, context: CallbackContext) -> None:
     try:
         parts = query.data.split('_')
         if len(parts) != 3:
+            logger.error(f"Invalid callback data format: {query.data}")
             await query.answer("Invalid game data")
             return
             
@@ -1205,14 +1169,17 @@ async def Mhandle_play_button(update: Update, context: CallbackContext) -> None:
         
         game = await get_game_data(playing_id)
         if not game:
+            logger.error(f"Game not found for ID: {playing_id}")
             await query.answer("Game not found or expired!")
             return
         
         if game["status"] != "playing":
+            logger.warning(f"Game {playing_id} is not active. Status: {game['status']}")
             await query.answer("Game is not active!")
             return
         
         if user_id != game.get("current_batter") and user_id != game.get("current_bowler"):
+            logger.warning(f"User {user_id} tried to play out of turn")
             await query.answer("It's not your turn!")
             return
         
@@ -1220,20 +1187,24 @@ async def Mhandle_play_button(update: Update, context: CallbackContext) -> None:
         try:
             number = int(choice)
             if number < 1 or number > 6:
+                logger.warning(f"Invalid choice {number} from user {user_id}")
                 await query.answer("Invalid choice! Choose 1-6")
                 return
         except ValueError:
+            logger.error(f"Invalid choice format: {choice}")
             await query.answer("Invalid choice! Choose 1-6")
             return
         
         # Update game state
         if user_id == game.get("current_batter"):
             if game.get("batter_choice") is not None:
+                logger.warning(f"Batter {user_id} tried to play twice")
                 await query.answer("You've already made your choice!")
                 return
             game["batter_choice"] = number
         else:  # bowler
             if game.get("bowler_choice") is not None:
+                logger.warning(f"Bowler {user_id} tried to play twice")
                 await query.answer("You've already made your choice!")
                 return
             game["bowler_choice"] = number
@@ -1241,7 +1212,12 @@ async def Mhandle_play_button(update: Update, context: CallbackContext) -> None:
         # Save game state
         async with games_lock:
             multiplayer_games[playing_id] = game
-        game_collection.update_one({"playing_id": playing_id}, {"$set": game})
+        try:
+            game_collection.update_one({"playing_id": playing_id}, {"$set": game})
+        except Exception as e:
+            logger.error(f"Database error updating game {playing_id}: {e}")
+            await query.answer("Error saving game state!")
+            return
         
         await query.answer(f"Your choice: {number}")
         
@@ -1250,7 +1226,7 @@ async def Mhandle_play_button(update: Update, context: CallbackContext) -> None:
             await process_ball_result(playing_id, context)
             
     except Exception as e:
-        logger.error(f"Error in Mhandle_play_button: {e}")
+        logger.error(f"Unexpected error in Mhandle_play_button: {e}", exc_info=True)
         await query.answer("An error occurred!")
 
 async def update_multiplayer_group_message(playing_id: str, context: CallbackContext, result_text: str = None):
@@ -1268,12 +1244,9 @@ async def update_multiplayer_group_message(playing_id: str, context: CallbackCon
     batter_name = await get_user_name_cached(batter_id, context) if batter_id else 'None'
     bowler_name = await get_user_name_cached(bowler_id, context) if bowler_id else 'None'
     
-    spectator_count = len(game.get("spectators", []))
-    spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
-    
     # Format group message (no buttons in group)
     text = (
-        f"⏳ Over: {over}.{ball}  {spectator_text}\n"
+        f"⏳ Over: {over}.{ball}\n"
         f"🔸 Batting: {batter_name}\n"
         f"🔹 Bowling: {bowler_name}\n"
         f"📊 Score: {score}/{wickets}"
