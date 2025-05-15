@@ -507,8 +507,14 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
         target = "all"
         message_start = 1
     
-    # Combine the arguments into a single message
-    broadcast_message = " ".join(context.args[message_start:])
+    # Get the original message text with line breaks preserved
+    original_text = update.message.text
+    # Remove the command part (/broadcast or /broadcast -u etc)
+    command_end = original_text.find(" ", message_start)
+    if command_end == -1:
+        await update.message.reply_text("❗ Please provide a message to broadcast.")
+        return
+    broadcast_message = original_text[command_end + 1:].strip()
     
     if not broadcast_message:
         await update.message.reply_text("❗ Please provide a message to broadcast.")
@@ -944,3 +950,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
