@@ -167,9 +167,12 @@ async def collect_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Update last collect time
     last_collect_times[user_id] = current_time
     
+    # Get updated user data to show correct balance
+    updated_user_data = users_collection.find_one({'user_id': user_id})
+    
     await update.message.reply_text(
         f"💰 You collected {credits:,} credits!\n"
-        f"Total balance: {user_data['credits'] + credits:,} credits"
+        f"Total balance: {updated_user_data['credits']:,} credits"
     )
 
 async def apply_daily_tax():
