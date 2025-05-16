@@ -1,814 +1,1534 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
-from telegram.ext import CallbackContext,CommandHandler,CallbackQueryHandler
-import random
+from multiprocessing import context
 from pymongo import MongoClient
+import random
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Tuple
-from telegram.ext import JobQueue
-import os
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import CallbackContext, CallbackQueryHandler, CommandHandler,Application
+from datetime import datetime, timedelta
+import time
+import pytz
+import asyncio
+from datetime import datetime, timedelta
+from telegram import User
+from functools import lru_cache
 
-OWNER_ID = 5667016949
-logging.basicConfig(level=logging.INFO)
+@lru_cache(maxsize=512)
+def get_user_name_cached_sync(user_id: int, fallback: str = "Player") -> str:
+    return fallback  # fallback if async call fails
+
+async def get_user_name_cached(user_id, context):
+    try:
+        chat = await context.bot.get_chat(user_id)
+        return chat.first_name
+    except:
+        return get_user_name_cached_sync(user_id)
+
+def escape_markdown(text: str) -> str:
+    """Escape special characters for Markdown."""
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    for char in escape_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+# Set up logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot') 
+# MongoDB setup
+client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority')
 db = client['telegram_bot']
 user_collection = db["users"]
-genshin_collection = db["genshin_users"]
-group_settings = db["group_settings"]  # New collection for group settings
+game_collection = db["games"]
+achievements_collection = db["achievements"]  # Add this line
 
-CHARACTERS = {
-    # 5-star characters
-    "Albedo": 5, "Alhaitham": 5, "Aloy": 5, "Ayaka": 5, "Ayato": 5, "Baizhu": 5, "Cyno": 5, 
-    "Dehya": 5, "Diluc": 5, "Eula": 5, "Ganyu": 5, "Hu Tao": 5, "Itto": 5, "Jean": 5, 
-    "Kazuha": 5, "Keqing": 5, "Klee": 5, "Kokomi": 5, "Lyney": 5, "Mona": 5, "Nahida": 5, 
-    "Nilou": 5, "Qiqi": 5, "Raiden": 5, "Shenhe": 5, "Tighnari": 5, "Venti": 5, "Wanderer": 5, 
-    "Xiao": 5, "Yae Miko": 5, "Yelan": 5, "Yoimiya": 5, "Zhongli": 5,
-    # 4-star characters
-    "Amber": 4, "Barbara": 4, "Beidou": 4, "Bennett": 4, "Candace": 4, "Chongyun": 4, 
-    "Collei": 4, "Diona": 4, "Dori": 4, "Fischl": 4, "Gorou": 4, "Heizou": 4, "Kaeya": 4, 
-    "Kuki Shinobu": 4, "Layla": 4, "Lisa": 4, "Ningguang": 4, "Noelle": 4, "Razor": 4, 
-    "Rosaria": 4, "Sara": 4, "Sayu": 4, "Sucrose": 4, "Thoma": 4, "Xiangling": 4, 
-    "Xingqiu": 4, "Xinyan": 4, "Yanfei": 4, "Yaoyao": 4, "Yun Jin": 4
+# Game state
+cricket_games = {}
+reminder_sent = {}
+game_activity = {}
+
+ACHIEVEMENT_CATEGORIES = [
+    "Batter", "Bowler", "Game", 
+    "Matches", "Accuracy", "Streaks", 
+    "Special"
+]
+
+ACHIEVEMENTS = {
+    "Batter": [
+        {"id": "first_run", "name": "First Run", "description": "Score your first run", "requirement": {"type": "runs", "value": 1}},
+        {"id": "five_runs", "name": "Getting Started", "description": "Score 5 runs in total", "requirement": {"type": "runs", "value": 5}},
+        {"id": "ten_runs", "name": "First Steps", "description": "Score 10 runs in total", "requirement": {"type": "runs", "value": 10}},
+        {"id": "twenty_runs", "name": "Building Form", "description": "Score 20 runs in total", "requirement": {"type": "runs", "value": 20}},
+        {"id": "quarter_century", "name": "Quarter Century", "description": "Score 25 runs in total", "requirement": {"type": "runs", "value": 25}},
+        {"id": "forty_runs", "name": "Solid Innings", "description": "Score 40 runs in total", "requirement": {"type": "runs", "value": 40}},
+        {"id": "half_century", "name": "Half Century", "description": "Score 50 runs in total", "requirement": {"type": "runs", "value": 50}},
+        {"id": "seventy_runs", "name": "Well Played", "description": "Score 70 runs in total", "requirement": {"type": "runs", "value": 70}},
+        {"id": "century", "name": "Century", "description": "Score 100 runs in total", "requirement": {"type": "runs", "value": 100}},
+        {"id": "one_fifty", "name": "One-Fifty", "description": "Score 150 runs in total", "requirement": {"type": "runs", "value": 150}},
+        {"id": "double_century", "name": "Double Century", "description": "Score 200 runs in total", "requirement": {"type": "runs", "value": 200}},
+        {"id": "triple_century", "name": "Triple Century", "description": "Score 300 runs in total", "requirement": {"type": "runs", "value": 300}},
+        {"id": "four_hundred", "name": "Four Hundred Club", "description": "Score 400 runs in total", "requirement": {"type": "runs", "value": 400}},
+        {"id": "run_machine", "name": "Run Machine", "description": "Score 500 runs in total", "requirement": {"type": "runs", "value": 500}},
+        {"id": "seven_fifty", "name": "Run Accumulator", "description": "Score 750 runs in total", "requirement": {"type": "runs", "value": 750}},
+        {"id": "batting_legend", "name": "Batting Legend", "description": "Score 1000 runs in total", "requirement": {"type": "runs", "value": 1000}},
+        {"id": "batting_immortal", "name": "Batting Immortal", "description": "Score 2000 runs in total", "requirement": {"type": "runs", "value": 2000}},
+    ],
+    "Bowler": [
+        {"id": "first_wicket", "name": "First Wicket", "description": "Take your first wicket", "requirement": {"type": "wickets", "value": 1}},
+        {"id": "third_wicket", "name": "Getting Started", "description": "Take 3 wickets in total", "requirement": {"type": "wickets", "value": 3}},
+        {"id": "five_wickets", "name": "Five Wicket Haul", "description": "Take 5 wickets in total", "requirement": {"type": "wickets", "value": 5}},
+        {"id": "seven_wickets", "name": "Seven Heaven", "description": "Take 7 wickets in total", "requirement": {"type": "wickets", "value": 7}},
+        {"id": "ten_wickets", "name": "Ten Wicket Club", "description": "Take 10 wickets in total", "requirement": {"type": "wickets", "value": 10}},
+        {"id": "fifteen_wickets", "name": "Frequent Striker", "description": "Take 15 wickets in total", "requirement": {"type": "wickets", "value": 15}},
+        {"id": "twenty_wickets", "name": "Regular Wicket Taker", "description": "Take 20 wickets in total", "requirement": {"type": "wickets", "value": 20}},
+        {"id": "wicket_master", "name": "Wicket Master", "description": "Take 25 wickets in total", "requirement": {"type": "wickets", "value": 25}},
+        {"id": "thirty_wickets", "name": "Reliable Bowler", "description": "Take 30 wickets in total", "requirement": {"type": "wickets", "value": 30}},
+        {"id": "wicket_specialist", "name": "Wicket Specialist", "description": "Take 35 wickets in total", "requirement": {"type": "wickets", "value": 35}},
+        {"id": "forty_wickets", "name": "Bowling Expert", "description": "Take 40 wickets in total", "requirement": {"type": "wickets", "value": 40}},
+        {"id": "bowling_legend", "name": "Bowling Legend", "description": "Take 50 wickets in total", "requirement": {"type": "wickets", "value": 50}},
+        {"id": "seventy_five_wickets", "name": "Elite Bowler", "description": "Take 75 wickets in total", "requirement": {"type": "wickets", "value": 75}},
+        {"id": "bowling_immortal", "name": "Bowling Immortal", "description": "Take 100 wickets in total", "requirement": {"type": "wickets", "value": 100}},
+    ],
+    "Game": [
+        {"id": "first_win", "name": "First Victory", "description": "Win your first game", "requirement": {"type": "wins", "value": 1}},
+        {"id": "three_wins", "name": "Winning Ways", "description": "Win 3 games", "requirement": {"type": "wins", "value": 3}},
+        {"id": "five_wins", "name": "Winner's Circle", "description": "Win 5 games", "requirement": {"type": "wins", "value": 5}},
+        {"id": "seven_wins", "name": "Consistent Winner", "description": "Win 7 games", "requirement": {"type": "wins", "value": 7}},
+        {"id": "ten_wins", "name": "Champion", "description": "Win 10 games", "requirement": {"type": "wins", "value": 10}},
+        {"id": "fifteen_wins", "name": "Rising Champion", "description": "Win 15 games", "requirement": {"type": "wins", "value": 15}},
+        {"id": "twenty_wins", "name": "Cricket Master", "description": "Win 20 games", "requirement": {"type": "wins", "value": 20}},
+        {"id": "twenty_five_wins", "name": "Cricket Commander", "description": "Win 25 games", "requirement": {"type": "wins", "value": 25}},
+        {"id": "thirty_wins", "name": "Dominator", "description": "Win 30 games", "requirement": {"type": "wins", "value": 30}},
+        {"id": "forty_wins", "name": "Game Controller", "description": "Win 40 games", "requirement": {"type": "wins", "value": 40}},
+        {"id": "fifty_wins", "name": "Legendary Player", "description": "Win 50 games", "requirement": {"type": "wins", "value": 50}},
+        {"id": "seventy_five_wins", "name": "Match Winner", "description": "Win 75 games", "requirement": {"type": "wins", "value": 75}},
+        {"id": "hundred_wins", "name": "Cricket God", "description": "Win 100 games", "requirement": {"type": "wins", "value": 100}},
+    ],
+    "Matches": [
+        {"id": "first_match", "name": "Cricket Debut", "description": "Play your first match", "requirement": {"type": "matches", "value": 1}},
+        {"id": "three_matches", "name": "Getting Started", "description": "Play 3 matches", "requirement": {"type": "matches", "value": 3}},
+        {"id": "five_matches", "name": "Regular Player", "description": "Play 5 matches", "requirement": {"type": "matches", "value": 5}},
+        {"id": "seven_matches", "name": "Experienced Player", "description": "Play 7 matches", "requirement": {"type": "matches", "value": 7}},
+        {"id": "ten_matches", "name": "Cricket Enthusiast", "description": "Play 10 matches", "requirement": {"type": "matches", "value": 10}},
+        {"id": "fifteen_matches", "name": "Cricket Devotee", "description": "Play 15 matches", "requirement": {"type": "matches", "value": 15}},
+        {"id": "twenty_matches", "name": "Cricket Addict", "description": "Play 20 matches", "requirement": {"type": "matches", "value": 20}},
+        {"id": "twenty_five_matches", "name": "Cricket Specialist", "description": "Play 25 matches", "requirement": {"type": "matches", "value": 25}},
+        {"id": "thirty_matches", "name": "Cricket Professional", "description": "Play 30 matches", "requirement": {"type": "matches", "value": 30}},
+        {"id": "forty_matches", "name": "Cricket Expert", "description": "Play 40 matches", "requirement": {"type": "matches", "value": 40}},
+        {"id": "fifty_matches", "name": "Cricket Veteran", "description": "Play 50 matches", "requirement": {"type": "matches", "value": 50}},
+        {"id": "seventy_five_matches", "name": "Cricket Master", "description": "Play 75 matches", "requirement": {"type": "matches", "value": 75}},
+        {"id": "hundred_matches", "name": "Cricket Legend", "description": "Play 100 matches", "requirement": {"type": "matches", "value": 100}},
+    ],
+    "Accuracy": [
+        {"id": "improving", "name": "Improving", "description": "Achieve 15% win rate", "requirement": {"type": "accuracy", "value": 15}},
+        {"id": "developing", "name": "Developing", "description": "Achieve 20% win rate", "requirement": {"type": "accuracy", "value": 20}},
+        {"id": "rising_star", "name": "Rising Star", "description": "Achieve 25% win rate", "requirement": {"type": "accuracy", "value": 25}},
+        {"id": "promising", "name": "Promising Player", "description": "Achieve 30% win rate", "requirement": {"type": "accuracy", "value": 30}},
+        {"id": "talent_emerging", "name": "Talent Emerging", "description": "Achieve 35% win rate", "requirement": {"type": "accuracy", "value": 35}},
+        {"id": "consistent_player", "name": "Consistent Player", "description": "Achieve 40% win rate", "requirement": {"type": "accuracy", "value": 40}},
+        {"id": "reliable_winner", "name": "Reliable Winner", "description": "Achieve 45% win rate", "requirement": {"type": "accuracy", "value": 45}},
+        {"id": "star_player", "name": "Star Player", "description": "Achieve 50% win rate", "requirement": {"type": "accuracy", "value": 50}},
+        {"id": "formidable", "name": "Formidable Player", "description": "Achieve 55% win rate", "requirement": {"type": "accuracy", "value": 55}},
+        {"id": "elite_player", "name": "Elite Player", "description": "Achieve 60% win rate", "requirement": {"type": "accuracy", "value": 60}},
+        {"id": "outstanding", "name": "Outstanding Player", "description": "Achieve 65% win rate", "requirement": {"type": "accuracy", "value": 65}},
+        {"id": "exceptional", "name": "Exceptional Player", "description": "Achieve 70% win rate", "requirement": {"type": "accuracy", "value": 70}},
+        {"id": "world_class", "name": "World Class", "description": "Achieve 75% win rate", "requirement": {"type": "accuracy", "value": 75}},
+        {"id": "master_tactician", "name": "Master Tactician", "description": "Achieve 80% win rate", "requirement": {"type": "accuracy", "value": 80}},
+        {"id": "legendary_status", "name": "Legendary Status", "description": "Achieve 85% win rate", "requirement": {"type": "accuracy", "value": 85}},
+    ],
+    "Streaks": [
+        {"id": "winning_streak_2", "name": "On a Roll", "description": "Win 2 games in a row", "requirement": {"type": "streak", "value": 2}},
+        {"id": "winning_streak_3", "name": "Hot Streak", "description": "Win 3 games in a row", "requirement": {"type": "streak", "value": 3}},
+        {"id": "winning_streak_4", "name": "Unrelenting", "description": "Win 4 games in a row", "requirement": {"type": "streak", "value": 4}},
+        {"id": "winning_streak_5", "name": "Unstoppable", "description": "Win 5 games in a row", "requirement": {"type": "streak", "value": 5}},
+        {"id": "winning_streak_6", "name": "Winning Machine", "description": "Win 6 games in a row", "requirement": {"type": "streak", "value": 6}},
+        {"id": "winning_streak_7", "name": "Domination", "description": "Win 7 games in a row", "requirement": {"type": "streak", "value": 7}},
+        {"id": "winning_streak_8", "name": "Invincible", "description": "Win 8 games in a row", "requirement": {"type": "streak", "value": 8}},
+        {"id": "winning_streak_9", "name": "Unbeatable", "description": "Win 9 games in a row", "requirement": {"type": "streak", "value": 9}},
+        {"id": "winning_streak_10", "name": "Legendary Streak", "description": "Win 10 games in a row", "requirement": {"type": "streak", "value": 10}},
+    ],
+    "Special": [
+        {"id": "perfect_match", "name": "Perfect Match", "description": "Win without conceding a wicket", "requirement": {"type": "special", "value": "perfect_match"}},
+        {"id": "comeback_king", "name": "Comeback King", "description": "Win after being 10+ runs behind", "requirement": {"type": "special", "value": "comeback"}},
+        {"id": "tied_match", "name": "Nail-Biter", "description": "Play a tied match", "requirement": {"type": "special", "value": "tie"}},
+        {"id": "hat_trick", "name": "Hat-Trick", "description": "Take 3 wickets in 3 consecutive balls", "requirement": {"type": "special", "value": "hat_trick"}},
+        {"id": "last_ball_victory", "name": "Last Ball Hero", "description": "Win a match on the last ball", "requirement": {"type": "special", "value": "last_ball_win"}},
+        {"id": "golden_duck", "name": "Golden Duck Hunter", "description": "Take a wicket on the first ball of an over", "requirement": {"type": "special", "value": "golden_duck"}},
+        {"id": "perfect_over", "name": "Perfect Over", "description": "Bowl an over without conceding any runs", "requirement": {"type": "special", "value": "perfect_over"}},
+        {"id": "boundary_king", "name": "Boundary King", "description": "Score 5 boundaries in a single match", "requirement": {"type": "special", "value": "boundary_king"}},
+        {"id": "maiden_over", "name": "Maiden Over", "description": "Bowl a full over without conceding any runs", "requirement": {"type": "special", "value": "maiden_over"}},
+        {"id": "super_over_hero", "name": "Super Over Hero", "description": "Win a match in a super over", "requirement": {"type": "special", "value": "super_over_win"}},
+        {"id": "death_over_specialist", "name": "Death Over Specialist", "description": "Successfully defend 10 or fewer runs in the final over", "requirement": {"type": "special", "value": "death_over_defend"}},
+        {"id": "six_machine", "name": "Six Machine", "description": "Hit 3 sixes in a single match", "requirement": {"type": "special", "value": "six_machine"}},
+    ]
 }
-# Comprehensive list of weapons with their star ratings
-WEAPONS = {
-    # 5-star weapons
-    "Aquila Favonia": 5, "Amos' Bow": 5, "Aqua Simulacra": 5, "Calamity Queller": 5, "Crimson Moon's Semblance": 5,
-    "Elegy for the End": 5, "Engulfing Lightning": 5, "Everlasting Moonglow": 5, "Freedom-Sword": 5,
-    "Haran Geppaku Futsu": 5, "Hunter's Path": 5, "Jadefall's Splendor": 5, "Kagura's Verity": 5,
-    "Key of Khaj-Nisut": 5, "Light of Foliar Incision": 5, "Lost Prayer to the Sacred Winds": 5,
-    "Lumidouce Elegy": 5, "Memory of Dust": 5, "Mistsplitter Reforged": 5, "Polar Star": 5,
-    "Primordial Jade Cutter": 5, "Primordial Jade Winged-Spear": 5, "Redhorn Stonethresher": 5,
-    "Song of Broken Pines": 5, "Staff of Homa": 5, "Staff of the Scarlet Sands": 5, "Summit Shaper": 5,
-    "The First Great Magic": 5, "The Unforged": 5, "Thundering Pulse": 5, "Tome of the Eternal Flow": 5,
-    "Tulaytullah's Remembrance": 5, "Uraku Misugiri": 5, "Verdict": 5, "Vortex Vanquisher": 5, "Wolf's Gravestone": 5,
-    # 4-star weapons
-    "Akuoumaru": 4, "Alley Hunter": 4, "Amenoma Kageuchi": 4, "Ballad of the Boundless Blue": 4,
-    "Ballad of the Fjords": 4, "Blackcliff Agate": 4, "Blackcliff Longsword": 4, "Blackcliff Pole": 4,
-    "Blackcliff Slasher": 4, "Blackcliff Warbow": 4, "Cloudforged": 4, "Cinnabar Spindle": 4,
-    "Compound Bow": 4, "Crescent Pike": 4, "Deathmatch": 4, "Dodoco Tales": 4, "Dragon's Bane": 4,
-    "Dragonspine Spear": 4, "End of the Line": 4, "Eye of Perception": 4, "Fading Twilight": 4,
-    "Favonius Codex": 4, "Favonius Greatsword": 4, "Favonius Lance": 4, "Favonius Sword": 4,
-    "Favonius Warbow": 4, "Festering Desire": 4, "Finale of the Deep": 4, "Fleuve Cendre Ferryman": 4,
-    "Flowing Purity": 4, "Forest Regalia": 4, "Frostbearer": 4, "Fruit of Fulfillment": 4, "Hakushin Ring": 4,
-    "Hamayumi": 4, "Iron Sting": 4, "Kagotsurube Isshin": 4, "Kitain Cross Spear": 4, "Lion's Roar": 4,
-    "Lithic Blade": 4, "Lithic Spear": 4, "Luxurious Sea-Lord": 4, "Mailed Flower": 4, "Makhaira Aquamarine": 4,
-    "Mappa Mare": 4, "Missive Windspear": 4, "Mitternachts Waltz": 4, "Moonpiercer": 4, "Mouun's Moon": 4,
-    "Oathsworn Eye": 4, "Portable Power Saw": 4, "Predator": 4, "Prospector's Drill": 4, "Prototype Amber": 4,
-    "Prototype Archaic": 4, "Prototype Crescent": 4, "Prototype Rancour": 4, "Prototype Starglitter": 4,
-    "Rainslasher": 4, "Range Gauge": 4, "Rightful Reward": 4, "Royal Bow": 4, "Royal Greatsword": 4,
-    "Royal Grimoire": 4, "Royal Longsword": 4, "Royal Spear": 4, "Rust": 4, "Sacrificial Bow": 4,
-    "Sacrificial Fragments": 4, "Sacrificial Greatsword": 4, "Sacrificial Jade": 4, "Sacrificial Sword": 4,
-    "Sapwood Blade": 4, "Scion of the Blazing Sun": 4, "Serpent Spine": 4, "Snow-Tombed Starsilver": 4,
-    "Solar Pearl": 4, "Song of Stillness": 4, "Sword of Descension": 4, "Sword of Narzissenkreuz": 4,
-    "Talking Stick": 4, "The Alley Flash": 4, "The Bell": 4, "The Black Sword": 4, "The Catch": 4,
-    "The Dockhand's Assistant": 4, "The Flute": 4, "The Stringless": 4, "The Viridescent Hunt": 4,
-    "The Widsith": 4, "Tidal Shadow": 4, "Toukabou Shigure": 4, "Ultimate Overlord's Mega Magic Sword": 4,
-    "Wandering Evenstar": 4, "Wavebreaker's Fin": 4, "Whiteblind": 4, "Windblume Ode": 4, "Wine and Song": 4,
-    "Wolf-Fang": 4, "Xiphos' Moonlight": 4,
-    # 3-star weapons
-    "Black Tassel": 3, "Bloodtainted Greatsword": 3, "Cool Steel": 3, "Dark Iron Sword": 3,
-    "Debate Club": 3, "Emerald Orb": 3, "Ferrous Shadow": 3, "Fillet Blade": 3, "Halberd": 3,
-    "Harbinger of Dawn": 3, "Magic Guide": 3, "Messenger": 3, "Otherworldly Story": 3,
-    "Raven Bow": 3, "Recurve Bow": 3, "Sharpshooter's Oath": 3, "Skyrider Greatsword": 3,
-    "Skyrider Sword": 3, "Slingshot": 3, "Thrilling Tales of Dragon Slayers": 3, "Traveler's Handy Sword": 3,
-    "Twin Nephrite": 3, "White Iron Greatsword": 3, "White Tassel": 3
-}
 
-ARTIFACTS_FOLDER = "artifacts"
-ARTIFACTS = {os.path.splitext(file)[0].replace("_", " "): os.path.join(ARTIFACTS_FOLDER, file) for file in os.listdir(ARTIFACTS_FOLDER) if file.endswith(".png")}
-
-message_counts = {}
-last_artifact_time = {}
-
-def get_genshin_user_by_id(user_id):
-    return genshin_collection.find_one({"user_id": user_id})
-def save_genshin_user(user_data):
-    genshin_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
-# Function to get user data from the general users collection
-def get_user_by_id(user_id):
-    return user_collection.find_one({"user_id": user_id})
-# Function to save user data to the general users collection
-def save_user(user_data):
-    user_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
-async def start(update: Update, context: CallbackContext) -> None:
+async def check_user_started_bot(update: Update, context: CallbackContext) -> bool:
     user = update.effective_user
     user_id = str(user.id)
-    first_name = user.first_name  # Fetch user's first name for genshin_users collection
+    user_data = user_collection.find_one({"user_id": user_id})
 
-    # Save in general users collection
-    existing_user = get_user_by_id(user_id)
-    if existing_user is None:
-        new_user = {
-            "user_id": user_id,
-            "join_date": datetime.now().strftime('%m/%d/%y'),
-            "credits": 5000,  # Assuming credits should be used here
-            "daily": None,
-            "win": 0,
-            "loss": 0,
-            "achievement": [],
-            "faction": "None",
-            "ban": None,
-            "title": "None",
-            "primos": 0,
-            "bag": {}
-        }
-        save_user(new_user)
-        logger.info(f"User {user_id} started the bot.")
-        await update.message.reply_text(
-            "Welcome! You've received 5000 credits to start betting. Use /profile to check your details."
+    if not user_data:
+        bot_username = (await context.bot.get_me()).username
+        keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
+
+        user_tag = f"@{user.username}" if user.username else user.first_name if user.first_name else user_id
+
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"⚠️ {user_tag}, you need to start the bot first!\n"
+                 f"Click the button below to start the bot.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
         )
-    else:
-        logger.info(f"User {user_id} already exists.")
-        await update.message.reply_text(
-            "You have already started the bot. Use /profile to view your details."
-        )
+        return False
+    return True
 
-    # Save in genshin_users collection
-    existing_genshin_user = get_genshin_user_by_id(user_id)
-    if existing_genshin_user is None:
-        now = datetime.utcnow() + timedelta(hours=5, minutes=30)  # Convert to IST
-        today_5am = now.replace(hour=5, minute=0, second=0, microsecond=0)
-        if now < today_5am:  # Adjust to the previous day's 5:00 AM if before reset
-            today_5am -= timedelta(days=1)
-
-        new_genshin_user = {
-            "user_id": user_id,
-            "first_name": first_name,
-            "primos": 16000,  # Initial primogems
-            "bag": {"artifacts": {}},
-            "daily_earned": 0,        # New field to track daily earned primogems
-            "last_reset": today_5am,  # New field to track the last reset time
-        }
-        save_genshin_user(new_genshin_user)
-        logger.info(f"Genshin user {user_id} initialized.")
-
-
-async def reward_primos(update: Update, context: CallbackContext):
-    user_id = str(update.effective_user.id)
-    user_data = get_genshin_user_by_id(user_id) or {
-        "user_id": user_id,
-        "primos": 0,
-        "bag": {}
+@lru_cache(maxsize=128)
+def get_user_name(user_id):
+    try:
+        user = context.bot.get_chat(user_id)
+        return user.first_name
+    except:
+        return "Player"
+    
+async def chat_cricket(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    
+    if update.effective_chat.type == "private":
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⚠️ This command can only be used in group chats!")
+        return
+    
+    if not await check_user_started_bot(update, context):
+        return
+    
+    max_overs = 100  
+    max_wickets = 1 
+    if context.args:
+        try:
+            if len(context.args) >= 1:
+                max_overs = int(context.args[0])
+            if len(context.args) >= 2:
+                max_wickets = int(context.args[1])
+            if max_overs < 1:
+                max_overs = 1
+            if max_wickets < 1:
+                max_wickets = 1
+        except ValueError:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ Invalid parameters! Format: /chatcricket [overs] [wickets]")
+            return
+    
+    game_id = f"{chat_id}_{int(time.time())}"
+    cricket_games[game_id] = {
+        "player1": user.id,
+        "player2": None,
+        "score1": 0,
+        "score2": 0,
+        "message_id": {},
+        "over": 0,
+        "ball": 0,
+        "batter": None,
+        "bowler": None,
+        "toss_winner": None,
+        "innings": 1,
+        "wickets1": 0,
+        "wickets2": 0,
+        "current_players": {},
+        "batter_choice": None,
+        "bowler_choice": None,
+        "target": None,
+        "group_chat_id": chat_id,
+        "match_details": [],
+        "wickets": 0,
+        "max_wickets": max_wickets,
+        "max_overs": max_overs,
+        "spectators": set(),
+        "last_move": datetime.utcnow(),
+        "last_reminder": None
     }
     
-    user_data["primos"] += 5
-    save_genshin_user(user_data)
+    game_desc = f"🏏 *Cricket Game Started!*\n\n"
+    game_desc += f"Started by: {user.first_name}\n"
+    game_desc += f"Format: {max_overs} over{'s' if max_overs > 1 else ''}, {max_wickets} wicket{'s' if max_wickets > 1 else ''}\n\n"
+    game_desc += f"• To join, click \"Join Game\"\n"
+    game_desc += f"• To watch, click \"Watch Game\"\n"
+    game_desc += f"• For the best experience, open the bot directly"
     
-def get_group_settings(chat_id: int) -> dict:
-    """Get group settings, or create default if not exists."""
-    settings = group_settings.find_one({"chat_id": chat_id})
-    if not settings:
-        settings = {
-            "_id": chat_id,
-            "chat_id": chat_id,
-            "artifact_threshold": 50,  # Default threshold
-            "artifact_enabled": True,   # Default enabled
-            "last_artifact_time": None
-        }
-        group_settings.insert_one(settings)
-    return settings
+    bot_username = (await context.bot.get_me()).username
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Join Game", callback_data=f"join_{game_id}")],
+        [InlineKeyboardButton("Watch Game", callback_data=f"watch_{game_id}")],
+        [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/{bot_username}")]
+    ])
+    sent_message = await context.bot.send_message(
+        chat_id=chat_id,
+        text=game_desc,
+        reply_markup=keyboard,
+        parse_mode="Markdown")
 
-def update_group_settings(chat_id: int, settings: dict):
-    """Update group settings."""
-    group_settings.update_one(
-        {"chat_id": chat_id},
-        {"$set": settings},
-        upsert=True
-    )
+def update_game_activity(game_id):
+    game_activity[game_id] = datetime.utcnow()
+    if game_id in cricket_games:
+        cricket_games[game_id]["last_move"] = datetime.utcnow()
 
-async def handle_genshin_group_message(update: Update, context: CallbackContext):
-    """Handle messages in groups for primogem rewards."""
-    user = update.effective_user
-    user_id = str(user.id)
-    chat_id = str(update.effective_chat.id)
-    
-    # Determine message type using message attributes
-    message_type = "text"
-    if update.message.sticker:
-        message_type = "sticker"
-    elif update.message.photo:
-        message_type = "photo"
-    elif update.message.video:
-        message_type = "video"
-    elif update.message.document:
-        message_type = "document"
-    elif update.message.audio:
-        message_type = "audio"
-    elif update.message.voice:
-        message_type = "voice"
-    elif update.message.animation:
-        message_type = "animation"
-
-    logger.info(f"Processing message - User: {user_id}, Chat: {chat_id}, Type: {message_type}")
-
-    if update.effective_chat.type not in ["group", "supergroup"]:
-        logger.info(f"Skipping message - Not a group chat. Chat type: {update.effective_chat.type}")
+async def update_game_interface(game_id: str, context: CallbackContext, text: str = None):
+    game = cricket_games.get(game_id)
+    if not game:
         return
 
-    # Handle artifact system first
-    if chat_id not in message_counts:
-        message_counts[chat_id] = 0
-    message_counts[chat_id] += 1
-    threshold = 100  # Default threshold
-    now = datetime.now(timezone.utc)
-    if chat_id in last_artifact_time:
-        time_since_last = (now - last_artifact_time[chat_id]).total_seconds()
-        if time_since_last < 300:  # 5 minutes in seconds
-            logger.info(f"Not enough time since last artifact in chat {chat_id}")
-            # Do not return here, continue to primogem logic
-    if message_counts[chat_id] >= threshold:
-        message_counts[chat_id] = 0
-        logger.info(f"Threshold reached for chat {chat_id}, sending artifact reward")
-        await send_artifact_reward(chat_id, context)
+    if not text:
+        try:
+            batter_name = (await get_user_name_cached(game["batter"], context))
+            bowler_name = (await get_user_name_cached(game["bowler"], context))
+        except Exception as e:
+            logger.error(f"Error getting player names: {e}")
+            await context.bot.send_message(
+                chat_id=game["group_chat_id"],
+                text="⚠️ Error retrieving player information. Please try again.")
+            return
 
-    # Primogem reward logic (always run for every message)
-    user_data = get_genshin_user_by_id(user_id)
-    now = datetime.now(timezone.utc)
-    if not user_data:
-        logger.info(f"Creating new user data for user {user_id}")
-        user_data = {
-            "user_id": user_id,
-            "primos": 0,
-            "bag": {},
-            "message_primo": {
-                "count": 0,
-                "earned": 0,
-                "last_reset": now
-            }
-        }
-        save_genshin_user(user_data)
-        return
-    if "message_primo" not in user_data:
-        logger.info(f"Initializing message_primo for user {user_id}")
-        user_data["message_primo"] = {
-            "count": 0,
-            "earned": 0,
-            "last_reset": now
-        }
-    elif user_data["message_primo"].get("last_reset") is None:
-        logger.info(f"Setting last_reset for user {user_id}")
-        user_data["message_primo"]["last_reset"] = now
-    last_reset = user_data["message_primo"]["last_reset"]
-    if isinstance(last_reset, datetime) and last_reset.tzinfo is None:
-        logger.info(f"Converting last_reset to timezone-aware for user {user_id}")
-        last_reset = last_reset.replace(tzinfo=timezone.utc)
-        user_data["message_primo"]["last_reset"] = last_reset
-    time_diff = (now - last_reset).total_seconds()
-    logger.info(f"Time since last reset for user {user_id}: {time_diff} seconds")
-    if time_diff > 3600:
-        logger.info(f"Resetting message count for user {user_id}")
-        user_data["message_primo"]["count"] = 0
-        user_data["message_primo"]["earned"] = 0
-        user_data["message_primo"]["last_reset"] = now
-    current_earned = user_data["message_primo"]["earned"]
-    logger.info(f"Current earned primos for user {user_id}: {current_earned}")
-    if current_earned < 100:
-        user_data["message_primo"]["count"] += 1
-        user_data["message_primo"]["earned"] += 5
-        user_data["primos"] = user_data.get("primos", 0) + 5
-        logger.info(f"Awarded 5 primos to user {user_id}. New total: {user_data['primos']}")
-    else:
-        logger.info(f"User {user_id} has reached hourly limit of 100 primos")
-    save_genshin_user(user_data)
-    logger.info(f"Saved updated user data for user {user_id}")
+        score = game['score1'] if game['innings'] == 1 else game['score2']
+        target_text = f" (Target: {game['target']})" if game['innings'] == 2 else ""
+        spectator_count = len(game["spectators"])
+        spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
 
-async def set_threshold(update: Update, context: CallbackContext) -> None:
-    """Set the artifact drop threshold for a group."""
-    if update.effective_chat.type not in ["group", "supergroup"]:
-        await update.message.reply_text("❗ This command can only be used in groups.")
-        return
-
-    # Check if user is admin
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    chat_member = await context.bot.get_chat_member(chat_id, user_id)
-    
-    if chat_member.status not in ["creator", "administrator"]:
-        await update.message.reply_text("❗ Only administrators can use this command.")
-        return
-
-    try:
-        threshold = int(context.args[0])
-        if not 10 <= threshold <= 100:
-            raise ValueError("Threshold out of range")
-    except (IndexError, ValueError):
-        await update.message.reply_text("Usage: /setthreshold <number>")
-        return
-
-    # Update group settings
-    settings = get_group_settings(chat_id)
-    settings["artifact_threshold"] = threshold
-    update_group_settings(chat_id, settings)
-
-    await update.message.reply_text(f"✅ Artifact threshold set to {threshold} messages.")
-
-async def toggle_artifacts(update: Update, context: CallbackContext) -> None:
-    """Toggle the artifact system on or off for a group."""
-    if update.effective_chat.type not in ["group", "supergroup"]:
-        await update.message.reply_text("❗ This command can only be used in groups.")
-        return
-
-    # Check if user is admin
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    chat_member = await context.bot.get_chat_member(chat_id, user_id)
-    
-    if chat_member.status not in ['creator', 'administrator']:
-        await update.message.reply_text("❗ Only administrators can use this command.")
-        return
-
-    # Toggle artifact system
-    settings = get_group_settings(chat_id)
-    current_state = settings.get("artifact_enabled", True)
-    settings["artifact_enabled"] = not current_state
-    update_group_settings(chat_id, settings)
-
-    status = "enabled" if settings["artifact_enabled"] else "disabled"
-    await update.message.reply_text(f"✅ Artifact system has been {status}.")
-
-async def artifact_settings(update: Update, context: CallbackContext) -> None:
-    """Display the current artifact system settings for a group."""
-    if update.effective_chat.type not in ["group", "supergroup"]:
-        await update.message.reply_text("❗ This command can only be used in groups.")
-        return
-
-    # Get group settings
-    chat_id = update.effective_chat.id
-    settings = get_group_settings(chat_id)
-
-    # Create settings message
-    message = (
-        "🎮 *Artifact System Settings*\n\n"
-        f"Status: {'✅ Enabled' if settings.get('artifact_enabled', True) else '❌ Disabled'}\n"
-        f"Message Threshold: {settings.get('artifact_threshold', 50)} messages\n"
-        f"Messages until next artifact: {settings.get('artifact_threshold', 50) - message_counts.get(chat_id, 0)}\n\n"
-        "*Admin Commands:*\n"
-        "/setthreshold <number> - Set message threshold\n"
-        "/toggleartifacts - Enable/disable artifacts"
-    )
-
-    await update.message.reply_text(message, parse_mode='Markdown')
-
-async def send_artifact_reward(chat_id: str, context: CallbackContext):
-    """Send artifact reward to the group."""
-    try:
-        # Get random artifact
-        artifact = random.choice(list(ARTIFACTS.keys()))
-        artifact_image = ARTIFACTS[artifact]
-        
-        # Create artifact message
-        message = (
-            f"🎉 <b>Artifact Found!</b>\n\n"
-            f"<b>{artifact}</b>\n\n"
-            f"Click the button below to claim it!"
+        text = (
+            f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
+            f"🔸 Batting: {batter_name}\n"
+            f"🔹 Bowling: {bowler_name}\n"
+            f"📊 Score: {score}/{game['wickets']}{target_text}"
         )
-        
-        # Send message with claim button
-        keyboard = [[InlineKeyboardButton("Claim", callback_data=f"claim_artifact_{artifact}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await context.bot.send_photo(
-            chat_id=chat_id,
-            photo=open(artifact_image, "rb"),
-            caption=message,
-            reply_markup=reply_markup,
-            parse_mode="HTML"
-        )
-        
-        # Update last artifact time
-        last_artifact_time[chat_id] = datetime.now(timezone.utc)
-        
-    except Exception as e:
-        logger.error(f"Error sending artifact reward: {e}")
 
-async def handle_artifact_button(update: Update, context: CallbackContext) -> None:
-    """Handle the action when a user clicks the 'Get' button for an artifact."""
-    query = update.callback_query
-    user_id = str(query.from_user.id)
-    chat_id = query.message.chat_id
-    artifact_name = query.data.split("_")[1]
-
-    # Check if the artifact has already been claimed
-    artifact_data = context.chat_data.get(f"artifact_{artifact_name}")
-    if not artifact_data or artifact_data.get("claimed", False):
-        await query.answer("❌ This artifact has already been claimed.", show_alert=True)
-        return
-
-    # Mark the artifact as claimed
-    artifact_data["claimed"] = True
-    context.chat_data[f"artifact_{artifact_name}"] = artifact_data
-
-    # Update user's bag with the artifact
-    user_data = get_genshin_user_by_id(user_id)
-    if not user_data:
-        user_data = {
-            "user_id": user_id,
-            "primos": 16000,
-            "bag": {"artifacts": {}},
-            "daily_earned": 0,
-            "last_reset": datetime.utcnow() + timedelta(hours=5, minutes=30),
-        }
-
-    if "artifacts" not in user_data["bag"]:
-        user_data["bag"]["artifacts"] = {}
-
-    if artifact_name not in user_data["bag"]["artifacts"]:
-        user_data["bag"]["artifacts"][artifact_name] = {"image": ARTIFACTS[artifact_name], "count": 1}  # Initialize count
-    else:
-        user_data["bag"]["artifacts"][artifact_name]["count"] += 1  # Increment count
-
-    save_genshin_user(user_data)
-
-    await query.answer(f"🎉 You claimed the {artifact_name} (x{user_data['bag']['artifacts'][artifact_name]['count']})!", show_alert=True)
-
-    # Delete the artifact reward message
-    artifact_message_id = artifact_data.get("message_id")
-    if artifact_message_id:
-        await context.bot.delete_message(chat_id=chat_id, message_id=artifact_message_id)
-
-def reset_artifact_claimed(context: CallbackContext) -> None:
-    """Reset the claimed status of an artifact after a certain period."""
-    job = context.job
-    chat_id = job.chat_id
-    artifact_name = job.name.replace("reset_", "")  
-    if f"artifact_{artifact_name}" in context.chat_data:
-        del context.chat_data[f"artifact_{artifact_name}"]
-        logger.info(f"Current chat_data: {context.chat_data}")
-        logger.info(f"Artifact {artifact_name} reset for chat {chat_id}.")
-
-
-async def add_primos(update: Update, context: CallbackContext) -> None:
-    if update.effective_user.id != OWNER_ID:
-        await update.message.reply_text("🔒 You don't have permission to use this command.")
-        return
-    # Ensure proper command format
-    if len(context.args) < 2:
-        await update.message.reply_text("❗ Usage: /add primo <user_id> <amount>")
-        return
-    user_id = context.args[0]
-    try:
-        amount = int(context.args[1])
-    except ValueError:
-        await update.message.reply_text("❗ The amount must be a valid number.")
-        return
-    if amount <= 0:
-        await update.message.reply_text("❗ The amount must be a positive number.")
-        return
-    user_data = get_genshin_user_by_id(user_id)
-    if not user_data:
-        await update.message.reply_text(f"❗ User with ID {user_id} does not exist.")
-        return
-    user_data["primos"] = user_data.get("primos", 0) + amount
-    save_genshin_user(user_data)
-    await update.message.reply_text(f"✅ {amount} primogems have been added to user {user_id}'s account.")
-
-BASE_5_STAR_RATE = 0.006  # Base chance for a 5-star item
-GUARANTEED_5_STAR_PITY = 80  # Pulls needed for guaranteed 5-star
-PULL_THRESHOLD = 10  # Pulls needed for guaranteed 4-star
-COST_PER_PULL = 160  # 160 primogems per pull
-
-def draw_item(characters: Dict[str, int], weapons: Dict[str, int], pull_counter: int, last_five_star_pull: int) -> Tuple[str, str, int]:
-    # Determine if we should draw a 5-star item
-    if pull_counter - last_five_star_pull >= GUARANTEED_5_STAR_PITY:
-        item = draw_5_star_item(characters, weapons)
-        # Reset pity counter after drawing a 5-star item
-        return item, "characters" if item in characters else "weapons", 0
-
-    # Check if we are due for a guaranteed 4-star item
-    if pull_counter % PULL_THRESHOLD == 0 and pull_counter != 0:
-        item = draw_4_star_item(characters, weapons)
-        return item, "characters" if item in characters else "weapons", pull_counter + 1
-
-    # Determine 5-star rate depending on pulls
-    if pull_counter - last_five_star_pull >= GUARANTEED_5_STAR_PITY:
-        five_star_chance = 1.0
-    else:
-        five_star_chance = BASE_5_STAR_RATE
-
-    # Draw a 5-star item based on chance
-    if random.random() < five_star_chance:
-        item = draw_5_star_item(characters, weapons)
-        # Reset pity counter after drawing a 5-star item
-        return item, "characters" if item in characters else "weapons", 0
-
-    # Draw a 4-star item if not a 5-star item
-    if pull_counter % PULL_THRESHOLD == 0 and pull_counter != 0:
-        item = draw_4_star_item(characters, weapons)
-        return item, "characters" if item in characters else "weapons", pull_counter + 1
-
-    # Otherwise, draw a 3-star item
-    item = draw_3_star_item(characters, weapons)
-    return item, "characters" if item in characters else "weapons", pull_counter + 1
-
-def draw_5_star_item(characters: Dict[str, int], weapons: Dict[str, int]) -> str:
-    five_star_items = list({k: v for k, v in {**characters, **weapons}.items() if v == 5}.keys())
-    return random.choice(five_star_items)
-
-def draw_4_star_item(characters: Dict[str, int], weapons: Dict[str, int]) -> str:
-    four_star_items = list({k: v for k, v in {**characters, **weapons}.items() if v == 4}.keys())
-    return random.choice(four_star_items)
-
-def draw_3_star_item(characters: Dict[str, int], weapons: Dict[str, int]) -> str:
-    three_star_items = list({k: v for k, v in {**characters, **weapons}.items() if v == 3}.keys())
-    return random.choice(three_star_items)
-
-
-def update_item(user_data: Dict, item: str, item_type: str):
-    if item_type not in ["characters", "weapons"]:
-        raise ValueError(f"Invalid item type: {item_type}")
-
-    if item_type not in user_data["bag"]:
-        user_data["bag"][item_type] = {}
-
-    if item not in user_data["bag"][item_type]:
-        if item_type == "characters":
-            user_data["bag"][item_type][item] = "✨ C1"
-        elif item_type == "weapons":
-            user_data["bag"][item_type][item] = "⚔️ R1"
-    else:
-        current_count = user_data["bag"][item_type][item]
-        if item_type == "characters":
-            current_level = int(current_count.split('C')[1]) if 'C' in current_count else 1
-            user_data["bag"][item_type][item] = f"✨ C{current_level + 1}"
-        elif item_type == "weapons":
-            current_level = int(current_count.split('R')[1]) if 'R' in current_count else 1
-            user_data["bag"][item_type][item] = f"⚔️ R{current_level + 1}"
-            
-async def pull(update: Update, context: CallbackContext) -> None:
-    """Handle the /pull command for Genshin Impact-style pulls."""
-    user_id = str(update.effective_user.id)
-    user_data = get_genshin_user_by_id(user_id)
-    if not user_data:
-        await update.message.reply_text("🔹 You need to start the bot first by using /start.")
-        return
-
-    try:
-        number_of_pulls = int(context.args[0])
-    except (IndexError, ValueError):
-        await update.message.reply_text("❗ Usage: /pull <number> (1-10)")
-        return
-
-    if number_of_pulls < 1 or number_of_pulls > 10:
-        await update.message.reply_text("❗ Please specify a number between 1 and 10.")
-        return
-
-    total_cost = number_of_pulls * COST_PER_PULL
-    if user_data["primos"] < total_cost:
-        await update.message.reply_text(f"❗ You do not have enough primogems. Needed: {total_cost}")
-        return
-    
-    user_data["primos"] -= total_cost
-    pull_counter = user_data.get('pull_counter', 0)
-    last_five_star_pull = user_data.get('last_five_star_pull', 0)
-    items_pulled = {"characters": [], "weapons": []}
-
-    for _ in range(number_of_pulls):
-        item, item_type, pity_reset = draw_item(CHARACTERS, WEAPONS, pull_counter, last_five_star_pull)
-        items_pulled[item_type].append(item)
-        update_item(user_data, item, item_type)
-        pull_counter += 1
-        if item_type == "characters" and CHARACTERS.get(item) == 5:
-            last_five_star_pull = pull_counter
-        
-        # Update pity counter if needed
-        if pity_reset == 0:
-            last_five_star_pull = pull_counter
-
-    user_data['pull_counter'] = pull_counter
-    user_data['last_five_star_pull'] = last_five_star_pull
-    save_genshin_user(user_data)
-
-    characters_str = "\n".join([f"✨ {char} ({CHARACTERS[char]}★)" for char in items_pulled["characters"]]) if items_pulled["characters"] else "No characters pulled."
-    weapons_str = "\n".join([f"⚔️ {weapon} ({WEAPONS[weapon]}★)" for weapon in items_pulled["weapons"]]) if items_pulled["weapons"] else "No weapons pulled."
-    
-    response = (
-        "🔹 **Pull Results:**\n\n"
-        f"{characters_str}\n"
-        f"{weapons_str}\n\n"
-        f"💎 **Remaining Primogems:** {user_data['primos']}"
-    )
-    await update.message.reply_text(response, parse_mode='Markdown')
-
-async def bag(update: Update, context: CallbackContext) -> None:
-    """Show user's bag contents."""
-    user_id = str(update.effective_user.id)
-    user_data = get_genshin_user_by_id(user_id) or {"bag": {}}
-    
-    if not user_data:
-        await update.message.reply_text("🔹 You need to start the bot first by using /start.")
-        return
-
-    # Display the user's bag
-    primos = user_data.get("primos", 0)
-    characters = user_data["bag"].get("characters", {})
-    weapons = user_data["bag"].get("weapons", {})
-    artifacts = user_data["bag"].get("artifacts", {})
-
-    # Total counts
-    total_characters = sum(1 for _ in characters)
-    total_weapons = sum(1 for _ in weapons)
-    total_artifacts = sum(1 for _ in artifacts)
-
-    # Generate the text for characters, weapons, and artifacts
-    characters_str = "\n".join([f"✨ {char}: {info}" for char, info in characters.items()]) if characters else "No characters in bag."
-    weapons_str = "\n".join([f"⚔️ {weapon}: {info}" for weapon, info in weapons.items()]) if weapons else "No weapons in bag."
-
-    # Handle artifacts with backward compatibility for 'refinement' field
-    artifacts_str = []
-    for name, info in artifacts.items():
-        if "count" in info:
-            artifacts_str.append(f"🖼️ {name}: x{info['count']}")
-        elif "refinement" in info:  # Backward compatibility for old 'refinement' field
-            artifacts_str.append(f"🖼️ {name}: x{info['refinement']}")
+        if game["batter_choice"] is None:
+            text += f"\n\n⚡ {batter_name}, choose a number (1-6):"
         else:
-            artifacts_str.append(f"🖼️ {name}: x1")  # Default to x1 if neither field exists
-    artifacts_str = "\n".join(artifacts_str) if artifacts_str else "No artifacts in bag."
+            text += f"\n\n⚡ {bowler_name}, choose a number (1-6):"
 
     keyboard = [
-        [InlineKeyboardButton("Characters", callback_data="show_characters"),
-         InlineKeyboardButton("Weapons", callback_data="show_weapons"),
-         InlineKeyboardButton("Artifacts", callback_data="show_artifacts")],
-        [InlineKeyboardButton("Back", callback_data="back")]
+        [
+            InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}")
+            for i in range(1, 4)
+        ],
+        [
+            InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}")
+            for i in range(4, 7)
+        ],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_id}")]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
 
-    response = (
-        "🔹 **Your Bag:**\n\n"
-        f"💎 **Primogems:** {primos}\n\n"
-        f"👤 **Total Characters:** {total_characters}\n"
-        f"⚔️ **Total Weapons:** {total_weapons}\n"
-        f"🖼️ **Total Artifacts:** {total_artifacts}"
+    message_info = []
+    recipients = list(game["spectators"]) + [game["player1"], game["player2"]]
+
+    for player_id in recipients:
+        try:
+            if player_id in game.get("message_id", {}):
+                message_info.append((
+                    context.bot.edit_message_text,
+                    {
+                        "chat_id": player_id,
+                        "message_id": game["message_id"][player_id],
+                        "text": text,
+                        "reply_markup": InlineKeyboardMarkup(keyboard) if player_id not in game["spectators"] else None,
+                        "parse_mode": "Markdown"
+                    }
+                ))
+            else:
+                message_info.append((
+                    context.bot.send_message,
+                    {
+                        "chat_id": player_id,
+                        "text": text,
+                        "reply_markup": InlineKeyboardMarkup(keyboard) if player_id not in game["spectators"] else None,
+                        "parse_mode": "Markdown"
+                    }
+                ))
+        except Exception as e:
+            logger.error(f"Error preparing message for {player_id}: {e}")
+
+    # Send all messages in parallel
+    results = await asyncio.gather(
+        *[func(**params) for func, params in message_info],
+        return_exceptions=True
     )
 
-    await update.message.reply_text(response, reply_markup=reply_markup, parse_mode='Markdown')
+    for i, (player_id, result) in enumerate(zip(recipients, results)):
+        if isinstance(result, Exception):
+            logger.error(f"Error updating interface for {player_id}: {result}")
+        elif player_id not in game["spectators"]:
+            game["message_id"][player_id] = (
+                message_info[i][1]["message_id"]
+                if "message_id" in message_info[i][1]
+                else getattr(result, "message_id", None)
+            )
 
-async def button(update: Update, context: CallbackContext) -> None:
-    """Handle button presses related to Genshin Impact content."""    
+async def handle_join_button(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
-    await query.answer()  # Answer the callback query to stop the loading animation
+    user_id = query.from_user.id
+    _, game_id = query.data.split('_', 1)  
+    if not await check_user_started_bot(update, context):
+        return
+  
+    if game_id not in cricket_games:
+        await query.answer("Game not found or expired!")
+        return
+    print(1)
+
+    game = cricket_games[game_id]
     
-    user_id = str(query.from_user.id)
-    user_data = get_genshin_user_by_id(user_id)
-    if not user_data:
-        await query.edit_message_text("❗ You need to start the bot first by using /start.")
+    if user_id == game["player1"]:
+        await query.answer("You can't join your own game!")
         return
 
-    if query.data == "show_characters":
-        characters = user_data["bag"].get("characters", {})
-        characters_str = "\n".join([f"✨ {char}: {info}" for char, info in characters.items()]) if characters else "No characters in bag."
-        response = f"👤 **Characters:**\n{characters_str}"
-        keyboard = [
-            [InlineKeyboardButton("Weapons", callback_data="show_weapons"),
-             InlineKeyboardButton("Artifacts", callback_data="show_artifacts")],
-            [InlineKeyboardButton("Back", callback_data="back")]
-        ]
-    elif query.data == "show_weapons":
-        weapons = user_data["bag"].get("weapons", {})
-        weapons_str = "\n".join([f"⚔️ {weapon}: {info}" for weapon, info in weapons.items()]) if weapons else "No weapons in bag."
-        response = f"⚔️ **Weapons:**\n{weapons_str}"
-        keyboard = [
-            [InlineKeyboardButton("Characters", callback_data="show_characters"),
-             InlineKeyboardButton("Artifacts", callback_data="show_artifacts")],
-            [InlineKeyboardButton("Back", callback_data="back")]
-        ]
-    elif query.data == "show_artifacts":
-        artifacts = user_data["bag"].get("artifacts", {})
-        # Handle artifacts with backward compatibility for 'refinement' field
-        artifacts_str = []
-        for name, info in artifacts.items():
-            if "count" in info:
-                artifacts_str.append(f"🖼️ {name}: x{info['count']}")
-            elif "refinement" in info:  # Backward compatibility for old 'refinement' field
-                artifacts_str.append(f"🖼️ {name}: x{info['refinement']}")
+    if game["player2"]:
+        await query.answer("Game full!")
+        return
+
+    game["player2"] = user_id
+    update_game_activity(game_id)
+
+    
+    bot_username = (await context.bot.get_me()).username
+    keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
+
+    
+    try:
+        await context.bot.send_message(
+            chat_id=game["group_chat_id"],
+            text=f"🎉 {query.from_user.first_name} joined the game!\n\n"
+                 f"Players should open the bot to continue the game:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logger.error(f"Error sending join confirmation to group chat: {e}")
+        await query.answer("Error sending join confirmation!")
+        return
+    
+    toss_keyboard = [[
+        InlineKeyboardButton("Heads", callback_data=f"toss_{game_id}_heads"),
+        InlineKeyboardButton("Tails", callback_data=f"toss_{game_id}_tails")
+    ]]
+    
+    for player_id in [game["player1"], game["player2"]]:
+        try:
+            msg = await context.bot.send_message(
+                chat_id=player_id,
+                text="⚡ Toss Time!",
+                reply_markup=InlineKeyboardMarkup(toss_keyboard))
+            game["message_id"][player_id] = msg.message_id
+        except Exception as e:
+            logger.error(f"Error sending toss message to {player_id}: {e}")
+
+    try:
+        db['cricket_games'].update_one(
+            {"_id": game_id},
+            {
+                "$set": {
+                    "player1": str(game["player1"]),
+                    "player2": str(game["player2"]),
+                    "active": True,
+                    "group_chat_id": game["group_chat_id"],
+                    "created_at": datetime.utcnow()
+                }
+            },
+            upsert=True
+        )
+        logger.info(f"Cricket game {game_id} saved as active in MongoDB")
+    except Exception as e:
+        logger.error(f"Error saving active cricket game to MongoDB: {e}")
+
+async def handle_watch_button(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    user_id = query.from_user.id
+    _, game_id = query.data.split('_', 1)  #
+
+    if not await check_user_started_bot(update, context):
+        return
+
+    if game_id not in cricket_games:
+        await query.answer("Game not found or expired!")
+        return
+
+    game = cricket_games[game_id]
+    
+    if user_id in [game["player1"], game["player2"]]:
+        await query.answer("You're already playing in this game!")
+        return
+    
+    game["spectators"].add(user_id)
+    
+    player1_name = (await get_user_name_cached(game["player1"], context))
+    player2_name = "Waiting for opponent" if not game["player2"] else (await get_user_name_cached(game["player2"], context))
+    
+    bot_username = (await context.bot.get_me()).username
+    keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
+    
+    await query.message.reply_text(
+        f"👁️ You're now watching the cricket match!\n"
+        f"🧑 Player 1: {player1_name}\n"
+        f"🧑 Player 2: {player2_name}\n\n"
+        f"Open the bot to view live match updates:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    
+    if game["player2"] and "batter" in game and game["batter"]:
+        await update_game_interface(game_id, context)
+
+async def toss_button(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    user_id = query.from_user.id
+    data_parts = query.data.split('_')
+    choice = data_parts[-1]
+    game_id = '_'.join(data_parts[1:-1])
+
+    
+    if not await check_user_started_bot(update, context):
+        return
+    
+    logger.info(f"Cricket Game - Toss Button: User {user_id} chose {choice} for game {game_id}")
+    logger.info(f"TOSS: Received game_id={game_id}, Active games={list(cricket_games.keys())}")
+
+
+    if game_id not in cricket_games:
+        logger.warning(f"Cricket Game - Toss Button: Game {game_id} not found")
+        await query.answer("Game expired!")
+        return
+
+    game = cricket_games[game_id]
+    if game["toss_winner"]:
+        logger.info(f"Cricket Game - Toss Button: Toss already completed for game {game_id}")
+        await query.answer("Toss done!")
+        return
+
+    toss_result = random.choice(['heads', 'tails'])
+    game["toss_winner"] = user_id if choice == toss_result else game["player2"] if user_id == game["player1"] else game["player1"]
+    
+    logger.info(f"Cricket Game - Toss Button: Toss result was {toss_result}, winner is {game['toss_winner']}")
+
+    winner_name = (await get_user_name_cached(game["toss_winner"], context))
+    keyboard = [[
+        InlineKeyboardButton("🏏 Bat", callback_data=f"choose_{game_id}_bat"),
+        InlineKeyboardButton("🎯 Bowl", callback_data=f"choose_{game_id}_bowl")
+    ]]
+
+    for player_id in [game["player1"], game["player2"]]:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=player_id,
+                message_id=game["message_id"][player_id],
+                text=f"{winner_name} won toss!",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except Exception as e:
+            logger.error(f"Error updating toss result for player {player_id}: {e}")
+
+async def choose_button(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    user_id = query.from_user.id
+    data_parts = query.data.split('_')
+    choice = data_parts[-1]
+    game_id = '_'.join(data_parts[1:-1]) # Modified to handle the new game_id format
+    
+    if not await check_user_started_bot(update, context):
+        return
+    
+    logger.info(f"Cricket Game - Choose Button: User {user_id} chose to {choice} for game {game_id}")
+
+    if game_id not in cricket_games:
+        logger.warning(f"Cricket Game - Choose Button: Game {game_id} not found")
+        await query.answer("Game expired!")
+        return
+
+    game = cricket_games[game_id]
+    if user_id != game["toss_winner"]:
+        logger.info(f"Cricket Game - Choose Button: User {user_id} tried to choose when not toss winner")
+        await query.answer("Not your choice!")
+        return
+
+    if choice == "bat":
+        batter, bowler = user_id, game["player2"] if user_id == game["player1"] else game["player1"]
+    else:
+        bowler, batter = user_id, game["player2"] if user_id == game["player1"] else game["player1"]
+
+    game.update({
+        "batter": batter,
+        "bowler": bowler,
+        "current_players": {"batter": batter, "bowler": bowler}
+    })
+    
+    logger.info(f"Cricket Game - Choose Button: Game {game_id} setup - Batter: {batter}, Bowler: {bowler}")
+
+    await update_game_interface(game_id, context)
+
+async def play_button(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    parts = query.data.split('_')
+    number = int(parts[-1])
+    game_id = '_'.join(parts[1:-1])  # Handles game_id with underscores
+
+    if not await check_user_started_bot(update, context):
+        return
+
+    logger.info(f"Cricket Game - Play Button: User {user_id} chose number {number} for game {game_id}")
+
+    if game_id not in cricket_games:
+        logger.warning(f"Cricket Game - Play Button: Game {game_id} not found")
+        await query.answer("Game expired!")
+        return
+
+    game = cricket_games[game_id]
+    update_game_activity(game_id)
+
+    # Batter's move
+    if user_id == game["current_players"]["batter"] and game["batter_choice"] is None:
+        game["batter_choice"] = number
+        logger.info(f"Cricket Game - Play Button: Batter {user_id} chose {number}")
+        await query.answer(f"Your choice: {number}")
+
+        batter_name = (await get_user_name_cached(game["batter"], context))
+        bowler_name = (await get_user_name_cached(game["bowler"], context))
+        score = game['score1'] if game['innings'] == 1 else game['score2']
+        spectator_count = len(game["spectators"])
+        spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
+
+        text = (
+            f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
+            f"🔸 Batting: {batter_name}\n"
+            f"🔹 Bowling: {bowler_name}\n"
+            f"📊 Score: {score}/{game['wickets']}"
+        )
+
+        if game['innings'] == 2:
+            text += f" (Target: {game['target']})"
+
+        text += "\n\n⚡ Batter has chosen. Now bowler's turn."
+
+        # Update spectators
+        for spectator_id in game["spectators"]:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=spectator_id,
+                    message_id=game["message_id"].get(spectator_id),
+                    text=text
+                )
+            except Exception as e:
+                logger.error(f"Error updating for spectator {spectator_id}: {e}")
+
+        # Update players
+        for player_id in [game["player1"], game["player2"]]:
+            player_text = text
+            if player_id == game["current_players"]["batter"]:
+                player_text += f"\n\nYou chose: {number}"
             else:
-                artifacts_str.append(f"🖼️ {name}: x1")  # Default to x1 if neither field exists
-        artifacts_str = "\n".join(artifacts_str) if artifacts_str else "No artifacts in bag."
-        response = f"🖼️ **Artifacts:**\n{artifacts_str}"
-        keyboard = [
-            [InlineKeyboardButton("Characters", callback_data="show_characters"),
-             InlineKeyboardButton("Weapons", callback_data="show_weapons")],
-            [InlineKeyboardButton("Back", callback_data="back")]
-        ]
-    elif query.data == "back":
-        # Handle the "Back" button by showing the main bag view
-        primos = user_data.get("primos", 0)
-        characters = user_data["bag"].get("characters", {})
-        weapons = user_data["bag"].get("weapons", {})
-        artifacts = user_data["bag"].get("artifacts", {})
+                player_text += f"\n\n⚡ {bowler_name}, choose a number (1-6):"
 
-        total_characters = sum(1 for _ in characters)
-        total_weapons = sum(1 for _ in weapons)
-        total_artifacts = sum(1 for _ in artifacts)
+            keyboard = []
+            if player_id == game["current_players"]["bowler"]:
+                row = []
+                for i in range(1, 7):
+                    row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}"))
+                    if len(row) == 3:
+                        keyboard.append(row)
+                        row = []
+                keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_id}")])
 
-        response = (
-            "🔹 **Your Bag:**\n\n"
-            f"💎 **Primogems:** {primos}\n\n"
-            f"👤 **Total Characters:** {total_characters}\n"
-            f"⚔️ **Total Weapons:** {total_weapons}\n"
-            f"🖼️ **Total Artifacts:** {total_artifacts}"
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=player_id,
+                    message_id=game["message_id"].get(player_id),
+                    text=player_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
+                )
+            except Exception as e:
+                logger.error(f"Error updating for player {player_id}: {e}")
+
+    # Bowler's move
+    elif user_id == game["current_players"]["bowler"] and game["bowler_choice"] is None:
+        batter_choice = game.get("batter_choice")
+        bowler_choice = number
+
+        if batter_choice is None:
+            logger.warning(f"Batter choice was None when bowler moved (game_id={game_id})")
+            await query.answer("Batter hasn't played yet!")
+            return
+
+        game["bowler_choice"] = number
+        logger.info(f"Cricket Game - Play Button: Bowler {user_id} chose {number}")
+        await query.answer(f"Your choice: {number}")
+
+        game["batter_choice"] = None
+        game["bowler_choice"] = None
+
+        batter_name = (await get_user_name_cached(game["batter"], context))
+        bowler_name = (await get_user_name_cached(game["bowler"], context))
+        score = game['score1'] if game['innings'] == 1 else game['score2']
+        target = game['target'] if game['innings'] == 2 else None
+        spectator_count = len(game["spectators"])
+        spectator_text = f"👁️ {spectator_count}" if spectator_count > 0 else ""
+
+        if batter_choice == bowler_choice:
+            result_text = f"🎯 Ball Result: WICKET!\nBatter: {batter_choice} | Bowler: {bowler_choice}"
+            game["wickets"] += 1
+            game["match_details"].append((game["over"], game["ball"], 0, True))
+
+            text = (
+                f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
+                f"🔸 Batting: {batter_name}\n"
+                f"🔹 Bowling: {bowler_name}\n"
+                f"📊 Score: {score}/{game['wickets']}\n\n"
+                f"{result_text}"
+            )
+
+            for participant_id in list(game["spectators"]) + [game["player1"], game["player2"]]:
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=participant_id,
+                        message_id=game["message_id"].get(participant_id),
+                        text=text
+                    )
+                except Exception as e:
+                    logger.error(f"Error updating participant {participant_id}: {e}")
+
+            await handle_wicket(game_id, context)
+            return
+
+        else:
+            runs = batter_choice
+            result_text = f"🎯 Ball Result: {runs} RUNS!\nBatter: {batter_choice} | Bowler: {bowler_choice}"
+            if isinstance(runs, int):
+                if game["innings"] == 1:
+                    game["score1"] += runs
+                else:
+                    game["score2"] += runs
+            else:
+                logger.warning(f"Invalid run value (None): game_id={game_id}, user={user_id}")
+                await query.answer("An error occurred with the run value.")
+                return
+
+            game["match_details"].append((game["over"], game["ball"], runs, False))
+            game["ball"] += 1
+            if game["ball"] == 6:
+                game["over"] += 1
+                game["ball"] = 0
+
+            if game["innings"] == 2 and game["score2"] >= game["target"]:
+                text = (
+                    f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
+                    f"🔸 Batting: {batter_name}\n"
+                    f"🔹 Bowling: {bowler_name}\n"
+                    f"📊 Score: {game['score2']}/{game['wickets']}\n\n"
+                    f"{result_text}"
+                )
+                for pid in list(game["spectators"]) + [game["player1"], game["player2"]]:
+                    try:
+                        await context.bot.edit_message_text(
+                            chat_id=pid,
+                            message_id=game["message_id"].get(pid),
+                            text=text
+                        )
+                    except Exception as e:
+                        logger.error(f"Error updating participant {pid}: {e}")
+                await declare_winner(game_id, context)
+                return
+
+            elif game["over"] >= game["max_overs"]:
+                text = (
+                    f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
+                    f"🔸 Batting: {batter_name}\n"
+                    f"🔹 Bowling: {bowler_name}\n"
+                    f"📊 Score: {score}/{game['wickets']}\n\n"
+                    f"{result_text}"
+                )
+                for pid in list(game["spectators"]) + [game["player1"], game["player2"]]:
+                    try:
+                        await context.bot.edit_message_text(
+                            chat_id=pid,
+                            message_id=game["message_id"].get(pid),
+                            text=text
+                        )
+                    except Exception as e:
+                        logger.error(f"Error updating participant {pid}: {e}")
+                await end_innings(game_id, context)
+                return
+
+        # Update for next ball
+        score = game['score1'] if game['innings'] == 1 else game['score2']
+        text = (
+            f"⏳ Over: {game['over']}.{game['ball']}  {spectator_text}\n"
+            f"🔸 Batting: {batter_name}\n"
+            f"🔹 Bowling: {bowler_name}\n"
+            f"📊 Score: {score}/{game['wickets']}"
+        )
+
+        if game['innings'] == 2:
+            text += f" (Target: {game['target']})"
+
+        text += f"\n\n{result_text}\n\n⚡ {batter_name}, choose a number (1-6):"
+
+        keyboard = []
+        row = []
+        for i in range(1, 7):
+            row.append(InlineKeyboardButton(str(i), callback_data=f"play_{game_id}_{i}"))
+            if len(row) == 3:
+                keyboard.append(row)
+                row = []
+        keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{game_id}")])
+
+        for pid in list(game["spectators"]) + [game["player1"], game["player2"]]:
+            try:
+                participant_keyboard = InlineKeyboardMarkup(keyboard) if pid == game["current_players"]["batter"] else None
+                await context.bot.edit_message_text(
+                    chat_id=pid,
+                    message_id=game["message_id"].get(pid),
+                    text=text,
+                    reply_markup=participant_keyboard
+                )
+            except Exception as e:
+                logger.error(f"Error updating participant {pid}: {e}")
+
+    else:
+        logger.info(f"Cricket Game - Play Button: User {user_id} tried to play out of turn")
+        await query.answer("Not your turn!")
+
+# Additional required functions that were referenced but not provided in the original code
+async def handle_wicket(game_id: str, context: CallbackContext) -> None:
+    game = cricket_games[game_id]
+    
+    if game["innings"] == 1:
+       game["wickets1"] = game["wickets"]
+    else:
+       game["wickets2"] = game["wickets"]
+
+    
+    if game['wickets'] >= game['max_wickets']:
+        await end_innings(game_id, context)
+        return
+    
+    # Reset for next ball
+    game["ball"] += 1
+    if game["ball"] == 6:
+        game["over"] += 1
+        game["ball"] = 0
+    
+    # Continue game with next ball
+    await update_game_interface(game_id, context)
+
+async def end_innings(game_id: str, context: CallbackContext) -> None:
+    game = cricket_games[game_id]
+    
+    if game["innings"] == 1:
+        # Set target for second innings
+        game["target"] = game["score1"] + 1
+        game["innings"] = 2
+        game["over"] = 0
+        game["ball"] = 0
+        game["wickets"] = 0
+        
+        # Swap batter and bowler
+        temp_batter = game["batter"]
+        game["batter"] = game["bowler"]
+        game["bowler"] = temp_batter
+        game["current_players"] = {"batter": game["batter"], "bowler": game["bowler"]}
+        
+        # Update statistics for both players
+        user1_id = game["player1"]
+        user2_id = game["player2"]
+        
+        user_collection.update_one(
+            {"user_id": str(user1_id)},
+            {"$inc": {"stats.matches": 1, "stats.runs": game["score1"]}},
+            upsert=True
         )
         
-        keyboard = [
-            [InlineKeyboardButton("Characters", callback_data="show_characters"),
-             InlineKeyboardButton("Weapons", callback_data="show_weapons"),
-             InlineKeyboardButton("Artifacts", callback_data="show_artifacts")],
-            [InlineKeyboardButton("Back", callback_data="back")]
-        ]
+        user_collection.update_one(
+            {"user_id": str(user2_id)},
+            {"$inc": {"stats.matches": 1, "stats.runs": game["score2"]}},
+            upsert=True
+        )
+        
+        # Check for achievements after first innings
+        await check_achievements(user1_id, context)
+        await check_achievements(user2_id, context)
+        
+        # Notify all players of innings change
+        batter_name = (await get_user_name_cached(game["batter"], context))
+        bowler_name = (await get_user_name_cached(game["bowler"], context))
+        
+        text = (
+            f"🏏 First Innings Complete!\n\n"
+            f"Score: {game['score1']}/{game['max_wickets']} in {game['over']}.{game['ball']} overs\n\n"
+            f"Second Innings:\n"
+            f"🔸 Batting: {batter_name}\n"
+            f"🔹 Bowling: {bowler_name}\n"
+            f"Target: {game['target']} runs"
+        )
+        
+        for participant_id in list(game["spectators"]) + [game["player1"], game["player2"]]:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=participant_id,
+                    message_id=game["message_id"].get(participant_id),
+                    text=text
+                )
+            except Exception as e:
+                print(f"Error updating participant {participant_id}: {e}")
+        
+        # Start second innings
+        await update_game_interface(game_id, context)
     else:
+        # End of match
+        await declare_winner(game_id, context)
+
+async def declare_winner(game_id: str, context: CallbackContext):
+    if game_id not in cricket_games:
         return
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(response, parse_mode='Markdown', reply_markup=reply_markup)
+    game = cricket_games[game_id]
 
-def get_all_genshin_users():
-    """
-    Retrieve all Genshin users from the MongoDB collection.
-    """    
-    return list(genshin_collection.find({}, {"_id": 0, "user_id": 1, "primos": 1, "first_name": 1}))
-
-async def primo_leaderboard(update: Update, context: CallbackContext) -> None:
-    """Show the top 25 users by primogems."""
-    # Get top 25 users by primogems
-    top_users = genshin_collection.find().sort("primos", -1).limit(25)
-    
-    # Create leaderboard message
-    leaderboard = "💎 <b>Primogems Leaderboard</b>\n\n"
-    
-    for i, user in enumerate(top_users, 1):
-        # Try to get the name from different possible fields
-        name = user.get('first_name') or user.get('username') or user.get('name')
-        
-        # If no name is found, try to get it from the user collection
-        if not name:
-            user_data = user_collection.find_one({"user_id": user.get('user_id')})
-            if user_data:
-                name = user_data.get('first_name') or user_data.get('username') or user_data.get('name')
-        
-        # If still no name, use a placeholder
-        if not name:
-            name = f"User {user.get('user_id', 'Unknown')}"
-            
-        primos = user.get('primos', 0)
-        leaderboard += f"{i}. {name}: {primos:,} primogems\n"
-    
-    await update.message.reply_text(leaderboard, parse_mode='HTML')
-
-async def reset_bag_data(update: Update, context: CallbackContext) -> None:
-    user_id = str(update.effective_user.id)
-    if user_id != str(OWNER_ID):
-        await update.message.reply_text("You do not have permission to use this command.")
-        return
-
-    # Reset bag data only for the user who called the command
-    genshin_collection.update_one({"user_id": user_id}, {"$set": {"bag": {}}})
-    logger.info(f"Bag data reset for user {user_id}")
-    await update.message.reply_text("Your bag data has been reset.")
-
-async def drop_primos(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    if user_id != OWNER_ID:
-        await update.message.reply_text("You do not have permission to use this command.")
-        return
-
+    # Player name fallback
     try:
-        amount = int(context.args[0])
-        if amount <= 0:
-            await update.message.reply_text("Amount must be a positive number.")
-            return
-    except (IndexError, ValueError):
-        await update.message.reply_text("Usage: /drop <amount> (e.g., /drop 100)")
-        return
-
-    try:
-        genshin_collection.update_many({}, {"$inc": {"primos": amount}})
-        logger.info(f"{amount} primos dropped to all users.")
-        await update.message.reply_text(f"{amount} primos have been dropped to all users.")
+        p1 = (await get_user_name_cached(game["player1"], context))
+        p2 = (await get_user_name_cached(game["player2"], context))
     except Exception as e:
-        logger.error(f"Error dropping primos: {e}")
-        await update.message.reply_text("❌ An error occurred while dropping primos.")
-def get_genshin_handlers():
-    """Return all genshin handlers."""
-    return [
-        CommandHandler("pull", pull),  # Handle the /pull command
-        CommandHandler("bag", bag),  # Handle the /bag command
-        CommandHandler("primo_leaderboard", primo_leaderboard),  # Handle the /leaderboard command
-        CommandHandler("resetbag", reset_bag_data),  # Handle the /resetbag command
-        CommandHandler("drop", drop_primos),  # Handle the /drop command
-        CommandHandler("setthreshold", set_threshold),  # Handle the /setthreshold command
-        CommandHandler("toggleartifacts", toggle_artifacts),  # Handle the /toggleartifacts command
-        CommandHandler("artifactsettings", artifact_settings),  # Handle the /artifactsettings command
-        CallbackQueryHandler(button, pattern="^(show_characters|show_weapons|show_artifacts|back)$"), # Handle artifact-related buttons
-        CallbackQueryHandler(handle_artifact_button, pattern="^artifact_") #Handle artifact-related buttons
-    ]
-def initialize_user(user_id):
-    user_data = {
-        "primos": 16000,  # Changed from 0 to 16000
-        "bag": [],
-        "last_pull": None,
-        "last_reward": None
-    }
-    user_collection.update_one({"user_id": user_id}, {"$setOnInsert": user_data}, upsert=True)
+        logger.error(f"Error retrieving player names: {e}")
+        p1 = "Player 1"
+        p2 = "Player 2"
 
+    winner_id = None
+    loser_id = None
+
+    # Decide winner
+    if game["score1"] == game["score2"]:
+        result = "🤝 Match Drawn!"
+        await check_special_achievement(game_id, "tie", context)
+    elif game["innings"] == 2:
+        if game["score2"] >= game["target"]:
+            winner_id = game["batter"]
+            loser_id = game["bowler"]
+            try:
+                winner = (await get_user_name_cached(winner_id, context))
+            except:
+                winner = "Player"
+            result = f"🏅 {winner} won by {game['max_wickets'] - game['wickets']} wicket(s)!"
+            if game["wickets"] == 0:
+                await check_special_achievement(game_id, "perfect_match", context, winner_id)
+        else:
+            winner_id = game["bowler"]
+            loser_id = game["batter"]
+            try:
+                winner = (await get_user_name_cached(winner_id, context))
+            except:
+                winner = "Player"
+            diff = game["target"] - game["score2"] - 1
+            result = f"🏅 {winner} won by {diff} runs!"
+    else:
+        result = "Match ended unexpectedly!"
+
+    # Accurate name-score mapping
+    first_batter = game["player1"] if game["batter"] != game["player1"] else game["player2"]
+    second_batter = game["batter"]
+    try:
+        name1 = (await get_user_name_cached(first_batter, context))
+    except:
+        name1 = "Player 1"
+    try:
+        name2 = (await get_user_name_cached(second_batter, context))
+    except:
+        name2 = "Player 2"
+
+    score_summary = (
+        f"🧑 {name1}: {game['score1']} runs\n"
+        f"🧑 {name2}: {game['score2']} runs\n"
+    )
+
+    # Add wickets to summary
+    wickets_summary = f"🎯 Wickets: {game['wickets']}/{game['max_wickets']}\n"
+
+    result_message = (
+        f"🏆 *GAME OVER!*\n\n"
+        f"📜 *Match Summary:*\n"
+        f"{score_summary}"
+        f"{wickets_summary}"
+        f"{result}"
+    )
+
+    # Send result to group
+    try:
+        await context.bot.send_message(
+            chat_id=game["group_chat_id"],
+            text=result_message,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Error sending result to group chat: {e}")
+
+    # Send result to all players/spectators
+    participants = list(game["spectators"]) + [game["player1"], game["player2"]]
+    for player_id in participants:
+        try:
+            await context.bot.send_message(
+                chat_id=player_id,
+                text=result_message,
+                parse_mode="Markdown"
+            )
+            if player_id in game["message_id"]:
+                await context.bot.delete_message(
+                    chat_id=player_id,
+                    message_id=game["message_id"].get(player_id)
+                )
+        except Exception as e:
+            logger.error(f"Error sending result to {player_id}: {e}")
+
+    # Update stats in DB
+    if winner_id and loser_id:
+        winner_id_str = str(winner_id)
+        loser_id_str = str(loser_id)
+
+        winner_runs = game['score2'] if winner_id == game["batter"] else game['score1']
+        loser_runs = game['score1'] if winner_id == game["batter"] else game['score2']
+
+        if game["innings"] == 2:
+            if winner_id == game["batter"]:
+                wickets_taken_by_winner = game["wickets1"]
+            else:
+                wickets_taken_by_winner = game["wickets2"]
+        else:
+            wickets_taken_by_winner = 0
+
+        # Update winner
+        user_collection.update_one(
+            {"user_id": winner_id_str},
+            {"$inc": {
+                "stats.wins": 1,
+                "stats.runs": winner_runs,
+                "stats.wickets": wickets_taken_by_winner,
+                "stats.current_streak": 1
+            },
+            "$set": {"stats.last_result": "win"}},
+            upsert=True
+        )
+
+        # Update loser
+        user_collection.update_one(
+            {"user_id": loser_id_str},
+            {"$inc": {
+                "stats.losses": 1,
+                "stats.runs": loser_runs,
+                "stats.wickets": 0
+            },
+            "$set": {
+                "stats.current_streak": 0,
+                "stats.last_result": "loss"
+            }},
+            upsert=True
+        )
+
+        # Check achievements after match ends
+        await check_achievements(winner_id, context)
+        await check_achievements(loser_id, context)
+
+        # Save match history
+        try:
+            game_collection.insert_one({
+                "timestamp": datetime.now(),
+                "participants": [game["player1"], game["player2"]],
+                "scores": {
+                    "player1": game["score1"],
+                    "player2": game["score2"]
+                },
+                "wickets": game["wickets"],
+                "winner": winner_id_str,    
+                "loser": loser_id_str,
+                "result": result,
+                "innings": game["innings"],
+                "player1_opponent": game["player2"],
+                "player2_opponent": game["player1"]
+            })
+        except Exception as e:
+            logger.error(f"Error saving game history: {e}")
+
+    # Clean up memory
+    reminder_sent.pop(game_id, None)
+    game_activity.pop(game_id, None)
+    cricket_games.pop(game_id, None)
+    try:
+        db['cricket_games'].update_one(
+            {"_id": game_id},
+            {"$set": {"active": False}}
+        )
+        logger.info(f"Game {game_id} marked inactive in DB after completion.")
+    except Exception as e:
+        logger.error(f"Error updating game status in DB: {e}")
+
+async def chat_command(update: Update, context: CallbackContext) -> None:
+    if not context.args:
+        await update.message.reply_text("Usage: /chat <message>")
+        return
+
+    user = update.effective_user
+    user_id = user.id
+    message = " ".join(context.args)
+
+    if not await check_user_started_bot(update, context):
+        return
+
+    active_game = None
+    for game_id, game in cricket_games.items():
+        if user_id in [game["player1"], game["player2"]] or user_id in game.get("spectators", set()):
+            active_game = game
+            break
+
+    if not active_game:
+        await update.message.reply_text("❌ You're not part of an active cricket game.")
+        return
+
+    sender_name = user.first_name or "Player"
+    formatted_message = f"💬 {sender_name}: {message}"
+
+    recipients = set([active_game["player1"], active_game["player2"]] + list(active_game.get("spectators", [])))
+    message_ids = []
+
+    # Send to all recipients privately and collect message_ids
+    for uid in recipients:
+        if uid != user_id:
+            try:
+                sent_msg = await context.bot.send_message(chat_id=uid, text=formatted_message)
+                message_ids.append((uid, sent_msg.message_id))
+            except Exception as e:
+                logger.error(f"Couldn't send DM to {uid}: {e}")
+
+    # Schedule deletion of command and DMs in background
+    async def delete_later():
+        await asyncio.sleep(10)
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
+        except Exception as e:
+            logger.error(f"Error deleting /chat command message: {e}")
+        for uid, mid in message_ids:
+            try:
+                await context.bot.delete_message(chat_id=uid, message_id=mid)
+            except Exception as e:
+                logger.error(f"Error deleting DM message for {uid}: {e}")
+
+    asyncio.create_task(delete_later())
+
+async def game_chat(update: Update, context: CallbackContext) -> None:
+    if not context.args:
+        await update.message.reply_text("Usage: /chat <message>")
+        return
+    
+    user = update.effective_user
+    message = " ".join(context.args)
+    
+    active_game = None
+    for game_id, game in cricket_games.items():
+        if user.id in [game["player1"], game["player2"]]:
+            active_game = game
+            break
+    
+    if not active_game:
+        await update.message.reply_text("You are not in an active game.")
+        return
+    
+    participants = active_game.get("participants", [])
+    for participant_id in participants:
+        try:
+            await context.bot.send_message(
+                chat_id=participant_id,
+                text=f"💬 {user.first_name}: {message}"
+            )
+        except Exception as e:
+            logger.error(f"Error sending chat message to {participant_id}: {e}")
+
+async def game_history(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    try:
+        history = list(game_collection.find(
+            {"$or": [
+                {"participants": {"$in": [user_id]}},
+                {"player1_opponent": user_id},
+                {"player2_opponent": user_id}
+            ]},
+            {"_id": 0}
+        ).sort("timestamp", -1).limit(5))
+        
+        if not history:
+            await update.message.reply_text("You haven't played any games yet!")
+            return
+        
+        text = "📜 *Your Game History:*\n\n"
+        for idx, game in enumerate(history, 1):
+            timestamp_str = game.get('timestamp', datetime.now()).strftime("%Y-%m-%d %H:%M")
+            
+            participants = game.get('participants', [])
+            opponent_id = None
+            for participant in participants:
+                if participant != user_id:
+                    opponent_id = participant
+                    break
+            
+            if not opponent_id:
+                if game.get('player1_opponent') == user_id:
+                    opponent_id = game.get('player1')
+                elif game.get('player2_opponent') == user_id:
+                    opponent_id = game.get('player2')
+            
+            opponent_name = "Unknown"
+            if opponent_id:
+                opponent_data = user_collection.find_one({"user_id": opponent_id})
+                if opponent_data:
+                    opponent_name = opponent_data.get('first_name', 'Unknown')
+            
+            scores = game.get('scores', {})
+            user_score = scores.get('player1', 0) if user_id == game.get('participants', [])[0] else scores.get('player2', 0)
+            opponent_score = scores.get('player2', 0) if user_id == game.get('participants', [])[0] else scores.get('player1', 0)
+            
+            text += f"*Game {idx}:*\n"
+            text += f"📅 Date: {timestamp_str}\n"
+            text += f"👤 Opponent: {opponent_name}\n"
+            text += f"🏏 Your Score: {user_score}\n"
+            text += f"🏏 Opponent Score: {opponent_score}\n"
+            text += f"📝 Result: {game.get('result', 'No result')}\n\n"
+        
+        await update.message.reply_text(text, parse_mode="Markdown")
+        
+    except Exception as e:
+        logger.error(f"Error retrieving game history: {e}")
+        await update.message.reply_text("An error occurred while retrieving your game history. Please try again later.")
+
+async def stats(update: Update, context: CallbackContext) -> None:
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    user_data = user_collection.find_one({"user_id": user_id})
+    if not user_data:
+        await update.message.reply_text("You need to start the bot first!")
+        return
+    
+    stats_data = user_collection.find_one({"user_id": user_id}, {"_id": 0, "stats": 1})
+    if not stats_data or "stats" not in stats_data:
+        await update.message.reply_text("No statistics available yet. Play some games to see your stats!")
+        return
+    
+    stats = stats_data["stats"]
+    games_played = stats.get('wins', 0) + stats.get('losses', 0)
+    
+    accuracy = 0
+    if games_played > 0:
+        accuracy = round((stats.get('wins', 0) / games_played) * 100)
+    
+    text = f"📊 *Your Statistics:*\n\n"
+    text += f"🏏 *Games*\n"
+    text += f"▫️ Played: {games_played}\n"
+    text += f"▫️ Wins: {stats.get('wins', 0)}\n"
+    text += f"▫️ Losses: {stats.get('losses', 0)}\n"
+    text += f"▫️ Win Rate: {accuracy}%\n\n"
+    text += f"🏃 *Performance*\n"
+    text += f"▫️ Total Runs: {stats.get('runs', 0)}\n"
+    text += f"▫️ Wickets Taken: {stats.get('wickets', 0)}\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
+    
+async def leaderboard(update: Update, context: CallbackContext) -> None:
+    """Handle the /leaderboard command"""
+    # Query users with valid first_name and non-zero wins or runs
+    top_players = user_collection.find(
+        {"first_name": {"$exists": True}, "stats": {"$exists": True}},
+        {"_id": 0, "user_id": 1, "first_name": 1, "stats": 1}
+    ).sort([
+        ("stats.wins", -1),
+        ("stats.runs", -1)
+    ]).limit(25)
+
+    text = "🏆 *Leaderboard:*\n\n"
+    for idx, player in enumerate(top_players, 1):
+        stats = player.get("stats", {})
+        name = player.get("first_name", "Unknown")
+        wins = stats.get("wins", 0)
+        runs = stats.get("runs", 0)
+        
+        # Skip players with Unknown name
+        if name == "Unknown":
+            continue
+        
+        # Escape Markdown special characters in the name
+        name = escape_markdown(name)
+        
+        text += f"{idx}. {name} - Wins: {wins}, Runs: {runs}\n"
+
+    text += "\n*Note: Stats are updated in real-time.*"
+
+    try:
+        await update.message.reply_text(
+            text,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Error sending leaderboard message: {e}")
+        await update.message.reply_text("Failed to retrieve the leaderboard. Please try again later.")
+
+async def show_achievements_by_category(update: Update, context: CallbackContext, category_index: int = 0) -> None:
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    user_achievements = achievements_collection.find_one({"user_id": user_id})
+    earned_ids = user_achievements.get("achievements", []) if user_achievements else []
+    
+    if category_index < 0 or category_index >= len(ACHIEVEMENT_CATEGORIES):
+        category_index = 0
+    
+    current_category = ACHIEVEMENT_CATEGORIES[category_index]
+    category_achievements = ACHIEVEMENTS.get(current_category, [])
+    earned_in_category = [a for a in category_achievements if a["id"] in earned_ids]
+    
+    text = f"🏆 *{current_category} Achievements*\n\n"
+    if not earned_in_category:
+        text += "No achievements in this category yet!"
+    else:
+        for achievement in earned_in_category:
+            text += f"*{achievement['name']}*\n"
+            text += f"_{achievement['description']}_\n\n"
+    
+    keyboard = []
+    prev_button = None
+    next_button = None
+    
+    if category_index > 0:
+        prev_button = InlineKeyboardButton("⬅️", callback_data=f"category_{category_index-1}_{user_id}")
+    if category_index < len(ACHIEVEMENT_CATEGORIES) - 1:
+        next_button = InlineKeyboardButton("➡️", callback_data=f"category_{category_index+1}_{user_id}")
+    
+    middle_button = InlineKeyboardButton(current_category, callback_data="noop")
+    nav_row = []
+    if prev_button:
+        nav_row.append(prev_button)
+    nav_row.append(middle_button)
+    if next_button:
+        nav_row.append(next_button)
+    keyboard.append(nav_row)
+    
+    keyboard.append([InlineKeyboardButton("❌ Close", callback_data=f"close_achievements_{user_id}")])
+    
+    if update.callback_query:
+        try:
+            await update.callback_query.edit_message_text(
+                text=text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(f"Error updating message: {e}")
+    else:
+        try:
+            await update.message.reply_text(
+                text=text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(f"Error sending message: {e}")
+
+# Dictionary to track last button press time for each user
+button_cooldowns = {}
+
+async def category_navigation_callback(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    data = query.data
+    user_id = str(update.effective_user.id)
+    
+    # Check if data contains user ID (for user-specific buttons)
+    if "_" in data and data.split("_")[-1].isdigit():
+        button_user_id = data.split("_")[-1]
+        
+        # Check if the button is meant for another user
+        if user_id != button_user_id:
+            await query.answer("This menu can only be used by the person who requested it.", show_alert=True)
+            return
+    
+    # Check rate limiting
+    current_time = time.time()
+    last_press_time = button_cooldowns.get(user_id, 0)
+    
+    if current_time - last_press_time < 2:  # 2-second cooldown
+        await query.answer("Please wait before pressing buttons again.", show_alert=True)
+        return
+    
+    # Update the cooldown time
+    button_cooldowns[user_id] = current_time
+    
+    
+    if data.startswith("category_"):
+        try:
+            # Extract category index from data (format: "category_INDEX_USER_ID")
+            parts = data.split("_")
+            category_index = int(parts[1])
+            await show_achievements_by_category(update, context, category_index)
+        except (ValueError, IndexError):
+            await query.answer("Invalid category")
+    
+    elif data.startswith("close_achievements"):
+        await query.answer("Closed achievements")
+        await query.message.delete()
+
+async def achievements_command(update: Update, context: CallbackContext) -> None:
+    await show_achievements_by_category(update, context, 0)
+    
+
+async def check_achievements(user_id, context=None):
+    user_id_str = str(user_id)
+    
+    user_data = user_collection.find_one({"user_id": user_id_str}, {"stats": 1})
+    if not user_data or "stats" not in user_data:
+        return []
+    
+    stats = user_data["stats"]
+    
+    user_achievements = achievements_collection.find_one({"user_id": user_id_str})
+    if not user_achievements:
+        user_achievements = {"user_id": user_id_str, "achievements": []}
+        achievements_collection.insert_one(user_achievements)
+    
+    earned_ids = set(user_achievements.get("achievements", []))
+    newly_earned = []
+    
+    matches_played = stats.get("wins", 0) + stats.get("losses", 0)
+    accuracy = round((stats.get("wins", 0) / matches_played) * 100) if matches_played > 0 else 0
+    
+    for category, achievements in ACHIEVEMENTS.items():
+        for achievement in achievements:
+            if achievement["id"] in earned_ids:
+                continue  # Skip if already earned
+            
+            req_type = achievement["requirement"]["type"]
+            req_value = achievement["requirement"]["value"]
+            
+            # Ensure req_value is an integer
+            if not isinstance(req_value, int):
+                try:
+                    req_value = int(req_value)
+                except (ValueError, TypeError):
+                    continue  # Skip if conversion fails
+            
+            current_value = 0
+            if req_type == "runs":
+                current_value = stats.get("runs", 0)
+            elif req_type == "wickets":
+                current_value = stats.get("wickets", 0)
+            elif req_type == "wins":
+                current_value = stats.get("wins", 0)
+            elif req_type == "matches":
+                current_value = matches_played
+            elif req_type == "accuracy":
+                current_value = accuracy
+            elif req_type == "streak":
+                current_value = stats.get("current_streak", 0)
+            
+            if current_value >= req_value:
+                achievements_collection.update_one(
+                    {"user_id": user_id_str},
+                    {"$addToSet": {"achievements": achievement["id"]}}
+                )
+                newly_earned.append(achievement)
+                if context:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=f"🏆 *Achievement Unlocked!*\n\n*{achievement['name']}*\n{achievement['description']}",
+                            parse_mode="Markdown"
+                        )
+                    except Exception as e:
+                        logger.error(f"Error sending achievement notification: {e}")
+    
+    return newly_earned
+
+async def check_special_achievement(game_id: str, achievement_type: str, context: CallbackContext, player_id=None) -> None:
+    game = cricket_games[game_id]
+    recipients = [player_id] if player_id else [game["player1"], game["player2"]]
+    
+    for user_id in recipients:
+        user_id_str = str(user_id)
+        user_achievements = achievements_collection.find_one({"user_id": user_id_str})
+        if not user_achievements:
+            user_achievements = {"user_id": user_id_str, "achievements": []}
+            achievements_collection.insert_one(user_achievements)
+        
+        earned_ids = set(user_achievements.get("achievements", []))
+        
+        for achievement in ACHIEVEMENTS["Special"]:
+            if (achievement["id"] not in earned_ids and 
+                achievement["requirement"]["value"] == achievement_type):
+                achievements_collection.update_one(
+                    {"user_id": user_id_str},
+                    {"$addToSet": {"achievements": achievement["id"]}}
+                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"🏆 *Achievement Unlocked!*\n\n*{achievement['name']}*\n{achievement['description']}",
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending special achievement notification: {e}")
+
+async def check_streaks(user_id: int, context: CallbackContext) -> None:
+    user_id_str = str(user_id)
+    user_data = user_collection.find_one({"user_id": user_id_str})
+    if not user_data or "stats" not in user_data:
+        return
+    
+    current_streak = user_data["stats"].get("current_streak", 0)
+    
+    if current_streak > 0:
+        user_achievements = achievements_collection.find_one({"user_id": user_id_str})
+        if not user_achievements:
+            user_achievements = {"user_id": user_id_str, "achievements": []}
+            achievements_collection.insert_one(user_achievements)
+        
+        earned_ids = set(user_achievements.get("achievements", []))
+        
+        for achievement in ACHIEVEMENTS["Streaks"]:
+            if (achievement["id"] not in earned_ids and 
+                current_streak >= achievement["requirement"]["value"]):
+                achievements_collection.update_one(
+                    {"user_id": user_id_str},
+                    {"$addToSet": {"achievements": achievement["id"]}}
+                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"🏆 *Achievement Unlocked!*\n\n*{achievement['name']}*\n{achievement['description']}",
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending streak achievement notification: {e}")
+
+
+def get_cricket_handlers():
+    return [
+        CommandHandler("chatcricket",chat_cricket),
+        CommandHandler("stats", stats),
+        CommandHandler("leaderboard", leaderboard),
+        CommandHandler("history", game_history),
+        CommandHandler("chat", chat_command),
+        CommandHandler("achievements", achievements_command),
+        CallbackQueryHandler(toss_button, pattern="^toss_"),
+        CallbackQueryHandler(choose_button, pattern="^choose_"),
+        CallbackQueryHandler(play_button, pattern="^play_"),
+        CallbackQueryHandler(handle_join_button, pattern=r"^join_"),
+        CallbackQueryHandler(handle_watch_button, pattern=r"^watch_"),
+        CallbackQueryHandler(category_navigation_callback, pattern=r"^category_"),
+        CallbackQueryHandler(category_navigation_callback, pattern=r"^close_achievements$"),
+    ]
+async def get_first_name(context, user_id):
+    try:
+        return (await get_user_name_cached(user_id, context))
+    except:
+        return "Player"
