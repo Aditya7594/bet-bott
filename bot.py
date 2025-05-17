@@ -930,6 +930,12 @@ def main() -> None:
         for handler in handlers:
             application.add_handler(handler)
     
+    # Register word games handlers
+    register_handlers(application)  # This registers both Wordle and Wordhunt handlers
+    
+    # Register Finder game handlers
+    finder_handlers(application)  # Pass the application object to finder_handlers
+    
     # Update message handler to handle all message types in groups
     application.add_handler(MessageHandler(
         filters.ChatType.GROUPS & filters.ALL & ~filters.COMMAND,
