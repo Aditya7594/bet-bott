@@ -6,7 +6,7 @@ import logging
 import asyncio
 from collections import Counter, defaultdict
 from typing import Sequence, Optional, Dict, Any
-
+from functools import lru_cache
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ContextTypes,
@@ -18,12 +18,13 @@ from pymongo import MongoClient
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# MongoDB setup with connection pooling
+# MongoDB setup with connection pooling and reduced operations
 try:
     client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot',
                         serverSelectionTimeoutMS=5000,
                         maxPoolSize=50,
-                        minPoolSize=10)
+                        minPoolSize=10,
+                        maxIdleTimeMS=30000)  # Close idle connections after 30 seconds
     db = client['telegram_bot']
     wordle_col = db["leaderboard"]
     wh_scores = db["wordhunt_scores"]
@@ -37,65 +38,138 @@ ABSENT, PRESENT, CORRECT = 0, 1, 2
 BLOCKS = {0: "🟥", 1: "🟨", 2: "🟩"}
 MAX_TRIALS = 25
 
-# Load word lists once at module level
-WORD_LIST, CRICKET_WORD_LIST = [], []
+# Cache word lists in memory
+WORD_LIST = []
+CRICKET_WORD_LIST = []
 EASY_WORD_LIST = []
-THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
+wordhunt_word_list = []
 
-# Game state storage
-wordle_games: Dict[int, Dict[str, Any]] = {}
+# Game state storage using defaultdict for better performance
+wordle_games = defaultdict(dict)
 wordhunt_games = {}
 activity_timers = {}
 
-# Load word lists at module level
-def load_word_list():
+# Cache for word verification results
+@lru_cache(maxsize=1000)
+def verify_solution_cached(guess: str, solution: str) -> tuple:
+    """Cached version of verify_solution to reduce CPU usage."""
+    if len(guess) != len(solution):
+        return tuple()
+    
+    result = [-1] * len(solution)
+    counter = Counter(solution)
+    
+    # First pass: Mark correct positions
+    for i, letter in enumerate(solution):
+        if i < len(guess) and guess[i] == letter:
+            result[i] = CORRECT
+            counter[letter] -= 1
+    
+    # Second pass: Mark present letters
+    for i, letter in enumerate(guess):
+        if i < len(result) and result[i] == -1:
+            if counter.get(letter, 0) > 0:
+                result[i] = PRESENT
+                counter[letter] -= 1
+            else:
+                result[i] = ABSENT
+    
+    return tuple(result)
+
+# Cache for word list loading
+@lru_cache(maxsize=1)
+def load_word_list_cached():
+    """Cached version of load_word_list to reduce file I/O."""
     global WORD_LIST, CRICKET_WORD_LIST, EASY_WORD_LIST
-    if not WORD_LIST or not CRICKET_WORD_LIST:
-        try:
-            with open(os.path.join(THIS_FOLDER, 'word_list.txt'), "r") as f:
-                WORD_LIST = [line.strip().lower() for line in f if line.strip()]
-            with open(os.path.join(THIS_FOLDER, 'cricket_word_list.txt'), "r") as f:
-                CRICKET_WORD_LIST = [line.strip().lower() for line in f if line.strip()]
-            EASY_WORD_LIST = WORD_LIST[:17000]  # First 17000 words are easier
-        except Exception as e:
-            logger.error(f"Failed to load word lists: {e}")
+    try:
+        THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(THIS_FOLDER, 'word_list.txt'), "r") as f:
+            WORD_LIST = [line.strip().lower() for line in f if line.strip()]
+        with open(os.path.join(THIS_FOLDER, 'cricket_word_list.txt'), "r") as f:
+            CRICKET_WORD_LIST = [line.strip().lower() for line in f if line.strip()]
+        EASY_WORD_LIST = WORD_LIST[:17000]
+        return True
+    except Exception as e:
+        logger.error(f"Failed to load word lists: {e}")
+        return False
+
+# Cache for wordhunt word list
+@lru_cache(maxsize=1)
+def load_wordhunt_list_cached():
+    """Cached version of wordhunt word list loading."""
+    global wordhunt_word_list
+    try:
+        THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
+        letter_list_location = os.path.join(THIS_FOLDER, '8letters.txt')
+        with open(letter_list_location, "r") as word_list:
+            wordhunt_word_list = [line.rstrip('\n').lower() for line in word_list]
+        return True
+    except Exception as e:
+        logger.error(f"Failed to load wordhunt word list: {e}")
+        return False
 
 # Load word lists at module level
-load_word_list()
+load_word_list_cached()
+load_wordhunt_list_cached()
 
-###############################
-# SHARED FUNCTIONS
-###############################
+# Cache for score updates
+@lru_cache(maxsize=1000)
+def adjust_score_cached(user_id, name, chat_id, points):
+    """Cached version of adjust_score to reduce database operations."""
+    if not wordle_col:
+        return
+    try:
+        user = wordle_col.find_one({"_id": user_id})
+        if not user:
+            wordle_col.insert_one({
+                "_id": user_id,
+                "name": name,
+                "points": points,
+                "group_points": {str(chat_id): points}
+            })
+        else:
+            new_total = user.get("points", 0) + points
+            group_points = user.get("group_points", {})
+            group_points[str(chat_id)] = group_points.get(str(chat_id), 0) + points
+            wordle_col.update_one(
+                {"_id": user_id},
+                {"$set": {"points": new_total, "group_points": group_points, "name": name}}
+            )
+    except Exception as e:
+        logger.error(f"Failed to adjust score: {e}")
 
-def load_word_lists():
-    logging.info('Entering load_word_lists')
-    global WORD_LIST, CRICKET_WORD_LIST, EASY_WORD_LIST
-    if not WORD_LIST or not CRICKET_WORD_LIST:
-        try:
-            logger.info(f"Loading word lists from {THIS_FOLDER}")
-            with open(os.path.join(THIS_FOLDER, 'word_list.txt'), "r") as f:
-                all_words = [line.strip().lower() for line in f if line.strip()]
-                WORD_LIST = all_words
-                # Take only the first 17000 words (easier words)
-                EASY_WORD_LIST = all_words[:17000]
-                logger.info(f"Loaded {len(WORD_LIST)} total words and {len(EASY_WORD_LIST)} easy words")
-                
-            with open(os.path.join(THIS_FOLDER, 'cricket_word_list.txt'), "r") as f:
-                CRICKET_WORD_LIST = [line.strip().lower() for line in f if line.strip()]
-            logger.info(f"Loaded {len(CRICKET_WORD_LIST)} cricket words")
-        except Exception as e:
-            logger.error(f"Failed to load word lists: {e}")
-    logging.info('Exiting load_word_lists')
+# Cache for wordhunt score updates
+@lru_cache(maxsize=1000)
+def update_wordhunt_score_cached(group_id, player_name, score):
+    """Cached version of update_wordhunt_score to reduce database operations."""
+    if not wh_scores:
+        return
+    try:
+        wh_scores.update_one(
+            {"group_id": group_id, "player_name": player_name},
+            {"$inc": {"score": score}},
+            upsert=True
+        )
+    except Exception as e:
+        logger.error(f"Failed to update wordhunt score: {e}")
 
-# Load wordhunt word list
-try:
-    letter_list_location = os.path.join(THIS_FOLDER, '8letters.txt')
-    with open(letter_list_location, "r") as word_list:
-        wordhunt_word_list = [line.rstrip('\n').lower() for line in word_list]
-    logger.info(f"Loaded {len(wordhunt_word_list)} words for WordHunt")
-except Exception as e:
-    logger.error(f"Failed to load wordhunt word list: {e}")
-    wordhunt_word_list = []
+# Optimize activity check interval
+ACTIVITY_CHECK_INTERVAL = 10.0  # Increased from 5.0 to 10.0 seconds
+
+async def check_activity(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Optimized activity check with reduced frequency."""
+    job = context.job
+    chat_id = job.chat_id
+    update = job.data
+    
+    if chat_id not in wordhunt_games or not wordhunt_games[chat_id].ongoing_game:
+        job.schedule_removal()
+        return
+    
+    current_time = asyncio.get_event_loop().time()
+    if current_time - wordhunt_games[chat_id].last_activity_time > 30:
+        await end_wordhunt(update, context)
+        job.schedule_removal()
 
 ###############################
 # WORDLE FUNCTIONS
@@ -158,7 +232,7 @@ def get_random_wordle_word():
 
 async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.info('Entering wordle command')
-    load_word_lists()
+    load_word_list_cached()
     logger.info("Wordle command received")
     
     if not EASY_WORD_LIST:
@@ -186,7 +260,7 @@ async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.info('Entering cricketwordle command')
-    load_word_lists()
+    load_word_list_cached()
     logger.info("Cricket Wordle command received")
     
     if not CRICKET_WORD_LIST:
@@ -277,7 +351,7 @@ async def handle_wordle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE
     game['guesses'].append(f"{result_blocks}   {guess.upper()}")
     
     # Award points for attempt
-    adjust_score(user.id, user.first_name, chat_id, 1)
+    adjust_score_cached(user.id, user.first_name, chat_id, 1)
 
     board_display = "\n".join(game['guesses'])
 
@@ -286,7 +360,7 @@ async def handle_wordle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE
         board_display += f"\n🎉 You won in {game['attempts']} tries!"
         # Award bonus points for winning
         points_award = MAX_TRIALS - game['attempts'] + 1
-        adjust_score(user.id, user.first_name, chat_id, 10 + points_award)
+        adjust_score_cached(user.id, user.first_name, chat_id, 10 + points_award)
         wordle_games[chat_id]['game_active'] = False
         logger.info("Game won!")
     elif game['attempts'] >= MAX_TRIALS:
@@ -477,24 +551,6 @@ async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_html(upper_letters(wordhunt_games[chat_id].letter_row))
     logging.info('Exiting wordhunt command')
 
-async def check_activity(context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.info('Checking activity')
-    job = context.job
-    chat_id = job.chat_id
-    update = job.data
-    
-    if chat_id not in wordhunt_games or not wordhunt_games[chat_id].ongoing_game:
-
-        job.schedule_removal()
-        return
-    
-    current_time = asyncio.get_event_loop().time()
-
-    if current_time - wordhunt_games[chat_id].last_activity_time > 30:
-        await end_wordhunt(update, context)
-        job.schedule_removal()
-    logging.info('Checked activity')
-
 async def scoring_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.info('Scoring wordhunt')
     chat_id = update.effective_chat.id
@@ -523,7 +579,7 @@ async def scoring_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             wordhunt_games[chat_id].player_words[player_name] = []
         wordhunt_games[chat_id].player_words[player_name].append(guess)
         wordhunt_games[chat_id].player_scores[player_name] += score
-        update_wordhunt_score(chat_id, player_name, score)
+        update_wordhunt_score_cached(chat_id, player_name, score)
 
         await update.message.reply_html(notif)
     logging.info('Scored wordhunt')
@@ -606,7 +662,7 @@ async def whglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def register_handlers(application: Application) -> None:
     logging.info('Registering wordhunt handlers')
-    load_word_lists()
+    load_word_list_cached()
     
 
     application.add_handler(CommandHandler("wordle", wordle))

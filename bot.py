@@ -1,5 +1,181 @@
 from flask import Flask
 from threading import Thread
+import asyncio
+from pymongo import MongoClient
+import os
+import secrets
+import requests
+import logging
+from datetime import datetime, timedelta, timezone, time
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters, ChatMemberHandler
+from telegram.constants import ChatType
+from token_1 import token
+from functools import lru_cache
+from collections import defaultdict
+
+# Reduce logging level to WARNING
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.WARNING
+)
+logger = logging.getLogger(__name__)
+
+# MongoDB setup with connection pooling and reduced operations
+try:
+    client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot',
+                        serverSelectionTimeoutMS=5000,
+                        maxPoolSize=50,
+                        minPoolSize=10,
+                        maxIdleTimeMS=30000)  # Close idle connections after 30 seconds
+    db = client['telegram_bot']
+    user_collection = db['users']
+    genshin_collection = db['genshin_users']
+    groups_collection = db['groups']
+except Exception as e:
+    logger.error(f"Failed to connect to MongoDB: {e}")
+    user_collection = None
+    genshin_collection = None
+    groups_collection = None
+
+# Cache for user data
+@lru_cache(maxsize=1000)
+def get_user_by_id_cached(user_id):
+    """Cached version of get_user_by_id to reduce database operations."""
+    if not user_collection:
+        return None
+    return user_collection.find_one({"user_id": str(user_id)})
+
+# Cache for genshin user data
+@lru_cache(maxsize=1000)
+def get_genshin_user_by_id_cached(user_id):
+    """Cached version of get_genshin_user_by_id to reduce database operations."""
+    if not genshin_collection:
+        return None
+    return genshin_collection.find_one({"user_id": str(user_id)})
+
+# Cache for group settings
+@lru_cache(maxsize=100)
+def get_group_settings_cached(chat_id):
+    """Cached version of get_group_settings to reduce database operations."""
+    return {"artifact_enabled": True, "artifact_threshold": 50}
+
+# Optimize message handling
+MESSAGE_COOLDOWN = 5  # seconds
+MAX_DAILY_PRIMOS = 100
+PRIMO_REWARD_AMOUNT = 5
+
+# Use defaultdict for better performance
+message_counts = defaultdict(lambda: {
+    "count": 0,
+    "last_message": datetime.now(timezone.utc),
+    "participants": set(),
+    "message_types": {}
+})
+
+# Cache for user names
+@lru_cache(maxsize=1000)
+def get_user_name_cached(user_id):
+    """Cached version of get_user_name to reduce database operations."""
+    user = get_user_by_id_cached(user_id)
+    return user.get('first_name', 'Unknown') if user else 'Unknown'
+
+# Optimize message handling
+async def handle_group_message(update: Update, context: CallbackContext):
+    user = update.effective_user
+    user_id = str(user.id)
+    chat_id = str(update.effective_chat.id)
+    
+    # Skip if message is from a bot or is a command
+    if user.is_bot or (update.message.text and update.message.text.startswith('/')):
+        return
+    
+    # Determine message type efficiently
+    message_type = next((attr for attr in ['sticker', 'photo', 'video', 'document', 
+                                         'audio', 'voice', 'animation', 'video_note',
+                                         'location', 'contact', 'poll', 'dice'] 
+                        if getattr(update.message, attr, None)), 'text')
+    
+    # Handle Genshin system with optimized checks
+    user_data = get_genshin_user_by_id_cached(user_id)
+    now = datetime.now(timezone.utc)
+
+    if not user_data:
+        user_data = {
+            "user_id": user_id,
+            "primos": 0,
+            "bag": {},
+            "message_primo": {
+                "count": 0,
+                "earned": 0,
+                "last_reset": now,
+                "last_message": now,
+                "message_types": {}
+            }
+        }
+        if genshin_collection:
+            genshin_collection.insert_one(user_data)
+    else:
+        # Optimize message primo handling
+        message_primo = user_data.get("message_primo", {})
+        last_message = message_primo.get("last_message", now)
+        last_reset = message_primo.get("last_reset", now)
+        
+        # Convert to timezone-aware if needed
+        if isinstance(last_message, datetime) and last_message.tzinfo is None:
+            last_message = last_message.replace(tzinfo=timezone.utc)
+        if isinstance(last_reset, datetime) and last_reset.tzinfo is None:
+            last_reset = last_reset.replace(tzinfo=timezone.utc)
+        
+        # Check cooldown and limits
+        message_cooldown = (now - last_message).total_seconds()
+        if message_cooldown >= MESSAGE_COOLDOWN:
+            current_earned = message_primo.get("earned", 0)
+            if current_earned < MAX_DAILY_PRIMOS:
+                # Update primos efficiently
+                user_data["primos"] = user_data.get("primos", 0) + PRIMO_REWARD_AMOUNT
+                message_primo.update({
+                    "count": message_primo.get("count", 0) + 1,
+                    "earned": current_earned + PRIMO_REWARD_AMOUNT,
+                    "last_message": now
+                })
+                
+                # Update message types efficiently
+                message_types = message_primo.get("message_types", {})
+                message_types[message_type] = message_types.get(message_type, 0) + 1
+                message_primo["message_types"] = message_types
+                
+                if genshin_collection:
+                    genshin_collection.update_one(
+                        {"user_id": user_id},
+                        {"$set": {
+                            "primos": user_data["primos"],
+                            "message_primo": message_primo
+                        }}
+                    )
+
+    # Handle artifact system efficiently
+    settings = get_group_settings_cached(chat_id)
+    if settings.get("artifact_enabled", True):
+        chat_data = message_counts[chat_id]
+        if (now - chat_data["last_message"]).total_seconds() >= MESSAGE_COOLDOWN:
+            chat_data["count"] += 1
+            chat_data["last_message"] = now
+            chat_data["participants"].add(user_id)
+            chat_data["message_types"][message_type] = chat_data["message_types"].get(message_type, 0) + 1
+            
+            # Clean up old participants efficiently
+            chat_data["participants"] = {
+                pid for pid in chat_data["participants"]
+                if (now - user_data.get("message_primo", {}).get("last_message", now)).total_seconds() < 3600
+            }
+            
+            if chat_data["count"] >= settings.get("artifact_threshold", 50):
+                chat_data["count"] = 0
+                await send_artifact_reward(chat_id, context)
+
+    # Handle leveling system
+    await handle_message(update, context)
 
 # Create Flask app
 app = Flask(__name__)
@@ -15,6 +191,7 @@ def run_flask():
 # Start Flask server in background thread
 flask_thread = Thread(target=run_flask)
 flask_thread.start()
+
 import asyncio
 from pymongo import MongoClient
 import os
@@ -26,61 +203,6 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Callbac
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters, ChatMemberHandler
 from telegram.constants import ChatType
 from token_1 import token
-
-# Reduce logging level to WARNING
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.WARNING
-)
-logger = logging.getLogger(__name__)
-
-# MongoDB setup with connection pooling and timeout
-try:
-    client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot',
-                        serverSelectionTimeoutMS=5000,
-                        maxPoolSize=50,
-                        minPoolSize=10)
-    db = client['telegram_bot']
-    user_collection = db['users']
-except Exception as e:
-    logger.error(f"Failed to connect to MongoDB: {e}")
-    user_collection = None
-
-# Import game modules after MongoDB setup
-from genshin_game import get_genshin_handlers, send_artifact_reward
-from multiplayer import (
-    get_multiplayer_handlers,
-    multiplayer,
-    show_current_players,
-    extend_time,
-    stop_game,
-    list_players,
-    MButton_join,
-    Mhandle_remove_button,
-    Mhandle_play_button,
-    Mhandle_cancel_button
-)
-from cricket import (
-    get_cricket_handlers,
-    chat_cricket,
-    cricket_games,
-    handle_join_button,
-    handle_watch_button,
-    toss_button,
-    choose_button,
-    play_button
-)
-from claim import get_claim_handlers, daily
-from wordhunt import register_handlers, wordle_games,wordhunt_games
-from Finder import finder_handlers
-from bank import bank, store, withdraw, add_credits, blacklist, unblacklist, auto_ban,scan_blacklist
-from mines_game import get_mines_handlers
-from hilo_game import get_hilo_handlers
-from xox_game import get_xox_handlers
-from bdice import get_bdice_handlers
-from gambling import get_gambling_handlers
-from limbo import limbo, handle_limbo_buttons
-from level_system import handle_message, get_handlers as get_level_handlers, apply_daily_tax
 
 # Constants and settings
 OWNER_ID = 5667016949
@@ -711,173 +833,6 @@ async def give(update: Update, context: CallbackContext) -> None:
         )
     except Exception as e:
         logger.error(f"Failed to notify receiver {receiver_id}: {e}")
-
-async def handle_group_message(update: Update, context: CallbackContext):
-    logger.info("handle_group_message called")
-    user = update.effective_user
-    user_id = str(user.id)
-    chat_id = str(update.effective_chat.id)
-    
-    # Log the incoming message for debugging
-    logger.info(f"Received message in group {chat_id} from user {user_id}: {update.message}")
-    
-    # Skip if message is from a bot
-    if user.is_bot:
-        logger.info(f"Skipping bot message from {user_id}")
-        return
-        
-    # Skip if message is a command
-    if update.message.text and update.message.text.startswith('/'):
-        logger.info(f"Skipping command message: {update.message.text}")
-        return
-    
-    # Determine message type
-    message_type = "text"
-    if update.message.sticker:
-        message_type = "sticker"
-    elif update.message.photo:
-        message_type = "photo"
-    elif update.message.video:
-        message_type = "video"
-    elif update.message.document:
-        message_type = "document"
-    elif update.message.audio:
-        message_type = "audio"
-    elif update.message.voice:
-        message_type = "voice"
-    elif update.message.animation:
-        message_type = "animation"
-    elif update.message.video_note:
-        message_type = "video_note"
-    elif update.message.location:
-        message_type = "location"
-    elif update.message.contact:
-        message_type = "contact"
-    elif update.message.poll:
-        message_type = "poll"
-    elif update.message.dice:
-        message_type = "dice"
-    
-    logger.info(f"Processing {message_type} message from {user_id}")
-    
-    # First handle Genshin system
-    user_data = get_genshin_user_by_id(user_id)
-    now = datetime.now(timezone.utc)
-
-    if not user_data:
-        logger.info(f"Creating new Genshin user data for {user_id}")
-        # Create new user with timezone-aware datetime
-        user_data = {
-            "user_id": user_id,
-            "primos": 0,
-            "bag": {},
-            "message_primo": {
-                "count": 0,
-                "earned": 0,
-                "last_reset": now,
-                "last_message": now,
-                "message_types": {}
-            }
-        }
-        save_genshin_user(user_data)
-    else:
-        # Ensure message_primo exists and has timezone-aware datetime
-        if "message_primo" not in user_data:
-            logger.info(f"Initializing message_primo for {user_id}")
-            user_data["message_primo"] = {
-                "count": 0,
-                "earned": 0,
-                "last_reset": now,
-                "last_message": now,
-                "message_types": {}
-            }
-        elif user_data["message_primo"].get("last_reset") is None:
-            user_data["message_primo"]["last_reset"] = now
-            user_data["message_primo"]["last_message"] = now
-            user_data["message_primo"]["message_types"] = {}
-
-        # Convert last_reset to timezone-aware if it's not already
-        last_reset = user_data["message_primo"]["last_reset"]
-        last_message = user_data["message_primo"].get("last_message", now)
-        
-        if isinstance(last_reset, datetime) and last_reset.tzinfo is None:
-            last_reset = last_reset.replace(tzinfo=timezone.utc)
-            user_data["message_primo"]["last_reset"] = last_reset
-            
-        if isinstance(last_message, datetime) and last_message.tzinfo is None:
-            last_message = last_message.replace(tzinfo=timezone.utc)
-            user_data["message_primo"]["last_message"] = last_message
-
-        # Reset if 1 hour has passed
-        time_diff = (now - last_reset).total_seconds()
-        if time_diff > 3600:
-            logger.info(f"Resetting message count for {user_id} after {time_diff} seconds")
-            user_data["message_primo"]["count"] = 0
-            user_data["message_primo"]["earned"] = 0
-            user_data["message_primo"]["last_reset"] = now
-            user_data["message_primo"]["last_message"] = now
-            user_data["message_primo"]["message_types"] = {}
-
-        # Check for message cooldown (5 seconds)
-        message_cooldown = (now - last_message).total_seconds()
-        if message_cooldown >= 5:  # Only count messages that are at least 5 seconds apart
-            # Award primos if under limit
-            current_earned = user_data["message_primo"]["earned"]
-            if current_earned < 100:
-                user_data["message_primo"]["count"] += 1
-                user_data["message_primo"]["earned"] += 5
-                user_data["primos"] = user_data.get("primos", 0) + 5
-                user_data["message_primo"]["last_message"] = now
-                
-                # Track message types
-                if "message_types" not in user_data["message_primo"]:
-                    user_data["message_primo"]["message_types"] = {}
-                user_data["message_primo"]["message_types"][message_type] = user_data["message_primo"]["message_types"].get(message_type, 0) + 1
-                
-                logger.info(f"Awarded 5 primos to {user_id} for {message_type} message. Total primos: {user_data['primos']}")
-
-        # Save updated user data
-        save_genshin_user(user_data)
-
-        # Handle artifact system
-        settings = get_group_settings(chat_id)
-        if settings.get("artifact_enabled", True):
-            if chat_id not in message_counts:
-                message_counts[chat_id] = {
-                    "count": 0,
-                    "last_message": now,
-                    "participants": set(),
-                    "message_types": {}
-                }
-
-            # Check for message cooldown (5 seconds)
-            if message_cooldown >= 5:
-                message_counts[chat_id]["count"] += 1
-                message_counts[chat_id]["last_message"] = now
-                message_counts[chat_id]["participants"].add(user_id)
-                
-                # Track message types
-                message_counts[chat_id]["message_types"][message_type] = message_counts[chat_id]["message_types"].get(message_type, 0) + 1
-                
-                # Clean up old participants (older than 1 hour)
-                current_participants = message_counts[chat_id]["participants"]
-                message_counts[chat_id]["participants"] = {
-                    pid for pid in current_participants 
-                    if (now - user_data.get("message_primo", {}).get("last_message", now)).total_seconds() < 3600
-                }
-
-                threshold = settings.get("artifact_threshold", 50)
-                logger.info(f"Message count for chat {chat_id}: {message_counts[chat_id]['count']}/{threshold}")
-                
-                if message_counts[chat_id]["count"] >= threshold:
-                    message_counts[chat_id]["count"] = 0
-                    logger.info(f"Threshold reached for chat {chat_id}, sending artifact reward")
-                    await send_artifact_reward(chat_id, context)
-    
-    # Then handle leveling system
-    logger.info("Calling handle_message for leveling system")
-    await handle_message(update, context)
-    logger.info("handle_group_message completed")
 
 def main() -> None:
     application = Application.builder().token(token).build()
