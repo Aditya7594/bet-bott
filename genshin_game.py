@@ -789,20 +789,21 @@ async def drop_primos(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"Error dropping primos: {e}")
         await update.message.reply_text("❌ An error occurred while dropping primos.")
+
 def get_genshin_handlers():
-    """Return all genshin handlers."""
+    """Return list of handlers."""
     return [
-        CommandHandler("pull", pull),  # Handle the /pull command
-        CommandHandler("bag", bag),  # Handle the /bag command
-        CommandHandler("primo_leaderboard", primo_leaderboard),  # Handle the /leaderboard command
-        CommandHandler("resetbag", reset_bag_data),  # Handle the /resetbag command
-        CommandHandler("drop", drop_primos),  # Handle the /drop command
-        CommandHandler("setthreshold", set_threshold),  # Handle the /setthreshold command
-        CommandHandler("toggleartifacts", toggle_artifacts),  # Handle the /toggleartifacts command
-        CommandHandler("artifactsettings", artifact_settings),  # Handle the /artifactsettings command
-        CallbackQueryHandler(button, pattern="^(show_characters|show_weapons|show_artifacts|back)$"), # Handle artifact-related buttons
-        CallbackQueryHandler(handle_artifact_button, pattern="^artifact_") #Handle artifact-related buttons
+        CommandHandler("pull", pull),
+        CommandHandler("bag", bag),
+        CommandHandler("primo_leaderboard", primo_leaderboard),
+        CommandHandler("reset_bag", reset_bag_data),
+        CommandHandler("drop_primos", drop_primos),
+        CommandHandler("artifact_settings", artifact_settings),
+        CommandHandler("set_threshold", set_threshold),
+        CommandHandler("toggle_artifacts", toggle_artifacts),
+        CallbackQueryHandler(button, pattern="^genshin_")
     ]
+
 def initialize_user(user_id):
     user_data = {
         "primos": 16000,  # Changed from 0 to 16000

@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, ContextTypes,
-    filters, ThrottlingHandler
+    filters
 )
 from pymongo import MongoClient
 import time as time_module
@@ -315,15 +315,9 @@ def check_winner(board: List[str]) -> Optional[str]:
 
     return None
 
-def register_handlers(application: Application) -> None:
-    """Register handlers with throttling."""
-    # Add throttling handler
-    application.add_handler(ThrottlingHandler(THROTTLE_RATE, THROTTLE_BURST))
-
-    # Register command handlers with throttling
-    application.add_handler(CommandHandler("xox", throttle_command()(xox)))
-    
-    # Register callback query handler
-    application.add_handler(CallbackQueryHandler(handle_xox_callback, pattern="^xox_"))
-    
-    logger.info("XOX game handlers registered successfully")
+def get_xox_handlers():
+    """Return list of handlers."""
+    return [
+        CommandHandler("xox", throttle_command()(xox)),
+        CallbackQueryHandler(handle_xox_callback, pattern="^xox_")
+    ]

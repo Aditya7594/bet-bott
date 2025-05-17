@@ -1,238 +1,199 @@
-from __future__ import annotations
-
 import random
-import logging
-import asyncio
-from collections import defaultdict
-from functools import lru_cache, wraps
-from typing import Dict, Optional
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, ContextTypes,
-    filters, ThrottlingHandler
-)
+import uuid
 from pymongo import MongoClient
-import time as time_module
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import CallbackContext
 
-# Reduce logging level to WARNING
-logging.basicConfig(level=logging.WARNING)
-logger = logging.getLogger(__name__)
+# MongoDB setup
+client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority')
+db = client['telegram_bot']
+users_collection = db['users']
+limbo_games_collection = db['limbo_games']  # Separate MongoDB collection for Limbo games
 
-# Command throttling settings
-THROTTLE_RATE = 1.0  # seconds between commands
-THROTTLE_BURST = 3   # number of commands allowed in burst
+# Weighted multiplier generation thresholds for Limbo
+MULTIPLIER_THRESHOLDS = [
+    (0.5, 0.8),   # 50% chance for multipliers between 0.5 - 0.8
+    (0.81, 1.5),  # 30% chance for multipliers between 0.81 - 1.5
+    (1.51, 2.5),  # 15% chance for multipliers between 1.51 - 2.5
+    (2.51, 4.0),  # 5% chance for multipliers between 2.51 - 4.0
+]
 
-# Command throttling decorator
-def throttle_command(rate=THROTTLE_RATE, burst=THROTTLE_BURST):
-    def decorator(func):
-        last_called = {}
-        tokens = defaultdict(lambda: burst)
-        last_update = {}
+# MongoDB functions
+def get_user_by_id(user_id):
+    return users_collection.find_one({"user_id": user_id})
 
-        @wraps(func)
-        async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-            user_id = update.effective_user.id
-            current_time = time_module.time()
+def save_user(user_data):
+    users_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
 
-            # Initialize user's last called time
-            if user_id not in last_called:
-                last_called[user_id] = 0
-                tokens[user_id] = burst
+# Limbo Game functions
+def generate_weighted_multiplier():
+    random_number = random.uniform(0, 1)
+    if random_number <= 0.1:
+        return 0  # 10% chance to lose everything instantly
+    elif random_number <= 0.7:
+        return round(random.uniform(0.3, 0.8), 2)
+    elif random_number <= 0.9:
+        return round(random.uniform(0.81, 1.2), 2)
+    elif random_number <= 0.98:
+        return round(random.uniform(1.21, 1.8), 2)
+    else:
+        return round(random.uniform(1.81, 2.5), 2)
 
-            # Check if enough time has passed to add a token
-            time_passed = current_time - last_called[user_id]
-            if time_passed >= rate:
-                new_tokens = int(time_passed / rate)
-                tokens[user_id] = min(burst, tokens[user_id] + new_tokens)
-                last_called[user_id] = current_time
-
-            # Check if user has tokens available
-            if tokens[user_id] <= 0:
-                await update.message.reply_text(
-                    f"Please wait {rate:.1f} seconds before using this command again."
-                )
-                return
-
-            # Use a token and execute the command
-            tokens[user_id] -= 1
-            return await func(update, context, *args, **kwargs)
-
-        return wrapper
-    return decorator
-
-# Update filter function
-def should_process_update(update: Update) -> bool:
-    """Filter updates to reduce processing load."""
-    if not update or not update.effective_user:
-        return False
-    
-    # Skip updates from bots
-    if update.effective_user.is_bot:
-        return False
-    
-    # Skip non-message updates
-    if not update.message and not update.callback_query:
-        return False
-    
-    return True
-
-# MongoDB setup with connection pooling and reduced operations
-try:
-    client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot',
-                        serverSelectionTimeoutMS=5000,
-                        maxPoolSize=50,
-                        minPoolSize=10,
-                        maxIdleTimeMS=30000)
-    db = client['telegram_bot']
-    user_collection = db['users']
-except Exception as e:
-    logger.error(f"Failed to connect to MongoDB: {e}")
-    user_collection = None
-
-# Game state storage using defaultdict for better performance
-limbo_games = defaultdict(dict)
-
-# Cache for user data
-@lru_cache(maxsize=1000)
-def get_user_by_id_cached(user_id: str) -> Optional[Dict]:
-    """Cached version of get_user_by_id to reduce database operations."""
-    if not user_collection:
-        return None
-    return user_collection.find_one({"user_id": user_id})
-
-# Cache for user names
-@lru_cache(maxsize=1000)
-def get_user_name_cached(user_id: str) -> str:
-    """Cached version of get_user_name to reduce database operations."""
-    user = get_user_by_id_cached(user_id)
-    return user.get('first_name', 'Unknown') if user else 'Unknown'
-
-@throttle_command()
-async def limbo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle limbo command with throttling."""
-    if not should_process_update(update):
-        return
-
+async def limbo(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_id = str(user.id)
-    
-    # Get user data with caching
-    user_data = get_user_by_id_cached(user_id)
+
+    user_data = get_user_by_id(user_id)
     if not user_data:
-        await update.message.reply_text("Please use /start first to register.")
+        await update.message.reply_text("You need to start the bot first by using /start.")
         return
 
-    # Check if user has enough credits
-    if user_data.get('credits', 0) < 100:
-        await update.message.reply_text("You need at least 100 credits to play.")
+    # Get bet amount
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Please provide a valid bet amount. Example: /limbo 1000")
         return
 
-    # Create game state
-    limbo_games[user_id] = {
-        'bet_amount': 100,
-        'target_multiplier': 2.0,
-        'result': None
-    }
+    bet_amount = int(context.args[0])
 
-    # Create keyboard
-    keyboard = [
-        [
-            InlineKeyboardButton("1.5x", callback_data="limbo_1.5"),
-            InlineKeyboardButton("2.0x", callback_data="limbo_2.0"),
-            InlineKeyboardButton("3.0x", callback_data="limbo_3.0")
-        ],
-        [
-            InlineKeyboardButton("5.0x", callback_data="limbo_5.0"),
-            InlineKeyboardButton("10.0x", callback_data="limbo_10.0"),
-            InlineKeyboardButton("20.0x", callback_data="limbo_20.0")
-        ],
-        [InlineKeyboardButton("Play", callback_data="limbo_play")]
-    ]
+    # Enforce maximum bet limit
+    if bet_amount > 30000:
+        await update.message.reply_text("Maximum bet for Limbo is 30,000 credits.")
+        return
 
-    await update.message.reply_text(
-        f"🎲 Limbo Game\n\n"
-        f"Bet: {limbo_games[user_id]['bet_amount']} credits\n"
-        f"Target Multiplier: {limbo_games[user_id]['target_multiplier']}x\n\n"
-        f"Select your target multiplier and click Play!",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+    # Check credits
+    if user_data['credits'] < bet_amount:
+        await update.message.reply_text("You don't have enough credits to play.")
+        return
+
+    # Deduct bet and initialize game
+    user_data['credits'] -= bet_amount
+    save_user(user_data)
+
+    # Generate random multipliers
+    multipliers = [generate_weighted_multiplier() for _ in range(5)]
+
+    # Generate a unique game ID
+    game_id = str(uuid.uuid4())
+
+    # Store the game in the MongoDB collection for Limbo games
+    limbo_games_collection.insert_one({
+        'user_id': user_id,
+        'game_id': game_id,
+        'bet': bet_amount,
+        'multipliers': multipliers,
+        'current_index': 0
+    })
+
+    await send_limbo_message(update, user_id, context, game_id)
+
+# Function to send Limbo game message
+async def send_limbo_message(update: Update, user_id: str, context: CallbackContext, game_id: str):
+    limbo_game = limbo_games_collection.find_one({"user_id": user_id, "game_id": game_id})
+    if not limbo_game:
+        return
+
+    current_index = limbo_game['current_index']
+    bet = limbo_game['bet']
+    current_multiplier = limbo_game['multipliers'][current_index]
+
+    # Generate inline buttons
+    keyboard = []
+    if current_index < 4:
+        keyboard.append([
+            InlineKeyboardButton("Take", callback_data=f"take_{user_id}_{game_id}"),
+            InlineKeyboardButton("Next", callback_data=f"next_{user_id}_{game_id}")
+        ])
+    else:
+        keyboard.append([InlineKeyboardButton("Take", callback_data=f"take_{user_id}_{game_id}")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    multipliers_display = '\n'.join([f"{i+1}. {'?' if i > current_index else limbo_game['multipliers'][i]}" for i in range(5)])
+
+    game_message = (
+        "🎰 *Limbo Game*:\n\n"
+        "► If you are happy with the current multiplier, you can [Take] it.\n"
+        "► If you see the next multiplier, you won't be able to go back.\n"
+        "► System will auto [Take] when you reach the last multiplier box.\n\n"
+        f"{multipliers_display}\n\n"
+        f"*Bet Amount*: {bet} 👾\n"
+        f"*Current Multiplier*: {current_multiplier}x"
     )
 
-async def handle_limbo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle limbo game callbacks with async optimization."""
+    if update.message:
+        await update.message.reply_text(game_message, reply_markup=reply_markup, parse_mode='Markdown')
+    else:
+        await update.callback_query.edit_message_text(game_message, reply_markup=reply_markup, parse_mode='Markdown')
+
+# Handle Limbo button presses (Take or Next)
+async def handle_limbo_buttons(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
-    
-    user_id = str(query.from_user.id)
-    if user_id not in limbo_games:
-        await query.edit_message_text("Game expired. Use /limbo to start a new game.")
+
+    data = query.data.split('_')
+    action = data[0]
+    user_id = data[1]
+    game_id = data[2]
+
+    limbo_game = limbo_games_collection.find_one({"user_id": user_id, "game_id": game_id})
+    if not limbo_game:
+        await query.edit_message_text("No active game found. Start a new game with /limbo <bet_amount>.")
         return
 
-    game = limbo_games[user_id]
-    action = query.data.split('_')[1]
+    if action == 'take':
+        await handle_take(update, context, user_id, game_id)
+    elif action == 'next':
+        await handle_next(update, context, user_id, game_id)
 
-    if action == "play":
-        # Generate random multiplier
-        result = round(random.uniform(1.0, 20.0), 2)
-        game['result'] = result
-
-        # Calculate winnings
-        if result >= game['target_multiplier']:
-            winnings = int(game['bet_amount'] * game['target_multiplier'])
-            message = f"🎉 You won {winnings} credits!\nMultiplier: {result}x"
-            
-            # Update user credits asynchronously
-            if user_collection:
-                await asyncio.to_thread(
-                    user_collection.update_one,
-                    {"user_id": user_id},
-                    {"$inc": {"credits": winnings}}
-                )
-        else:
-            message = f"💥 You lost {game['bet_amount']} credits!\nMultiplier: {result}x"
-
-        await query.edit_message_text(message)
-        del limbo_games[user_id]
+# Handle Take action
+async def handle_take(update: Update, context: CallbackContext, user_id: str, game_id: str):
+    limbo_game = limbo_games_collection.find_one_and_delete({"user_id": user_id, "game_id": game_id})
+    if not limbo_game:
         return
 
-    # Handle multiplier selection
-    try:
-        multiplier = float(action)
-        game['target_multiplier'] = multiplier
-        
-        # Update keyboard
-        keyboard = [
-            [
-                InlineKeyboardButton("1.5x", callback_data="limbo_1.5"),
-                InlineKeyboardButton("2.0x", callback_data="limbo_2.0"),
-                InlineKeyboardButton("3.0x", callback_data="limbo_3.0")
-            ],
-            [
-                InlineKeyboardButton("5.0x", callback_data="limbo_5.0"),
-                InlineKeyboardButton("10.0x", callback_data="limbo_10.0"),
-                InlineKeyboardButton("20.0x", callback_data="limbo_20.0")
-            ],
-            [InlineKeyboardButton("Play", callback_data="limbo_play")]
-        ]
+    multiplier = limbo_game['multipliers'][limbo_game['current_index']]
+    winnings = int(limbo_game['bet'] * multiplier)
 
-        await query.edit_message_text(
-            f"🎲 Limbo Game\n\n"
-            f"Bet: {game['bet_amount']} credits\n"
-            f"Target Multiplier: {game['target_multiplier']}x\n\n"
-            f"Select your target multiplier and click Play!",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+    # Update user's credits
+    user_data = get_user_by_id(user_id)
+    user_data['credits'] += winnings
+    save_user(user_data)
+
+    await update.callback_query.edit_message_text(
+        f"🚀 You took the multiplier *{multiplier}x* and won *{winnings} credits*! 🎉",
+        parse_mode='Markdown'
+    )
+
+# Handle Next action (moving to next multiplier)
+async def handle_next(update: Update, context: CallbackContext, user_id: str, game_id: str):
+    limbo_game = limbo_games_collection.find_one({"user_id": user_id, "game_id": game_id})
+    if not limbo_game:
+        return
+
+    if limbo_game['current_index'] < 4:
+        new_index = limbo_game['current_index'] + 1
+        limbo_games_collection.update_one(
+            {"user_id": user_id, "game_id": game_id},
+            {"$set": {"current_index": new_index}}
         )
-    except ValueError:
-        await query.answer("Invalid multiplier selected.")
-
-def register_handlers(application: Application) -> None:
-    """Register handlers with throttling."""
-    # Add throttling handler
-    application.add_handler(ThrottlingHandler(THROTTLE_RATE, THROTTLE_BURST))
-
-    # Register command handlers with throttling
-    application.add_handler(CommandHandler("limbo", throttle_command()(limbo)))
-    
-    # Register callback query handler
-    application.add_handler(CallbackQueryHandler(handle_limbo_callback, pattern="^limbo_"))
-    
-    logger.info("Limbo game handlers registered successfully")
+        
+        # Get the current message text
+        current_text = update.callback_query.message.text
+        
+        # Generate new message text
+        multipliers_display = '\n'.join([f"{i+1}. {'?' if i > new_index else limbo_game['multipliers'][i]}" for i in range(5)])
+        new_text = (
+            "🎰 *Limbo Game*:\n\n"
+            "► If you are happy with the current multiplier, you can [Take] it.\n"
+            "► If you see the next multiplier, you won't be able to go back.\n"
+            "► System will auto [Take] when you reach the last multiplier box.\n\n"
+            f"{multipliers_display}\n\n"
+            f"*Bet Amount*: {limbo_game['bet']} 👾\n"
+            f"*Current Multiplier*: {limbo_game['multipliers'][new_index]}x"
+        )
+        
+        # Only edit if the text has changed
+        if current_text != new_text:
+            await send_limbo_message(update, user_id, context, game_id)
+    else:
+        await handle_take(update, context, user_id, game_id)

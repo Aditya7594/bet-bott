@@ -889,7 +889,7 @@ async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode="Markdown"
     )
     
-def finder_handlers(application: Application) -> None:
+def get_finder_handlers(application: Application) -> list:
     """Register all command and message handlers for the game"""
     
     conv_handler = ConversationHandler(
@@ -898,9 +898,12 @@ def finder_handlers(application: Application) -> None:
         fallbacks=[CommandHandler("finder", start)],
     )
     
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("status", status_command))
-    application.add_handler(CommandHandler("storage", storage_command))
-    application.add_handler(CommandHandler("finderleaderboard", leaderboard_command))
+    handlers = [
+        conv_handler,
+        CommandHandler("status", status_command),
+        CommandHandler("storage", storage_command),
+        CommandHandler("finderleaderboard", leaderboard_command)
+    ]
     
     logger.info("All game handlers registered successfully")
+    return handlers
