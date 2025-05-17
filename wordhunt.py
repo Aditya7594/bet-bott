@@ -14,36 +14,61 @@ from telegram.ext import (
 )
 from pymongo import MongoClient
 
-# Logging setup
-logging.basicConfig(level=logging.INFO)
+# Reduce logging level to WARNING
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# MongoDB setup
-client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
-db = client['telegram_bot']
-wordle_col = db["leaderboard"]
-wh_scores = db["wordhunt_scores"]
+# MongoDB setup with connection pooling
+try:
+    client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot',
+                        serverSelectionTimeoutMS=5000,
+                        maxPoolSize=50,
+                        minPoolSize=10)
+    db = client['telegram_bot']
+    wordle_col = db["leaderboard"]
+    wh_scores = db["wordhunt_scores"]
+except Exception as e:
+    logger.error(f"Failed to connect to MongoDB: {e}")
+    wordle_col = None
+    wh_scores = None
 
 # Game constants
 ABSENT, PRESENT, CORRECT = 0, 1, 2
 BLOCKS = {0: "🟥", 1: "🟨", 2: "🟩"}
-MAX_TRIALS = 25  # Standard Wordle is 6 trials
+MAX_TRIALS = 25
 
-# Load word lists
+# Load word lists once at module level
 WORD_LIST, CRICKET_WORD_LIST = [], []
-EASY_WORD_LIST = []  # First 17000 words (easier words)
+EASY_WORD_LIST = []
 THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
 
 # Game state storage
 wordle_games: Dict[int, Dict[str, Any]] = {}
 wordhunt_games = {}
-activity_timers = {}  # Store activity timers for wordhunt
+activity_timers = {}
+
+# Load word lists at module level
+def load_word_list():
+    global WORD_LIST, CRICKET_WORD_LIST, EASY_WORD_LIST
+    if not WORD_LIST or not CRICKET_WORD_LIST:
+        try:
+            with open(os.path.join(THIS_FOLDER, 'word_list.txt'), "r") as f:
+                WORD_LIST = [line.strip().lower() for line in f if line.strip()]
+            with open(os.path.join(THIS_FOLDER, 'cricket_word_list.txt'), "r") as f:
+                CRICKET_WORD_LIST = [line.strip().lower() for line in f if line.strip()]
+            EASY_WORD_LIST = WORD_LIST[:17000]  # First 17000 words are easier
+        except Exception as e:
+            logger.error(f"Failed to load word lists: {e}")
+
+# Load word lists at module level
+load_word_list()
 
 ###############################
 # SHARED FUNCTIONS
 ###############################
 
 def load_word_lists():
+    logging.info('Entering load_word_lists')
     global WORD_LIST, CRICKET_WORD_LIST, EASY_WORD_LIST
     if not WORD_LIST or not CRICKET_WORD_LIST:
         try:
@@ -60,6 +85,7 @@ def load_word_lists():
             logger.info(f"Loaded {len(CRICKET_WORD_LIST)} cricket words")
         except Exception as e:
             logger.error(f"Failed to load word lists: {e}")
+    logging.info('Exiting load_word_lists')
 
 # Load wordhunt word list
 try:
@@ -76,13 +102,7 @@ except Exception as e:
 ###############################
 
 def verify_solution(guess: str, solution: str) -> Sequence[int]:
-    """
-    Verifies a wordle guess against the solution.
-    Returns a list where each element indicates:
-    - CORRECT (2): Letter is correct and in correct position
-    - PRESENT (1): Letter is in the word but in wrong position
-    - ABSENT (0): Letter is not in the word
-    """
+    logging.info(f'Entering verify_solution: guess={guess}, solution={solution}')
     if len(guess) != len(solution):
         return []
     
@@ -104,10 +124,11 @@ def verify_solution(guess: str, solution: str) -> Sequence[int]:
             else:
                 result[i] = ABSENT
     
+    logging.info(f'Exiting verify_solution: result={result}')
     return result
 
 def adjust_score(user_id, name, chat_id, points):
-    """Update user score in MongoDB for Wordle games"""
+    logging.info(f'Entering adjust_score: user_id={user_id}, name={name}, chat_id={chat_id}, points={points}')
     user = wordle_col.find_one({"_id": user_id})
     if not user:
         wordle_col.insert_one({
@@ -124,15 +145,19 @@ def adjust_score(user_id, name, chat_id, points):
             {"_id": user_id},
             {"$set": {"points": new_total, "group_points": group_points, "name": name}}
         )
+    logging.info('Exiting adjust_score')
 
 def get_random_wordle_word():
-    """Get a random word from the EASY_WORD_LIST between 4-8 letters"""
+    logging.info('Entering get_random_wordle_word')
     # Filter words that are between 4 and 8 letters long
     eligible_words = [word for word in EASY_WORD_LIST if 4 <= len(word) <= 8]
-    return random.choice(eligible_words)
+    word = random.choice(eligible_words)
+    logging.info(f"Selected word: {word}")
+    logging.info('Exiting get_random_wordle_word')
+    return word
 
 async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Start a new Wordle game"""
+    logging.info('Entering wordle command')
     load_word_lists()
     logger.info("Wordle command received")
     
@@ -146,7 +171,6 @@ async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     word = get_random_wordle_word()
-    logger.info(f"Selected word: {word}")
     
     wordle_games[chat_id] = {
         'game_active': True,
@@ -158,9 +182,10 @@ async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     }
 
     await update.message.reply_text(f"WORDLE started! Guess the {len(word)}-letter word. You have {MAX_TRIALS} trials.")
+    logging.info('Exiting wordle command')
 
 async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Start a new Cricket Wordle game"""
+    logging.info('Entering cricketwordle command')
     load_word_lists()
     logger.info("Cricket Wordle command received")
     
@@ -192,9 +217,10 @@ async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     }
 
     await update.message.reply_text(f"CRICKETWORDLE started! Guess the {len(word)}-letter cricket-related word. You have {MAX_TRIALS} trials.")
+    logging.info('Exiting cricketwordle command')
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle both Wordle guesses and WordHunt words"""
+    logging.info('Entering handle_message')
     chat_id = update.effective_chat.id
     message_text = update.message.text.strip().lower()
     
@@ -205,9 +231,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Then check if there's an active WordHunt game
     elif chat_id in wordhunt_games and wordhunt_games[chat_id].ongoing_game:
         await scoring_wordhunt(update, context)
+    logging.info('Exiting handle_message')
 
 async def handle_wordle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Process a guess for an active Wordle game"""
+    logging.info('Entering handle_wordle_guess')
     chat_id = update.effective_chat.id
     if chat_id not in wordle_games or not wordle_games[chat_id]['game_active']:
         return
@@ -268,9 +295,10 @@ async def handle_wordle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.info("Game lost - out of tries")
 
     await update.message.reply_text(board_display)
+    logging.info('Exiting handle_wordle_guess')
 
 async def wordleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Display Wordle leaderboard for current group"""
+    logging.info('Entering wordleaderboard')
     chat_id = str(update.effective_chat.id)
     pipeline = [
         {"$project": {"name": {"$ifNull": ["$name", "Anonymous"]}, "points": {"$ifNull": [f"$group_points.{chat_id}", 0]}}},
@@ -283,17 +311,19 @@ async def wordleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     for i, user in enumerate(top, 1):
         msg += f"{i}. {user['name']} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
+    logging.info('Exiting wordleaderboard')
 
 async def wordglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Display global Wordle leaderboard"""
+    logging.info('Entering wordglobal')
     top = list(wordle_col.find().sort("points", -1).limit(10))
     msg = "🌍 Global Word Leaderboard:\n\n"
     for i, user in enumerate(top, 1):
         msg += f"{i}. {user.get('name', 'Anonymous')} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
+    logging.info('Exiting wordglobal')
     
 async def end_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """End an active Wordle game"""
+    logging.info('Entering end_wordle')
     chat_id = update.effective_chat.id
     
     if chat_id not in wordle_games or not wordle_games[chat_id]['game_active']:
@@ -308,10 +338,13 @@ async def end_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     
 
     logger.info(f"Wordle game ended in chat {chat_id}. Solution was: {solution}")
+    logging.info('Exiting end_wordle')
+
 class WordHuntGame:
     """Class to represent a WordHunt game"""
     
     def __init__(self):
+        logging.info('Initializing WordHuntGame')
         global wordhunt_word_list
    
         self.line_list = [word for word in wordhunt_word_list if len(word) >= 3]
@@ -323,8 +356,10 @@ class WordHuntGame:
         self.top_score_words = []
         self.player_words = {}
         self.last_activity_time = None 
+        logging.info('Initialized WordHuntGame')
 
     def create_letter_row(self):
+        logging.info('Creating letter row')
         vowels = ['a','e','i','o','u']
         non_vowels_common = ['b', 'c', 'd', 'f', 'g', 'h', 'k', 'l', 'm', 'n', 'p', 'r', 's', 't','w','y']
         non_vowels_rare = ['j', 'q', 'x', 'z','v']
@@ -336,14 +371,18 @@ class WordHuntGame:
             self.letter_row.append(random.choice(non_vowels_common))
         self.letter_row.append(random.choice(non_vowels_rare))
         random.shuffle(self.letter_row)
+        logging.info('Created letter row')
 
     def create_score_words(self):
+        logging.info('Creating score words')
         self.score_words = []
         for word in self.line_list:
             if self.can_spell(word):
                 self.score_words.append(word)
+        logging.info('Created score words')
 
     def can_spell(self, word):
+        logging.info(f'Checking if can spell: {word}')
         word_letters = list(word)
         available_letters = self.letter_row.copy()
         for letter in word_letters:
@@ -351,9 +390,11 @@ class WordHuntGame:
                 available_letters.remove(letter)
             else:
                 return False
+        logging.info(f'Checked can spell: {word}')
         return True
 
     def start(self):
+        logging.info('Starting WordHuntGame')
         if self.ongoing_game == False:
             self.ongoing_game = True
             self.last_activity_time = asyncio.get_event_loop().time()  # Set initial activity time
@@ -361,8 +402,10 @@ class WordHuntGame:
                 self.create_letter_row()
                 self.create_score_words()
             self.top_score_words = sorted(self.score_words, key=len, reverse=True)[0:5]
+        logging.info('Started WordHuntGame')
 
     def end_clear(self):
+        logging.info('Ending and clearing WordHuntGame')
         self.letter_row = []
         self.score_words = []
         self.found_words = []
@@ -370,34 +413,43 @@ class WordHuntGame:
         self.top_score_words = []
         self.player_words = {}
         self.last_activity_time = None
+        logging.info('Ended and cleared WordHuntGame')
 
     def ongoing_game_false(self):
+        logging.info('Setting ongoing_game to False')
         self.ongoing_game = False
+        logging.info('Set ongoing_game to False')
 
     def sort_player_words(self):
+        logging.info('Sorting player words')
         for player in self.player_words:
             self.player_words[player] = sorted(self.player_words[player], key=len, reverse=True)
+        logging.info('Sorted player words')
 
     def update_activity_time(self):
+        logging.info('Updating activity time')
         self.last_activity_time = asyncio.get_event_loop().time()
+        logging.info('Updated activity time')
 
 def update_wordhunt_score(group_id, player_name, score):
-    """Update user score in MongoDB for WordHunt games"""
+    logging.info(f'Updating wordhunt score: group_id={group_id}, player_name={player_name}, score={score}')
     wh_scores.update_one(
         {"group_id": group_id, "player_name": player_name},
         {"$inc": {"score": score}},
         upsert=True
     )
+    logging.info('Updated wordhunt score')
 
 def upper_letters(letter_row):
-    """Format letter row for display"""
+    logging.info(f'Uppercasing letter row: {letter_row}')
     upper = ""
     for letter in letter_row:
         upper = upper + " " + letter.upper()
+    logging.info(f'Uppercased letter row: {letter_row}')
     return upper
 
 async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Start a new WordHunt game"""
+    logging.info('Entering wordhunt command')
     global wordhunt_games
     global activity_timers
     
@@ -423,9 +475,10 @@ async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     
     await update.message.reply_html(upper_letters(wordhunt_games[chat_id].letter_row))
+    logging.info('Exiting wordhunt command')
 
 async def check_activity(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Check if there has been any activity in WordHunt in the last 30 seconds"""
+    logging.info('Checking activity')
     job = context.job
     chat_id = job.chat_id
     update = job.data
@@ -440,9 +493,10 @@ async def check_activity(context: ContextTypes.DEFAULT_TYPE) -> None:
     if current_time - wordhunt_games[chat_id].last_activity_time > 30:
         await end_wordhunt(update, context)
         job.schedule_removal()
+    logging.info('Checked activity')
 
 async def scoring_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Process a word submission for WordHunt"""
+    logging.info('Scoring wordhunt')
     chat_id = update.effective_chat.id
     if chat_id not in wordhunt_games or not wordhunt_games[chat_id].ongoing_game:
         return
@@ -472,9 +526,10 @@ async def scoring_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         update_wordhunt_score(chat_id, player_name, score)
 
         await update.message.reply_html(notif)
+    logging.info('Scored wordhunt')
 
 async def end_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """End an active WordHunt game"""
+    logging.info('Ending wordhunt')
     chat_id = update.effective_chat.id
     if chat_id not in wordhunt_games or not wordhunt_games[chat_id].ongoing_game:
         await update.message.reply_html("No active WordHunt game to end.")
@@ -510,9 +565,10 @@ async def end_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if chat_id in activity_timers and activity_timers[chat_id] is not None:
         activity_timers[chat_id].schedule_removal()
         activity_timers[chat_id] = None
+    logging.info('Ended wordhunt')
 
 async def whleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Display WordHunt leaderboard for current group"""
+    logging.info('Entering whleaderboard')
     chat_id = update.effective_chat.id
     top_players = list(wh_scores.find({"group_id": chat_id}).sort("score", -1).limit(10))
     
@@ -525,9 +581,10 @@ async def whleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         reply += f"{idx}. {player['player_name']} - {player['score']} pts\n"
     
     await update.message.reply_html(reply)
+    logging.info('Exiting whleaderboard')
 
 async def whglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Display global WordHunt leaderboard"""
+    logging.info('Entering whglobal')
     pipeline = [
         {"$group": {"_id": "$player_name", "score": {"$sum": "$score"}}},
         {"$sort": {"score": -1}},
@@ -544,10 +601,11 @@ async def whglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply += f"{idx}. {player['_id']} - {player['score']} pts\n"
 
     await update.message.reply_html(reply)
+    logging.info('Exiting whglobal')
 
 
 def register_handlers(application: Application) -> None:
-
+    logging.info('Registering wordhunt handlers')
     load_word_lists()
     
 
@@ -565,3 +623,4 @@ def register_handlers(application: Application) -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     logger.info("All game handlers registered successfully")
+    logging.info('Registered wordhunt handlers')

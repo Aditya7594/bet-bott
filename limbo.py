@@ -1,14 +1,33 @@
 import random
-import uuid
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import CallbackContext, CommandHandler, CallbackQueryHandler
 from pymongo import MongoClient
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import CallbackContext
+import uuid
+from datetime import datetime
+from collections import defaultdict
+from functools import lru_cache
 
-# MongoDB setup
-client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority')
-db = client['telegram_bot']
-users_collection = db['users']
-limbo_games_collection = db['limbo_games']  # Separate MongoDB collection for Limbo games
+# Reduce logging level to WARNING
+logging.basicConfig(level=logging.WARNING)
+logger = logging.getLogger(__name__)
+
+# MongoDB setup with connection pooling
+try:
+    client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority',
+                        serverSelectionTimeoutMS=5000,
+                        maxPoolSize=50,
+                        minPoolSize=10)
+    db = client['telegram_bot']
+    limbo_games_collection = db['limbo_games']
+    users_collection = db['users']
+except Exception as e:
+    logger.error(f"Failed to connect to MongoDB: {e}")
+    limbo_games_collection = None
+    users_collection = None
+
+# Game state using defaultdict for better performance
+limbo_games = defaultdict(dict)
 
 # Weighted multiplier generation thresholds for Limbo
 MULTIPLIER_THRESHOLDS = [
@@ -18,12 +37,22 @@ MULTIPLIER_THRESHOLDS = [
     (2.51, 4.0),  # 5% chance for multipliers between 2.51 - 4.0
 ]
 
-# MongoDB functions
+@lru_cache(maxsize=100)
 def get_user_by_id(user_id):
-    return users_collection.find_one({"user_id": user_id})
+    """Get user data from MongoDB with caching."""
+    if not users_collection:
+        return None
+    return users_collection.find_one({"user_id": str(user_id)})
 
 def save_user(user_data):
-    users_collection.update_one({"user_id": user_data["user_id"]}, {"$set": user_data}, upsert=True)
+    """Save user data to MongoDB."""
+    if not users_collection:
+        return
+    users_collection.update_one(
+        {"user_id": user_data["user_id"]},
+        {"$set": user_data},
+        upsert=True
+    )
 
 # Limbo Game functions
 def generate_weighted_multiplier():

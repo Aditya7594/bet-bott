@@ -11,6 +11,7 @@ import asyncio
 from datetime import datetime, timedelta
 from telegram import User
 from functools import lru_cache
+from collections import defaultdict
 
 @lru_cache(maxsize=512)
 def get_user_name_cached_sync(user_id: int, fallback: str = "Player") -> str:
@@ -29,24 +30,33 @@ def escape_markdown(text: str) -> str:
     for char in escape_chars:
         text = text.replace(char, f'\\{char}')
     return text
-# Set up logging
+# Set up logging - reduce to WARNING level
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.WARNING
 )
 logger = logging.getLogger(__name__)
 
-# MongoDB setup
-client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority')
-db = client['telegram_bot']
-user_collection = db["users"]
-game_collection = db["games"]
-achievements_collection = db["achievements"]  # Add this line
+# MongoDB setup with connection pooling
+try:
+    client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority',
+                        serverSelectionTimeoutMS=5000,
+                        maxPoolSize=50,
+                        minPoolSize=10)
+    db = client['telegram_bot']
+    user_collection = db["users"]
+    game_collection = db["games"]
+    achievements_collection = db["achievements"]
+except Exception as e:
+    logger.error(f"Failed to connect to MongoDB: {e}")
+    user_collection = None
+    game_collection = None
+    achievements_collection = None
 
-# Game state
-cricket_games = {}
-reminder_sent = {}
-game_activity = {}
+# Game state - use defaultdict for better performance
+cricket_games = defaultdict(dict)
+reminder_sent = defaultdict(bool)
+game_activity = defaultdict(dict)
 
 ACHIEVEMENT_CATEGORIES = [
     "Batter", "Bowler", "Game", 
@@ -65,14 +75,6 @@ ACHIEVEMENTS = {
         {"id": "half_century", "name": "Half Century", "description": "Score 50 runs in total", "requirement": {"type": "runs", "value": 50}},
         {"id": "seventy_runs", "name": "Well Played", "description": "Score 70 runs in total", "requirement": {"type": "runs", "value": 70}},
         {"id": "century", "name": "Century", "description": "Score 100 runs in total", "requirement": {"type": "runs", "value": 100}},
-        {"id": "one_fifty", "name": "One-Fifty", "description": "Score 150 runs in total", "requirement": {"type": "runs", "value": 150}},
-        {"id": "double_century", "name": "Double Century", "description": "Score 200 runs in total", "requirement": {"type": "runs", "value": 200}},
-        {"id": "triple_century", "name": "Triple Century", "description": "Score 300 runs in total", "requirement": {"type": "runs", "value": 300}},
-        {"id": "four_hundred", "name": "Four Hundred Club", "description": "Score 400 runs in total", "requirement": {"type": "runs", "value": 400}},
-        {"id": "run_machine", "name": "Run Machine", "description": "Score 500 runs in total", "requirement": {"type": "runs", "value": 500}},
-        {"id": "seven_fifty", "name": "Run Accumulator", "description": "Score 750 runs in total", "requirement": {"type": "runs", "value": 750}},
-        {"id": "batting_legend", "name": "Batting Legend", "description": "Score 1000 runs in total", "requirement": {"type": "runs", "value": 1000}},
-        {"id": "batting_immortal", "name": "Batting Immortal", "description": "Score 2000 runs in total", "requirement": {"type": "runs", "value": 2000}},
     ],
     "Bowler": [
         {"id": "first_wicket", "name": "First Wicket", "description": "Take your first wicket", "requirement": {"type": "wickets", "value": 1}},

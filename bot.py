@@ -26,6 +26,27 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Callbac
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters, ChatMemberHandler
 from telegram.constants import ChatType
 from token_1 import token
+
+# Reduce logging level to WARNING
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.WARNING
+)
+logger = logging.getLogger(__name__)
+
+# MongoDB setup with connection pooling and timeout
+try:
+    client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot',
+                        serverSelectionTimeoutMS=5000,
+                        maxPoolSize=50,
+                        minPoolSize=10)
+    db = client['telegram_bot']
+    user_collection = db['users']
+except Exception as e:
+    logger.error(f"Failed to connect to MongoDB: {e}")
+    user_collection = None
+
+# Import game modules after MongoDB setup
 from genshin_game import get_genshin_handlers, send_artifact_reward
 from multiplayer import (
     get_multiplayer_handlers,

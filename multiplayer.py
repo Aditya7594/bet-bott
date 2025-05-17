@@ -7,34 +7,36 @@ from datetime import datetime, timedelta
 import time
 import asyncio
 from functools import lru_cache
+from collections import defaultdict
 
-# Set up logging
+# Reduce logging level to WARNING
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.WARNING
 )
 logger = logging.getLogger("Multiplayer")
 
-# MongoDB setup
-client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority')
-db = client['telegram_bot']
-user_collection = db['users']
-game_collection = db["multiplayer_games"]
+# MongoDB setup with connection pooling
+try:
+    client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority',
+                        serverSelectionTimeoutMS=5000,
+                        maxPoolSize=50,
+                        minPoolSize=10)
+    db = client['telegram_bot']
+    user_collection = db['users']
+    game_collection = db["multiplayer_games"]
+except Exception as e:
+    logger.error(f"Failed to connect to MongoDB: {e}")
+    user_collection = None
+    game_collection = None
 
-multiplayer_games = {}
+# Use defaultdict for better performance
+multiplayer_games = defaultdict(dict)
 games_lock = asyncio.Lock()
-
-# Track the last inline button message for cleanup
-group_message_ids = {}
-
-# Add a dictionary to track turn timers
-turn_timers = {}
-
-# Track last DM message IDs for each player
-player_dm_message_ids = {}
-
-# Reminder timer for group turn notifications
-turn_reminder_tasks = {}
+group_message_ids = defaultdict(int)
+turn_timers = defaultdict(dict)
+player_dm_message_ids = defaultdict(int)
+turn_reminder_tasks = defaultdict(dict)
 
 # Fix pytz import for environments where it may not be installed
 try:
@@ -44,11 +46,10 @@ except ImportError:
     from datetime import timezone
     UTC = timezone.utc
 
+@lru_cache(maxsize=100)
 def get_current_utc_time():
     """Get current time in UTC with timezone info."""
-    current_time = datetime.now(UTC)
-    logger.debug(f"Current UTC time: {current_time}")
-    return current_time
+    return datetime.now(UTC)
 
 def ensure_utc(dt):
     """Ensure datetime is timezone-aware and in UTC."""
@@ -1257,7 +1258,7 @@ async def update_multiplayer_group_message(playing_id: str, context: CallbackCon
         text += f"\n\n{result_text}"
 
     # Update group message (no buttons)
-    prev_msg_id = group_message_ids.get(playing_id)
+    prev_msg_id = group_message_ids[playing_id]
     if prev_msg_id and prev_msg_id != game["message_id"]:
         try:
             await context.bot.delete_message(chat_id=game["group_chat_id"], message_id=prev_msg_id)
@@ -1310,7 +1311,7 @@ async def start_turn_timer(playing_id: str, context: CallbackContext):
                 bowler_tag = "Bowler"
 
             # Clean up previous timeout message
-            prev_msg_id = group_message_ids.get(playing_id)
+            prev_msg_id = group_message_ids[playing_id]
             if prev_msg_id:
                 try:
                     await context.bot.delete_message(chat_id=game["group_chat_id"], message_id=prev_msg_id)

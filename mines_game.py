@@ -3,14 +3,34 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackContext, CommandHandler, CallbackQueryHandler
 from pymongo import MongoClient
 from telegram.constants import ParseMode
+import logging
+from collections import defaultdict
+from functools import lru_cache
 
-# MongoDB client to store user data
-client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority')
-db = client['telegram_bot']
-users_collection = db['users']
+# Reduce logging level to WARNING
+logging.basicConfig(level=logging.WARNING)
+logger = logging.getLogger(__name__)
 
-# Function to get user data from MongoDB
+# MongoDB setup with connection pooling
+try:
+    client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority',
+                        serverSelectionTimeoutMS=5000,
+                        maxPoolSize=50,
+                        minPoolSize=10)
+    db = client['telegram_bot']
+    users_collection = db['users']
+except Exception as e:
+    logger.error(f"Failed to connect to MongoDB: {e}")
+    users_collection = None
+
+# Game state using defaultdict for better performance
+mines_games = defaultdict(dict)
+
+@lru_cache(maxsize=100)
 def get_user_by_id(user_id):
+    """Get user data from MongoDB with caching."""
+    if not users_collection:
+        return None
     return users_collection.find_one({"user_id": str(user_id)})
 
 # Function to save user data to MongoDB
