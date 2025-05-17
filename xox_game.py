@@ -1,332 +1,329 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import CallbackContext, CommandHandler, CallbackQueryHandler
+from __future__ import annotations
+
+import random
+import logging
+import asyncio
+from collections import defaultdict
+from functools import lru_cache, wraps
+from typing import Dict, List, Optional
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler, ContextTypes,
+    filters, ThrottlingHandler
+)
 from pymongo import MongoClient
-import uuid
-from datetime import datetime, timedelta
+import time as time_module
 
-# MongoDB setup
-client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
-db = client['telegram_bot']
-games_collection = db['xox_games']
-stats_collection = db['xox_stats']
+# Reduce logging level to WARNING
+logging.basicConfig(level=logging.WARNING)
+logger = logging.getLogger(__name__)
 
-def check_winner(board):
-    for row in board:
-        if row.count(row[0]) == 3 and row[0] != "":
-            return True
-    for col in range(3):
-        if board[0][col] == board[1][col] == board[2][col] and board[0][col] != "":
-            return True
-    if board[0][0] == board[1][1] == board[2][2] and board[0][0] != "":
-        return True
-    if board[0][2] == board[1][1] == board[2][0] and board[0][2] != "":
-        return True
-    return False
+# Command throttling settings
+THROTTLE_RATE = 1.0  # seconds between commands
+THROTTLE_BURST = 3   # number of commands allowed in burst
 
-def generate_board_buttons(board, game_id):
-    keyboard = []
-    for i in range(3):
-        row = []
-        for j in range(3):
-            cell = board[i][j]
-            text = cell if cell else "⬜"
-            row.append(InlineKeyboardButton(text, callback_data=f"{game_id}:{i}_{j}"))
-        keyboard.append(row)
-    # Add forfeit button
-    keyboard.append([InlineKeyboardButton("🏳️ Forfeit", callback_data=f"{game_id}:forfeit")])
-    return InlineKeyboardMarkup(keyboard)
+# Command throttling decorator
+def throttle_command(rate=THROTTLE_RATE, burst=THROTTLE_BURST):
+    def decorator(func):
+        last_called = {}
+        tokens = defaultdict(lambda: burst)
+        last_update = {}
 
-def update_stats(winner_id, loser_id):
-    # Update winner stats
-    stats_collection.update_one(
-        {"user_id": winner_id},
-        {
-            "$inc": {"wins": 1, "games_played": 1},
-            "$setOnInsert": {"losses": 0, "draws": 0}
-        },
-        upsert=True
-    )
-    # Update loser stats
-    stats_collection.update_one(
-        {"user_id": loser_id},
-        {
-            "$inc": {"losses": 1, "games_played": 1},
-            "$setOnInsert": {"wins": 0, "draws": 0}
-        },
-        upsert=True
-    )
+        @wraps(func)
+        async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+            user_id = update.effective_user.id
+            current_time = time_module.time()
 
-async def xox(update: Update, context: CallbackContext) -> None:
+            # Initialize user's last called time
+            if user_id not in last_called:
+                last_called[user_id] = 0
+                tokens[user_id] = burst
+
+            # Check if enough time has passed to add a token
+            time_passed = current_time - last_called[user_id]
+            if time_passed >= rate:
+                new_tokens = int(time_passed / rate)
+                tokens[user_id] = min(burst, tokens[user_id] + new_tokens)
+                last_called[user_id] = current_time
+
+            # Check if user has tokens available
+            if tokens[user_id] <= 0:
+                await update.message.reply_text(
+                    f"Please wait {rate:.1f} seconds before using this command again."
+                )
+                return
+
+            # Use a token and execute the command
+            tokens[user_id] -= 1
+            return await func(update, context, *args, **kwargs)
+
+        return wrapper
+    return decorator
+
+# Update filter function
+def should_process_update(update: Update) -> bool:
+    """Filter updates to reduce processing load."""
+    if not update or not update.effective_user:
+        return False
+    
+    # Skip updates from bots
+    if update.effective_user.is_bot:
+        return False
+    
+    # Skip non-message updates
+    if not update.message and not update.callback_query:
+        return False
+    
+    return True
+
+# MongoDB setup with connection pooling and reduced operations
+try:
+    client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot',
+                        serverSelectionTimeoutMS=5000,
+                        maxPoolSize=50,
+                        minPoolSize=10,
+                        maxIdleTimeMS=30000)
+    db = client['telegram_bot']
+    user_collection = db['users']
+except Exception as e:
+    logger.error(f"Failed to connect to MongoDB: {e}")
+    user_collection = None
+
+# Game state storage using defaultdict for better performance
+xox_games = defaultdict(dict)
+
+# Cache for user data
+@lru_cache(maxsize=1000)
+def get_user_by_id_cached(user_id: str) -> Optional[Dict]:
+    """Cached version of get_user_by_id to reduce database operations."""
+    if not user_collection:
+        return None
+    return user_collection.find_one({"user_id": user_id})
+
+# Cache for user names
+@lru_cache(maxsize=1000)
+def get_user_name_cached(user_id: str) -> str:
+    """Cached version of get_user_name to reduce database operations."""
+    user = get_user_by_id_cached(user_id)
+    return user.get('first_name', 'Unknown') if user else 'Unknown'
+
+@throttle_command()
+async def xox(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle xox command with throttling."""
+    if not should_process_update(update):
+        return
+
     user = update.effective_user
     user_id = str(user.id)
-    game_id = str(uuid.uuid4())
     
-    # Removed the check that limits users to only one active game
-    
-    new_game = {
-        "_id": game_id,
-        "player1": user_id,
-        "player2": None,
-        "turn": user_id,
-        "board": [["", "", ""] for _ in range(3)],
-        "active": True,
-        "created_at": datetime.utcnow(),
-        "last_move": datetime.utcnow()
+    # Get user data with caching
+    user_data = get_user_by_id_cached(user_id)
+    if not user_data:
+        await update.message.reply_text("Please use /start first to register.")
+        return
+
+    # Check if user has enough credits
+    if user_data.get('credits', 0) < 100:
+        await update.message.reply_text("You need at least 100 credits to play.")
+        return
+
+    # Create game state
+    game_id = str(random.randint(100000, 999999))
+    xox_games[game_id] = {
+        'host': user_id,
+        'players': [user_id],
+        'bet_amount': 100,
+        'status': 'waiting',
+        'current_turn': user_id,
+        'board': [' ' for _ in range(9)],
+        'last_action': time_module.time()
     }
-    games_collection.insert_one(new_game)
-    
-    await update.message.reply_text(
-        "🎮 *Tic-Tac-Toe (XOX) Game Started!* 🎮\n\n"
-        f"Player 1: {user.mention_html()} ❌\n"
-        "Waiting for Player 2 to join! Click any cell to join the game.\n\n"
-        "Game will timeout after 5 minutes of inactivity.",
-        reply_markup=generate_board_buttons(new_game["board"], game_id),
-        parse_mode="HTML"
+
+    # Create keyboard
+    keyboard = [
+        [InlineKeyboardButton("Join Game", callback_data=f"xox_join_{game_id}")],
+        [InlineKeyboardButton("Start Game", callback_data=f"xox_start_{game_id}")]
+    ]
+
+    message = await update.message.reply_text(
+        f"⭕ XOX Game\n\n"
+        f"Game ID: {game_id}\n"
+        f"Host: {get_user_name_cached(user_id)}\n"
+        f"Bet: {xox_games[game_id]['bet_amount']} credits\n"
+        f"Players: 1/2\n\n"
+        f"Waiting for opponent to join...",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-async def handle_xox_click(update: Update, context: CallbackContext) -> None:
+async def handle_xox_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle xox game callbacks with async optimization."""
     query = update.callback_query
-    user = update.effective_user
-    user_id = str(user.id)
     await query.answer()
     
-    try:
-        game_id, action = query.data.split(":")
-        if action == "forfeit":
-            await handle_forfeit(query, game_id, user_id)
+    user_id = str(query.from_user.id)
+    action, game_id = query.data.split('_')[1:3]
+
+    if game_id not in xox_games:
+        await query.edit_message_text("Game expired. Use /xox to start a new game.")
+        return
+
+    game = xox_games[game_id]
+
+    if action == "join":
+        if user_id in game['players']:
+            await query.answer("You're already in this game!")
             return
-        row, col = map(int, action.split("_"))
-    except ValueError:
-        await query.answer("Invalid move data!")
-        return
 
-    game = games_collection.find_one({"_id": game_id, "active": True})
-    if not game:
-        await query.edit_message_text("This game is no longer active or doesn't exist.")
-        return
+        if len(game['players']) >= 2:
+            await query.answer("Game is full!")
+            return
 
-    # Check for game timeout (5 minutes)
-    if (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
-        await handle_timeout(query, game)
-        return
-
-    if game["player2"] is None and user_id != game["player1"]:
-        game["player2"] = user_id
-        games_collection.update_one(
-            {"_id": game_id},
-            {
-                "$set": {
-                    "player2": user_id,
-                    "last_move": datetime.utcnow()
-                }
-            }
-        )
-        # Fix: Correct mention for Player 1
-        player1_user = query.message.reply_to_message.from_user
-        await query.edit_message_text(
-            f"🎮 *Tic-Tac-Toe (XOX) Game Started!* 🎮\n\n"
-            f"Player 1: {player1_user.mention_html()} ❌\n"
-            f"Player 2: {user.mention_html()} ⭕\n\n"
-            f"Current turn: {player1_user.mention_html()}",
-            reply_markup=generate_board_buttons(game["board"], game_id),
-            parse_mode="HTML"
-        )
-        return
-
-    if user_id not in [game["player1"], game["player2"]]:
-        await query.answer("You're not part of this game!")
-        return
-
-    if game["turn"] != user_id:
-        await query.answer("It's not your turn!")
-        return
-
-    if game["board"][row][col]:
-        await query.answer("This cell is already taken!")
-        return
-
-    symbol = "❌" if user_id == game["player1"] else "⭕"
-    game["board"][row][col] = symbol
-    game["last_move"] = datetime.utcnow()
-
-    if check_winner(game["board"]):
-        winner = "Player 1" if user_id == game["player1"] else "Player 2"
-        games_collection.update_one({"_id": game_id}, {"$set": {"active": False}})
-        update_stats(user_id, game["player2"] if user_id == game["player1"] else game["player1"])
+        game['players'].append(user_id)
         
-        await query.edit_message_text(
-            f"🎉 *Game Over!* 🎉\n\n"
-            f"{user.mention_html()} ({symbol}) wins! 🏆\n\n"
-            f"Final Board:",
-            reply_markup=generate_board_buttons(game["board"], game_id),
-            parse_mode="HTML"
-        )
-        return
+        # Update game message
+        players_text = "\n".join([f"- {get_user_name_cached(pid)}" for pid in game['players']])
+        keyboard = [
+            [InlineKeyboardButton("Join Game", callback_data=f"xox_join_{game_id}")],
+            [InlineKeyboardButton("Start Game", callback_data=f"xox_start_{game_id}")]
+        ]
 
-    if all(cell for row in game["board"] for cell in row):
-        games_collection.update_one({"_id": game_id}, {"$set": {"active": False}})
-        # Fix: Update both players' stats for a draw
-        stats_collection.update_one(
-            {"user_id": game["player1"]},
-            {"$inc": {"draws": 1, "games_played": 1}, "$setOnInsert": {"wins": 0, "losses": 0}},
-            upsert=True
+        await query.edit_message_text(
+            f"⭕ XOX Game\n\n"
+            f"Game ID: {game_id}\n"
+            f"Host: {get_user_name_cached(game['host'])}\n"
+            f"Bet: {game['bet_amount']} credits\n"
+            f"Players ({len(game['players'])}/2):\n{players_text}\n\n"
+            f"Waiting for opponent to join...",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        stats_collection.update_one(
-            {"user_id": game["player2"]},
-            {"$inc": {"draws": 1, "games_played": 1}, "$setOnInsert": {"wins": 0, "losses": 0}},
-            upsert=True
-        )
+
+    elif action == "start":
+        if user_id != game['host']:
+            await query.answer("Only the host can start the game!")
+            return
+
+        if len(game['players']) < 2:
+            await query.answer("Need 2 players to start!")
+            return
+
+        game['status'] = 'playing'
+        game['current_turn'] = game['players'][0]
         
+        # Create game board
+        keyboard = []
+        for i in range(0, 9, 3):
+            row = []
+            for j in range(3):
+                row.append(InlineKeyboardButton(" ", callback_data=f"xox_move_{game_id}_{i+j}"))
+            keyboard.append(row)
+
         await query.edit_message_text(
-            "🤝 *It's a Draw!* 🤝\n\n"
-            f"Final Board:",
-            reply_markup=generate_board_buttons(game["board"], game_id),
-            parse_mode="HTML"
+            f"⭕ XOX Game\n\n"
+            f"Game ID: {game_id}\n"
+            f"Bet: {game['bet_amount']} credits\n"
+            f"Players:\n"
+            f"- {get_user_name_cached(game['players'][0])} (X)\n"
+            f"- {get_user_name_cached(game['players'][1])} (O)\n\n"
+            f"Current Turn: {get_user_name_cached(game['current_turn'])}\n"
+            f"Make your move!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return
 
-    next_turn = game["player2"] if user_id == game["player1"] else game["player1"]
-    games_collection.update_one(
-        {"_id": game_id},
-        {
-            "$set": {
-                "board": game["board"],
-                "turn": next_turn,
-                "last_move": datetime.utcnow()
-            }
-        }
-    )
+    elif action == "move":
+        if user_id != game['current_turn']:
+            await query.answer("It's not your turn!")
+            return
 
-    # Fix: Correctly identify the next player's turn
-    player1_user = query.message.reply_to_message.from_user
-    player2_user = user if user_id == game["player2"] else None
-    
-    # If the second player is not yet known from this context, handle it differently
-    if not player2_user and game["player2"]:
-        # Just mention that it's the next player's turn without trying to get their user object
-        next_player_text = "Player 2's turn" if next_turn == game["player2"] else "Player 1's turn"
+        position = int(query.data.split('_')[3])
+        if game['board'][position] != ' ':
+            await query.answer("This position is already taken!")
+            return
+
+        # Make move
+        symbol = 'X' if game['players'].index(user_id) == 0 else 'O'
+        game['board'][position] = symbol
+
+        # Check for winner
+        winner = check_winner(game['board'])
+        if winner:
+            # Game won
+            winnings = int(game['bet_amount'] * 2)
+            message = f"🎉 {get_user_name_cached(user_id)} won {winnings} credits!"
+            
+            # Update user credits asynchronously
+            if user_collection:
+                await asyncio.to_thread(
+                    user_collection.update_one,
+                    {"user_id": user_id},
+                    {"$inc": {"credits": winnings}}
+                )
+            
+            await query.edit_message_text(message)
+            del xox_games[game_id]
+            return
+
+        # Check for draw
+        if ' ' not in game['board']:
+            await query.edit_message_text("Game ended in a draw!")
+            del xox_games[game_id]
+            return
+
+        # Switch turns
+        next_player_index = (game['players'].index(user_id) + 1) % 2
+        game['current_turn'] = game['players'][next_player_index]
+
+        # Update board
+        keyboard = []
+        for i in range(0, 9, 3):
+            row = []
+            for j in range(3):
+                row.append(InlineKeyboardButton(
+                    game['board'][i+j],
+                    callback_data=f"xox_move_{game_id}_{i+j}"
+                ))
+            keyboard.append(row)
+
         await query.edit_message_text(
-            f"🎮 *Tic-Tac-Toe (XOX) Game in Progress* 🎮\n\n"
-            f"Player 1: {player1_user.mention_html()} ❌\n"
-            f"Player 2: Unknown ⭕\n\n"
-            f"Current turn: {next_player_text}",
-            reply_markup=generate_board_buttons(game["board"], game_id),
-            parse_mode="HTML"
-        )
-    else:
-        # If we have both player objects
-        next_player = player2_user if next_turn == game["player2"] else player1_user
-        await query.edit_message_text(
-            f"🎮 *Tic-Tac-Toe (XOX) Game in Progress* 🎮\n\n"
-            f"Player 1: {player1_user.mention_html()} ❌\n"
-            f"Player 2: {player2_user.mention_html()} ⭕\n\n"
-            f"Current turn: {next_player.mention_html()}",
-            reply_markup=generate_board_buttons(game["board"], game_id),
-            parse_mode="HTML"
+            f"⭕ XOX Game\n\n"
+            f"Game ID: {game_id}\n"
+            f"Bet: {game['bet_amount']} credits\n"
+            f"Players:\n"
+            f"- {get_user_name_cached(game['players'][0])} (X)\n"
+            f"- {get_user_name_cached(game['players'][1])} (O)\n\n"
+            f"Current Turn: {get_user_name_cached(game['current_turn'])}\n"
+            f"Make your move!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-async def handle_forfeit(query, game_id, user_id):
-    game = games_collection.find_one({"_id": game_id, "active": True})
-    if not game:
-        await query.edit_message_text("This game is no longer active or doesn't exist.")
-        return
+def check_winner(board: List[str]) -> Optional[str]:
+    """Check if there's a winner in the XOX game."""
+    # Check rows
+    for i in range(0, 9, 3):
+        if board[i] == board[i+1] == board[i+2] != ' ':
+            return board[i]
 
-    if user_id not in [game["player1"], game["player2"]]:
-        await query.answer("You're not part of this game!")
-        return
+    # Check columns
+    for i in range(3):
+        if board[i] == board[i+3] == board[i+6] != ' ':
+            return board[i]
 
-    # Fix: Correctly identify the winner when player forfeits
-    winner_id = game["player2"] if user_id == game["player1"] else game["player1"]
-    games_collection.update_one({"_id": game_id}, {"$set": {"active": False}})
+    # Check diagonals
+    if board[0] == board[4] == board[8] != ' ':
+        return board[0]
+    if board[2] == board[4] == board[6] != ' ':
+        return board[2]
+
+    return None
+
+def register_handlers(application: Application) -> None:
+    """Register handlers with throttling."""
+    # Add throttling handler
+    application.add_handler(ThrottlingHandler(THROTTLE_RATE, THROTTLE_BURST))
+
+    # Register command handlers with throttling
+    application.add_handler(CommandHandler("xox", throttle_command()(xox)))
     
-    # Only update stats if player2 exists (game has started)
-    if game["player2"]:
-        update_stats(winner_id, user_id)
+    # Register callback query handler
+    application.add_handler(CallbackQueryHandler(handle_xox_callback, pattern="^xox_"))
     
-    # Get the correct user mention for winner announcement
-    player1_user = query.message.reply_to_message.from_user
-    forfeiter_text = player1_user.mention_html() if user_id == game["player1"] else query.from_user.mention_html()
-    winner_text = player1_user.mention_html() if user_id == game["player2"] else query.from_user.mention_html()
-    
-    await query.edit_message_text(
-        f"🏳️ *Game Forfeited!* 🏳️\n\n"
-        f"{forfeiter_text} has forfeited the game.\n"
-        f"Winner: {winner_text}\n\n"
-        f"Final Board:",
-        reply_markup=generate_board_buttons(game["board"], game_id),
-        parse_mode="HTML"
-    )
-
-async def handle_timeout(query, game):
-    games_collection.update_one({"_id": game["_id"]}, {"$set": {"active": False}})
-    if game["player2"]:
-        # Update both players' stats for timeout (counting as draws)
-        stats_collection.update_one(
-            {"user_id": game["player1"]},
-            {"$inc": {"draws": 1, "games_played": 1}, "$setOnInsert": {"wins": 0, "losses": 0}},
-            upsert=True
-        )
-        stats_collection.update_one(
-            {"user_id": game["player2"]},
-            {"$inc": {"draws": 1, "games_played": 1}, "$setOnInsert": {"wins": 0, "losses": 0}},
-            upsert=True
-        )
-    
-    await query.edit_message_text(
-        "⏰ *Game Timed Out!* ⏰\n\n"
-        "The game has ended due to inactivity.\n"
-        f"Final Board:",
-        reply_markup=generate_board_buttons(game["board"], game["_id"]),
-        parse_mode="HTML"
-    )
-
-async def xox_stats(update: Update, context: CallbackContext) -> None:
-    user_id = str(update.effective_user.id)
-    stats = stats_collection.find_one({"user_id": user_id})
-    
-    if not stats:
-        await update.message.reply_text(
-            "📊 *Your XOX Game Statistics* 📊\n\n"
-            "You haven't played any games yet!",
-            parse_mode="HTML"
-        )
-        return
-
-    await update.message.reply_text(
-        f"📊 *Your XOX Game Statistics* 📊\n\n"
-        f"Games Played: {stats.get('games_played', 0)}\n"
-        f"Wins: {stats.get('wins', 0)}\n"
-        f"Losses: {stats.get('losses', 0)}\n"
-        f"Draws: {stats.get('draws', 0)}\n"
-        f"Win Rate: {(stats.get('wins', 0) / stats.get('games_played', 1) * 100):.1f}%",
-        parse_mode="HTML"
-    )
-
-async def handle_xox_message(update: Update, context: CallbackContext, game: dict) -> None:
-    """Handle messages during an active XOX game."""
-    user_id = str(update.effective_user.id)
-    
-    # Check if the message is from a player in the game
-    if user_id not in [game["player1"], game["player2"]]:
-        return
-        
-    # Check for game timeout
-    if (datetime.utcnow() - game["last_move"]) > timedelta(minutes=5):
-        await handle_timeout(update.callback_query, game)
-        return
-        
-    # Ignore messages during active games
-    await update.message.delete()
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="⚠️ Please use the game buttons to play!",
-        delete_after=3
-    )
-
-def get_xox_handlers():
-    return [
-        CommandHandler("xox", xox),
-        CallbackQueryHandler(handle_xox_click, pattern=r"^[0-9a-f-]+:[0-9_]+$"),
-        CallbackQueryHandler(handle_xox_click, pattern=r"^[0-9a-f-]+:forfeit$"),
-        CommandHandler("xoxstats", xox_stats)
-    ]
+    logger.info("XOX game handlers registered successfully")

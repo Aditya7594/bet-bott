@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 import logging
 from pymongo import MongoClient
 import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
-from telegram.ext import CallbackContext, CallbackQueryHandler, CommandHandler
+from telegram.ext import CallbackContext, CallbackQueryHandler, CommandHandler, ContextTypes
 from datetime import datetime, timedelta
-import time
+import time as time_module
 import asyncio
-from functools import lru_cache
+from functools import lru_cache, wraps
 from collections import defaultdict
+from typing import Dict, List, Optional
 
 # Reduce logging level to WARNING
 logging.basicConfig(
@@ -16,12 +19,71 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Multiplayer")
 
+# Command throttling settings
+THROTTLE_RATE = 1.0  # seconds between commands
+THROTTLE_BURST = 3   # number of commands allowed in burst
+
+# Command throttling decorator
+def throttle_command(rate=THROTTLE_RATE, burst=THROTTLE_BURST):
+    def decorator(func):
+        last_called = {}
+        tokens = defaultdict(lambda: burst)
+        last_update = {}
+
+        @wraps(func)
+        async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+            user_id = update.effective_user.id
+            current_time = time_module.time()
+
+            # Initialize user's last called time
+            if user_id not in last_called:
+                last_called[user_id] = 0
+                tokens[user_id] = burst
+
+            # Check if enough time has passed to add a token
+            time_passed = current_time - last_called[user_id]
+            if time_passed >= rate:
+                new_tokens = int(time_passed / rate)
+                tokens[user_id] = min(burst, tokens[user_id] + new_tokens)
+                last_called[user_id] = current_time
+
+            # Check if user has tokens available
+            if tokens[user_id] <= 0:
+                await update.message.reply_text(
+                    f"Please wait {rate:.1f} seconds before using this command again."
+                )
+                return
+
+            # Use a token and execute the command
+            tokens[user_id] -= 1
+            return await func(update, context, *args, **kwargs)
+
+        return wrapper
+    return decorator
+
+# Update filter function
+def should_process_update(update: Update) -> bool:
+    """Filter updates to reduce processing load."""
+    if not update or not update.effective_user:
+        return False
+    
+    # Skip updates from bots
+    if update.effective_user.is_bot:
+        return False
+    
+    # Skip non-message updates
+    if not update.message and not update.callback_query:
+        return False
+    
+    return True
+
 # MongoDB setup with connection pooling
 try:
-    client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority',
+    client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot',
                         serverSelectionTimeoutMS=5000,
                         maxPoolSize=50,
-                        minPoolSize=10)
+                        minPoolSize=10,
+                        maxIdleTimeMS=30000)
     db = client['telegram_bot']
     user_collection = db['users']
     game_collection = db["multiplayer_games"]
@@ -136,125 +198,164 @@ async def get_game_data(playing_id: str) -> dict:
             return game
         return None
 
-async def multiplayer(update: Update, context: CallbackContext) -> None:
+@throttle_command()
+async def multiplayer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle multiplayer command with throttling."""
+    if not should_process_update(update):
+        return
+
     user = update.effective_user
-    chat_id = update.effective_chat.id
+    user_id = str(user.id)
     
-    if update.effective_chat.type == "private":
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚠️ This command can only be used in group chats!")
+    # Get user data with caching
+    user_data = get_user_by_id_cached(user_id)
+    if not user_data:
+        await update.message.reply_text("Please use /start first to register.")
         return
-    
-    if not await check_user_started_bot(update, context):
+
+    # Check if user has enough credits
+    if user_data.get('credits', 0) < 100:
+        await update.message.reply_text("You need at least 100 credits to play.")
         return
-    
-    max_overs = 5  # Default to 5 overs
-    max_wickets = 5  # Default to 5 wickets
-    
-    if context.args:
-        try:
-            if len(context.args) >= 1:
-                max_overs = int(context.args[0])
-            if len(context.args) >= 2:
-                max_wickets = int(context.args[1])
-            if max_overs < 1:
-                max_overs = 1
-            if max_wickets < 1:
-                max_wickets = 1
-        except ValueError:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="⚠️ Invalid parameters! Format: /multiplayer [overs] [wickets]")
-            return
-    
-    game_id = f"{chat_id}_{int(time.time())}"
-    
-    # Create game data
-    game_data = {
-        "player1": user.id,
-        "player2": None,
-        "score1": 0,
-        "score2": 0,
-        "score": 0,
-        "message_id": {},
-        "over": 0,
-        "ball": 0,
-        "batter": None,
-        "bowler": None,
-        "toss_winner": None,
-        "innings": 1,
-        "wickets1": 0,
-        "wickets2": 0,
-        "current_players": {},
-        "batter_choice": None,
-        "bowler_choice": None,
-        "target": None,
-        "group_chat_id": chat_id,
-        "match_details": [],
-        "wickets": 0,
-        "max_wickets": max_wickets,
-        "max_overs": max_overs,
-        "last_move": datetime.utcnow(),
-        "last_reminder": None,
-        "status": "waiting",
-        "batters": [],
-        "bowlers": [],
-        "batter_stats": {},
-        "bowler_stats": {},
-        "admin_id": user.id
+
+    # Create game state
+    game_id = str(random.randint(100000, 999999))
+    multiplayer_games[game_id] = {
+        'host': user_id,
+        'players': [user_id],
+        'bet_amount': 100,
+        'status': 'waiting',
+        'current_turn': user_id,
+        'last_action': get_current_utc_time()
     }
+
+    # Create keyboard
+    keyboard = [
+        [InlineKeyboardButton("Join Game", callback_data=f"multiplayer_join_{game_id}")],
+        [InlineKeyboardButton("Start Game", callback_data=f"multiplayer_start_{game_id}")]
+    ]
+
+    message = await update.message.reply_text(
+        f"🎮 Multiplayer Game\n\n"
+        f"Game ID: {game_id}\n"
+        f"Host: {get_user_name_cached(user_id)}\n"
+        f"Bet: {multiplayer_games[game_id]['bet_amount']} credits\n"
+        f"Players: 1/4\n\n"
+        f"Waiting for players to join...",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+    group_message_ids[game_id] = message.message_id
+
+async def handle_multiplayer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle multiplayer game callbacks with async optimization."""
+    query = update.callback_query
+    await query.answer()
     
-    # Store in memory
-    multiplayer_games[game_id] = game_data.copy()
+    user_id = str(query.from_user.id)
+    action, game_id = query.data.split('_')[1:3]
 
-    logger.info(f"[multiplayer] Creating new game with ID: {game_id}")
-    async with games_lock:
-        multiplayer_games[game_id] = multiplayer_games[game_id]
-
-    try:
-        game_collection.update_one(
-            {"playing_id": game_id},
-            {"$set": game_data},
-            upsert=True
-        )
-    except Exception as e:
-        logger.error(f"Error saving game to database: {e}")
-        await context.bot.send_message(chat_id=chat_id, text="⚠️ Error creating game. Please try again.")
+    if game_id not in multiplayer_games:
+        await query.edit_message_text("Game expired. Use /multiplayer to start a new game.")
         return
 
-    game_desc = f"🏏 *Cricket Match Started!*\n\n"
-    game_desc += f"Started by: {user.first_name}\n"
-    game_desc += f"Format: {max_overs} over{'s' if max_overs > 1 else ''}, {max_wickets} wicket{'s' if max_wickets > 1 else ''}\n\n"
-    game_desc += f"• Join as Batter or Bowler\n"
-    game_desc += f"• Match will start once teams are full\n"
-    game_desc += f"• For the best experience, open the bot directly"
+    game = multiplayer_games[game_id]
 
-    bot_username = (await context.bot.get_me()).username
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔼 Join as Batter", callback_data=f"Mjoin_batter_{game_id}")],
-        [InlineKeyboardButton("🔽 Join as Bowler", callback_data=f"Mjoin_bowler_{game_id}")],
-        [InlineKeyboardButton("🎮 Open Cricket Bot", url=f"https://t.me/{bot_username}")]
-    ])
+    if action == "join":
+        if user_id in game['players']:
+            await query.answer("You're already in this game!")
+            return
 
-    try:
-        msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=game_desc,
-            reply_markup=keyboard,
-            parse_mode="Markdown"
+        if len(game['players']) >= 4:
+            await query.answer("Game is full!")
+            return
+
+        game['players'].append(user_id)
+        
+        # Update game message
+        players_text = "\n".join([f"- {get_user_name_cached(pid)}" for pid in game['players']])
+        keyboard = [
+            [InlineKeyboardButton("Join Game", callback_data=f"multiplayer_join_{game_id}")],
+            [InlineKeyboardButton("Start Game", callback_data=f"multiplayer_start_{game_id}")]
+        ]
+
+        await query.edit_message_text(
+            f"🎮 Multiplayer Game\n\n"
+            f"Game ID: {game_id}\n"
+            f"Host: {get_user_name_cached(game['host'])}\n"
+            f"Bet: {game['bet_amount']} credits\n"
+            f"Players ({len(game['players'])}/4):\n{players_text}\n\n"
+            f"Waiting for players to join...",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        game_data["message_id"] = msg.message_id
-        async with games_lock:
-            multiplayer_games[game_id] = game_data
-        game_collection.update_one(
-            {"playing_id": game_id},
-            {"$set": {"message_id": msg.message_id}}
+
+    elif action == "start":
+        if user_id != game['host']:
+            await query.answer("Only the host can start the game!")
+            return
+
+        if len(game['players']) < 2:
+            await query.answer("Need at least 2 players to start!")
+            return
+
+        game['status'] = 'playing'
+        game['current_turn'] = game['players'][0]
+        
+        # Start game
+        players_text = "\n".join([f"- {get_user_name_cached(pid)}" for pid in game['players']])
+        keyboard = [
+            [InlineKeyboardButton("Roll", callback_data=f"multiplayer_roll_{game_id}")]
+        ]
+
+        await query.edit_message_text(
+            f"🎮 Multiplayer Game\n\n"
+            f"Game ID: {game_id}\n"
+            f"Bet: {game['bet_amount']} credits\n"
+            f"Players:\n{players_text}\n\n"
+            f"Current Turn: {get_user_name_cached(game['current_turn'])}\n"
+            f"Roll the dice!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-    except Exception as e:
-        logger.error(f"Error sending game message: {e}")
-        await context.bot.send_message(chat_id=chat_id, text="⚠️ Error creating game. Please try again.")
-        return
+
+    elif action == "roll":
+        if user_id != game['current_turn']:
+            await query.answer("It's not your turn!")
+            return
+
+        # Roll dice
+        roll = random.randint(1, 6)
+        next_player_index = (game['players'].index(user_id) + 1) % len(game['players'])
+        game['current_turn'] = game['players'][next_player_index]
+
+        # Update game message
+        players_text = "\n".join([f"- {get_user_name_cached(pid)}" for pid in game['players']])
+        keyboard = [
+            [InlineKeyboardButton("Roll", callback_data=f"multiplayer_roll_{game_id}")]
+        ]
+
+        await query.edit_message_text(
+            f"🎮 Multiplayer Game\n\n"
+            f"Game ID: {game_id}\n"
+            f"Bet: {game['bet_amount']} credits\n"
+            f"Players:\n{players_text}\n\n"
+            f"{get_user_name_cached(user_id)} rolled a {roll}!\n"
+            f"Current Turn: {get_user_name_cached(game['current_turn'])}\n"
+            f"Roll the dice!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+def register_handlers(application: Application) -> None:
+    """Register handlers with throttling."""
+    # Add throttling handler
+    application.add_handler(ThrottlingHandler(THROTTLE_RATE, THROTTLE_BURST))
+
+    # Register command handlers with throttling
+    application.add_handler(CommandHandler("multiplayer", throttle_command()(multiplayer)))
+    
+    # Register callback query handler
+    application.add_handler(CallbackQueryHandler(handle_multiplayer_callback, pattern="^multiplayer_"))
+    
+    logger.info("Multiplayer game handlers registered successfully")
 
 async def MButton_join(update: Update, context: CallbackContext) -> None:
     query = update.callback_query

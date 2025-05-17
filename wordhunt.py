@@ -6,17 +6,76 @@ import logging
 import asyncio
 from collections import Counter, defaultdict
 from typing import Sequence, Optional, Dict, Any
-from functools import lru_cache
+from functools import lru_cache, wraps
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ContextTypes,
-    filters
+    filters, ThrottlingHandler
 )
 from pymongo import MongoClient
+import time as time_module
 
 # Reduce logging level to WARNING
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
+
+# Command throttling settings
+THROTTLE_RATE = 1.0  # seconds between commands
+THROTTLE_BURST = 3   # number of commands allowed in burst
+
+# Command throttling decorator
+def throttle_command(rate=THROTTLE_RATE, burst=THROTTLE_BURST):
+    def decorator(func):
+        last_called = {}
+        tokens = defaultdict(lambda: burst)
+        last_update = {}
+
+        @wraps(func)
+        async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+            user_id = update.effective_user.id
+            current_time = time_module.time()
+
+            # Initialize user's last called time
+            if user_id not in last_called:
+                last_called[user_id] = 0
+                tokens[user_id] = burst
+
+            # Check if enough time has passed to add a token
+            time_passed = current_time - last_called[user_id]
+            if time_passed >= rate:
+                new_tokens = int(time_passed / rate)
+                tokens[user_id] = min(burst, tokens[user_id] + new_tokens)
+                last_called[user_id] = current_time
+
+            # Check if user has tokens available
+            if tokens[user_id] <= 0:
+                await update.message.reply_text(
+                    f"Please wait {rate:.1f} seconds before using this command again."
+                )
+                return
+
+            # Use a token and execute the command
+            tokens[user_id] -= 1
+            return await func(update, context, *args, **kwargs)
+
+        return wrapper
+    return decorator
+
+# Update filter function
+def should_process_update(update: Update) -> bool:
+    """Filter updates to reduce processing load."""
+    if not update or not update.effective_user:
+        return False
+    
+    # Skip updates from bots
+    if update.effective_user.is_bot:
+        return False
+    
+    # Skip non-message updates
+    if not update.message and not update.callback_query:
+        return False
+    
+    return True
 
 # MongoDB setup with connection pooling and reduced operations
 try:
@@ -24,7 +83,7 @@ try:
                         serverSelectionTimeoutMS=5000,
                         maxPoolSize=50,
                         minPoolSize=10,
-                        maxIdleTimeMS=30000)  # Close idle connections after 30 seconds
+                        maxIdleTimeMS=30000)
     db = client['telegram_bot']
     wordle_col = db["leaderboard"]
     wh_scores = db["wordhunt_scores"]
@@ -171,67 +230,12 @@ async def check_activity(context: ContextTypes.DEFAULT_TYPE) -> None:
         await end_wordhunt(update, context)
         job.schedule_removal()
 
-###############################
-# WORDLE FUNCTIONS
-###############################
-
-def verify_solution(guess: str, solution: str) -> Sequence[int]:
-    logging.info(f'Entering verify_solution: guess={guess}, solution={solution}')
-    if len(guess) != len(solution):
-        return []
-    
-    result = [-1] * len(solution)
-    counter = Counter(solution)
-    
-    # First pass: Mark correct positions
-    for i, letter in enumerate(solution):
-        if i < len(guess) and guess[i] == letter:
-            result[i] = CORRECT
-            counter[letter] -= 1
-    
-    # Second pass: Mark present letters
-    for i, letter in enumerate(guess):
-        if i < len(result) and result[i] == -1:
-            if counter.get(letter, 0) > 0:
-                result[i] = PRESENT
-                counter[letter] -= 1
-            else:
-                result[i] = ABSENT
-    
-    logging.info(f'Exiting verify_solution: result={result}')
-    return result
-
-def adjust_score(user_id, name, chat_id, points):
-    logging.info(f'Entering adjust_score: user_id={user_id}, name={name}, chat_id={chat_id}, points={points}')
-    user = wordle_col.find_one({"_id": user_id})
-    if not user:
-        wordle_col.insert_one({
-            "_id": user_id,
-            "name": name,
-            "points": points,
-            "group_points": {str(chat_id): points}
-        })
-    else:
-        new_total = user.get("points", 0) + points
-        group_points = user.get("group_points", {})
-        group_points[str(chat_id)] = group_points.get(str(chat_id), 0) + points
-        wordle_col.update_one(
-            {"_id": user_id},
-            {"$set": {"points": new_total, "group_points": group_points, "name": name}}
-        )
-    logging.info('Exiting adjust_score')
-
-def get_random_wordle_word():
-    logging.info('Entering get_random_wordle_word')
-    # Filter words that are between 4 and 8 letters long
-    eligible_words = [word for word in EASY_WORD_LIST if 4 <= len(word) <= 8]
-    word = random.choice(eligible_words)
-    logging.info(f"Selected word: {word}")
-    logging.info('Exiting get_random_wordle_word')
-    return word
-
+@throttle_command()
 async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.info('Entering wordle command')
+    """Handle wordle command with throttling."""
+    if not should_process_update(update):
+        return
+
     load_word_list_cached()
     logger.info("Wordle command received")
     
@@ -256,10 +260,13 @@ async def wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     }
 
     await update.message.reply_text(f"WORDLE started! Guess the {len(word)}-letter word. You have {MAX_TRIALS} trials.")
-    logging.info('Exiting wordle command')
 
+@throttle_command()
 async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.info('Entering cricketwordle command')
+    """Handle cricketwordle command with throttling."""
+    if not should_process_update(update):
+        return
+
     load_word_list_cached()
     logger.info("Cricket Wordle command received")
     
@@ -291,10 +298,12 @@ async def cricketwordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     }
 
     await update.message.reply_text(f"CRICKETWORDLE started! Guess the {len(word)}-letter cricket-related word. You have {MAX_TRIALS} trials.")
-    logging.info('Exiting cricketwordle command')
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.info('Entering handle_message')
+    """Handle messages with filtering."""
+    if not should_process_update(update):
+        return
+
     chat_id = update.effective_chat.id
     message_text = update.message.text.strip().lower()
     
@@ -305,10 +314,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Then check if there's an active WordHunt game
     elif chat_id in wordhunt_games and wordhunt_games[chat_id].ongoing_game:
         await scoring_wordhunt(update, context)
-    logging.info('Exiting handle_message')
 
+@throttle_command()
 async def handle_wordle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.info('Entering handle_wordle_guess')
+    """Handle wordle guesses with throttling."""
+    if not should_process_update(update):
+        return
+
     chat_id = update.effective_chat.id
     if chat_id not in wordle_games or not wordle_games[chat_id]['game_active']:
         return
@@ -321,7 +333,6 @@ async def handle_wordle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.info(f"Processing wordle guess: {guess}, solution: {solution}")
     
     # Choose the appropriate word list for validating guesses
-    # Note: We validate against the ENTIRE word list, not just the easy words
     word_list = CRICKET_WORD_LIST if game['mode'] == 'cricketwordle' else WORD_LIST
 
     # Check for duplicate guesses
@@ -345,7 +356,7 @@ async def handle_wordle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Process valid guess
     game['attempts'] += 1
-    result = verify_solution(guess, solution)
+    result = verify_solution_cached(guess, solution)
     result_blocks = "".join(BLOCKS[r] for r in result)
 
     game['guesses'].append(f"{result_blocks}   {guess.upper()}")
@@ -369,10 +380,13 @@ async def handle_wordle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.info("Game lost - out of tries")
 
     await update.message.reply_text(board_display)
-    logging.info('Exiting handle_wordle_guess')
 
+@throttle_command()
 async def wordleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.info('Entering wordleaderboard')
+    """Handle wordleaderboard command with throttling."""
+    if not should_process_update(update):
+        return
+
     chat_id = str(update.effective_chat.id)
     pipeline = [
         {"$project": {"name": {"$ifNull": ["$name", "Anonymous"]}, "points": {"$ifNull": [f"$group_points.{chat_id}", 0]}}},
@@ -385,19 +399,25 @@ async def wordleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     for i, user in enumerate(top, 1):
         msg += f"{i}. {user['name']} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
-    logging.info('Exiting wordleaderboard')
 
+@throttle_command()
 async def wordglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.info('Entering wordglobal')
+    """Handle wordglobal command with throttling."""
+    if not should_process_update(update):
+        return
+
     top = list(wordle_col.find().sort("points", -1).limit(10))
     msg = "🌍 Global Word Leaderboard:\n\n"
     for i, user in enumerate(top, 1):
         msg += f"{i}. {user.get('name', 'Anonymous')} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
-    logging.info('Exiting wordglobal')
-    
+
+@throttle_command()
 async def end_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.info('Entering end_wordle')
+    """Handle end_wordle command with throttling."""
+    if not should_process_update(update):
+        return
+
     chat_id = update.effective_chat.id
     
     if chat_id not in wordle_games or not wordle_games[chat_id]['game_active']:
@@ -407,20 +427,13 @@ async def end_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     solution = wordle_games[chat_id]['solution']
     wordle_games[chat_id]['game_active'] = False
     
-
     await update.message.reply_text(f"Game ended! The word was: {solution.upper()}")
-    
-
     logger.info(f"Wordle game ended in chat {chat_id}. Solution was: {solution}")
-    logging.info('Exiting end_wordle')
 
 class WordHuntGame:
-    """Class to represent a WordHunt game"""
+    """Class to represent a WordHunt game with optimized methods."""
     
     def __init__(self):
-        logging.info('Initializing WordHuntGame')
-        global wordhunt_word_list
-   
         self.line_list = [word for word in wordhunt_word_list if len(word) >= 3]
         self.ongoing_game = False
         self.letter_row = []
@@ -429,11 +442,9 @@ class WordHuntGame:
         self.player_scores = {}
         self.top_score_words = []
         self.player_words = {}
-        self.last_activity_time = None 
-        logging.info('Initialized WordHuntGame')
+        self.last_activity_time = None
 
     def create_letter_row(self):
-        logging.info('Creating letter row')
         vowels = ['a','e','i','o','u']
         non_vowels_common = ['b', 'c', 'd', 'f', 'g', 'h', 'k', 'l', 'm', 'n', 'p', 'r', 's', 't','w','y']
         non_vowels_rare = ['j', 'q', 'x', 'z','v']
@@ -445,18 +456,14 @@ class WordHuntGame:
             self.letter_row.append(random.choice(non_vowels_common))
         self.letter_row.append(random.choice(non_vowels_rare))
         random.shuffle(self.letter_row)
-        logging.info('Created letter row')
 
     def create_score_words(self):
-        logging.info('Creating score words')
         self.score_words = []
         for word in self.line_list:
             if self.can_spell(word):
                 self.score_words.append(word)
-        logging.info('Created score words')
 
     def can_spell(self, word):
-        logging.info(f'Checking if can spell: {word}')
         word_letters = list(word)
         available_letters = self.letter_row.copy()
         for letter in word_letters:
@@ -464,22 +471,18 @@ class WordHuntGame:
                 available_letters.remove(letter)
             else:
                 return False
-        logging.info(f'Checked can spell: {word}')
         return True
 
     def start(self):
-        logging.info('Starting WordHuntGame')
         if self.ongoing_game == False:
             self.ongoing_game = True
-            self.last_activity_time = asyncio.get_event_loop().time()  # Set initial activity time
+            self.last_activity_time = asyncio.get_event_loop().time()
             while(len(self.score_words) < 35):
                 self.create_letter_row()
                 self.create_score_words()
             self.top_score_words = sorted(self.score_words, key=len, reverse=True)[0:5]
-        logging.info('Started WordHuntGame')
 
     def end_clear(self):
-        logging.info('Ending and clearing WordHuntGame')
         self.letter_row = []
         self.score_words = []
         self.found_words = []
@@ -487,49 +490,28 @@ class WordHuntGame:
         self.top_score_words = []
         self.player_words = {}
         self.last_activity_time = None
-        logging.info('Ended and cleared WordHuntGame')
 
     def ongoing_game_false(self):
-        logging.info('Setting ongoing_game to False')
         self.ongoing_game = False
-        logging.info('Set ongoing_game to False')
 
     def sort_player_words(self):
-        logging.info('Sorting player words')
         for player in self.player_words:
             self.player_words[player] = sorted(self.player_words[player], key=len, reverse=True)
-        logging.info('Sorted player words')
 
     def update_activity_time(self):
-        logging.info('Updating activity time')
         self.last_activity_time = asyncio.get_event_loop().time()
-        logging.info('Updated activity time')
 
-def update_wordhunt_score(group_id, player_name, score):
-    logging.info(f'Updating wordhunt score: group_id={group_id}, player_name={player_name}, score={score}')
-    wh_scores.update_one(
-        {"group_id": group_id, "player_name": player_name},
-        {"$inc": {"score": score}},
-        upsert=True
-    )
-    logging.info('Updated wordhunt score')
-
-def upper_letters(letter_row):
-    logging.info(f'Uppercasing letter row: {letter_row}')
-    upper = ""
-    for letter in letter_row:
-        upper = upper + " " + letter.upper()
-    logging.info(f'Uppercased letter row: {letter_row}')
-    return upper
-
+@throttle_command()
 async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.info('Entering wordhunt command')
+    """Handle wordhunt command with throttling."""
+    if not should_process_update(update):
+        return
+
     global wordhunt_games
     global activity_timers
     
     chat_id = update.effective_chat.id
     
-
     if chat_id in wordle_games and wordle_games[chat_id]['game_active']:
         await update.message.reply_text("There's already an active Wordle game. Please finish it first.")
         return
@@ -542,17 +524,18 @@ async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if chat_id in activity_timers and activity_timers[chat_id] is not None:
         activity_timers[chat_id].schedule_removal()
     
-
     activity_timers[chat_id] = context.job_queue.run_repeating(
-        check_activity, 5.0,  
+        check_activity, ACTIVITY_CHECK_INTERVAL,
         chat_id=chat_id, data=update
     )
     
     await update.message.reply_html(upper_letters(wordhunt_games[chat_id].letter_row))
-    logging.info('Exiting wordhunt command')
 
 async def scoring_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.info('Scoring wordhunt')
+    """Handle wordhunt scoring with filtering."""
+    if not should_process_update(update):
+        return
+
     chat_id = update.effective_chat.id
     if chat_id not in wordhunt_games or not wordhunt_games[chat_id].ongoing_game:
         return
@@ -561,7 +544,6 @@ async def scoring_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     player_name = update.effective_user.first_name or update.effective_user.username
 
     if len(guess) < 3:
-
         return
         
     if guess in wordhunt_games[chat_id].found_words:
@@ -582,10 +564,13 @@ async def scoring_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         update_wordhunt_score_cached(chat_id, player_name, score)
 
         await update.message.reply_html(notif)
-    logging.info('Scored wordhunt')
 
+@throttle_command()
 async def end_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.info('Ending wordhunt')
+    """Handle end_wordhunt command with throttling."""
+    if not should_process_update(update):
+        return
+
     chat_id = update.effective_chat.id
     if chat_id not in wordhunt_games or not wordhunt_games[chat_id].ongoing_game:
         await update.message.reply_html("No active WordHunt game to end.")
@@ -597,7 +582,7 @@ async def end_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     final_results = "🎉 SCORES: \n"
     for player, score in wordhunt_games[chat_id].player_scores.items():
         final_results = final_results + player + ": " + str(score) + "\n"
-    if not bool(wordhunt_games[chat_id].player_scores): # player_scores dict is empty
+    if not bool(wordhunt_games[chat_id].player_scores):
         final_results = "No one played! \n"
 
     total_possible_words = len(wordhunt_games[chat_id].score_words) + len(wordhunt_games[chat_id].found_words)
@@ -605,7 +590,6 @@ async def end_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     for word in wordhunt_games[chat_id].top_score_words:
         final_results += word + "\n"
     
-
     wordhunt_games[chat_id].sort_player_words()
     final_results += "\n🔎 WORDS FOUND \n"
     for player in wordhunt_games[chat_id].player_words:
@@ -621,10 +605,13 @@ async def end_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if chat_id in activity_timers and activity_timers[chat_id] is not None:
         activity_timers[chat_id].schedule_removal()
         activity_timers[chat_id] = None
-    logging.info('Ended wordhunt')
 
+@throttle_command()
 async def whleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.info('Entering whleaderboard')
+    """Handle whleaderboard command with throttling."""
+    if not should_process_update(update):
+        return
+
     chat_id = update.effective_chat.id
     top_players = list(wh_scores.find({"group_id": chat_id}).sort("score", -1).limit(10))
     
@@ -637,10 +624,13 @@ async def whleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         reply += f"{idx}. {player['player_name']} - {player['score']} pts\n"
     
     await update.message.reply_html(reply)
-    logging.info('Exiting whleaderboard')
 
+@throttle_command()
 async def whglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logging.info('Entering whglobal')
+    """Handle whglobal command with throttling."""
+    if not should_process_update(update):
+        return
+
     pipeline = [
         {"$group": {"_id": "$player_name", "score": {"$sum": "$score"}}},
         {"$sort": {"score": -1}},
@@ -657,26 +647,34 @@ async def whglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply += f"{idx}. {player['_id']} - {player['score']} pts\n"
 
     await update.message.reply_html(reply)
-    logging.info('Exiting whglobal')
-
 
 def register_handlers(application: Application) -> None:
-    logging.info('Registering wordhunt handlers')
+    """Register handlers with throttling."""
     load_word_list_cached()
     
+    # Add throttling handler
+    application.add_handler(ThrottlingHandler(THROTTLE_RATE, THROTTLE_BURST))
 
-    application.add_handler(CommandHandler("wordle", wordle))
-    application.add_handler(CommandHandler("cricketwordle", cricketwordle))
-    application.add_handler(CommandHandler("wordleaderboard", wordleaderboard))
-    application.add_handler(CommandHandler("wordglobal", wordglobal))
-    application.add_handler(CommandHandler("endwordle", end_wordle))
+    # Register command handlers with throttling
+    command_handlers = [
+        ("wordle", throttle_command()(wordle)),
+        ("cricketwordle", throttle_command()(cricketwordle)),
+        ("wordleaderboard", throttle_command()(wordleaderboard)),
+        ("wordglobal", throttle_command()(wordglobal)),
+        ("endwordle", throttle_command()(end_wordle)),
+        ("wordhunt", throttle_command()(wordhunt)),
+        ("end", throttle_command()(end_wordhunt)),
+        ("whleaderboard", throttle_command()(whleaderboard)),
+        ("whglobal", throttle_command()(whglobal))
+    ]
     
-    application.add_handler(CommandHandler("wordhunt", wordhunt))
-    application.add_handler(CommandHandler("end", end_wordhunt))
-    application.add_handler(CommandHandler("whleaderboard", whleaderboard))
-    application.add_handler(CommandHandler("whglobal", whglobal))
+    for command, handler in command_handlers:
+        application.add_handler(CommandHandler(command, handler))
     
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # Register message handler with filtering
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        handle_message
+    ))
     
     logger.info("All game handlers registered successfully")
-    logging.info('Registered wordhunt handlers')

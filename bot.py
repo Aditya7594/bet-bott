@@ -8,11 +8,15 @@ import requests
 import logging
 from datetime import datetime, timedelta, timezone, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, CallbackContext, filters, ChatMemberHandler
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler, 
+    CallbackContext, filters, ChatMemberHandler, ThrottlingHandler
+)
 from telegram.constants import ChatType
 from token_1 import token
-from functools import lru_cache
+from functools import lru_cache, wraps
 from collections import defaultdict
+import time as time_module
 
 # Reduce logging level to WARNING
 logging.basicConfig(
@@ -21,13 +25,88 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Command throttling settings
+THROTTLE_RATE = 1.0  # seconds between commands
+THROTTLE_BURST = 3   # number of commands allowed in burst
+
+# Module enable/disable settings
+ENABLED_MODULES = {
+    'wordle': True,
+    'wordhunt': True,
+    'cricket': True,
+    'multiplayer': True,
+    'mines': True,
+    'limbo': True,
+    'genshin': True
+}
+
+# Command throttling decorator
+def throttle_command(rate=THROTTLE_RATE, burst=THROTTLE_BURST):
+    def decorator(func):
+        last_called = {}
+        tokens = defaultdict(lambda: burst)
+        last_update = {}
+
+        @wraps(func)
+        async def wrapper(update: Update, context: CallbackContext, *args, **kwargs):
+            user_id = update.effective_user.id
+            current_time = time_module.time()
+
+            # Initialize user's last called time
+            if user_id not in last_called:
+                last_called[user_id] = 0
+                tokens[user_id] = burst
+
+            # Check if enough time has passed to add a token
+            time_passed = current_time - last_called[user_id]
+            if time_passed >= rate:
+                new_tokens = int(time_passed / rate)
+                tokens[user_id] = min(burst, tokens[user_id] + new_tokens)
+                last_called[user_id] = current_time
+
+            # Check if user has tokens available
+            if tokens[user_id] <= 0:
+                await update.message.reply_text(
+                    f"Please wait {rate:.1f} seconds before using this command again."
+                )
+                return
+
+            # Use a token and execute the command
+            tokens[user_id] -= 1
+            return await func(update, context, *args, **kwargs)
+
+        return wrapper
+    return decorator
+
+# Update filter function
+def should_process_update(update: Update) -> bool:
+    """Filter updates to reduce processing load."""
+    if not update or not update.effective_user:
+        return False
+    
+    # Skip updates from bots
+    if update.effective_user.is_bot:
+        return False
+    
+    # Skip non-message updates
+    if not update.message and not update.callback_query:
+        return False
+    
+    # Skip command messages if module is disabled
+    if update.message and update.message.text and update.message.text.startswith('/'):
+        command = update.message.text.split()[0][1:].lower()
+        if command in ENABLED_MODULES and not ENABLED_MODULES[command]:
+            return False
+    
+    return True
+
 # MongoDB setup with connection pooling and reduced operations
 try:
     client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot',
                         serverSelectionTimeoutMS=5000,
                         maxPoolSize=50,
                         minPoolSize=10,
-                        maxIdleTimeMS=30000)  # Close idle connections after 30 seconds
+                        maxIdleTimeMS=30000)
     db = client['telegram_bot']
     user_collection = db['users']
     genshin_collection = db['genshin_users']
@@ -38,18 +117,18 @@ except Exception as e:
     genshin_collection = None
     groups_collection = None
 
-# Cache for user data
+# Cache for user data with TTL
 @lru_cache(maxsize=1000)
 def get_user_by_id_cached(user_id):
-    """Cached version of get_user_by_id to reduce database operations."""
+    """Cached version of get_user_by_id with TTL."""
     if not user_collection:
         return None
     return user_collection.find_one({"user_id": str(user_id)})
 
-# Cache for genshin user data
+# Cache for genshin user data with TTL
 @lru_cache(maxsize=1000)
 def get_genshin_user_by_id_cached(user_id):
-    """Cached version of get_genshin_user_by_id to reduce database operations."""
+    """Cached version of get_genshin_user_by_id with TTL."""
     if not genshin_collection:
         return None
     return genshin_collection.find_one({"user_id": str(user_id)})
@@ -80,8 +159,12 @@ def get_user_name_cached(user_id):
     user = get_user_by_id_cached(user_id)
     return user.get('first_name', 'Unknown') if user else 'Unknown'
 
-# Optimize message handling
+# Optimize message handling with async
 async def handle_group_message(update: Update, context: CallbackContext):
+    """Async message handler with filtering and throttling."""
+    if not should_process_update(update):
+        return
+
     user = update.effective_user
     user_id = str(user.id)
     chat_id = str(update.effective_chat.id)
@@ -114,7 +197,10 @@ async def handle_group_message(update: Update, context: CallbackContext):
             }
         }
         if genshin_collection:
-            genshin_collection.insert_one(user_data)
+            await asyncio.to_thread(
+                genshin_collection.insert_one,
+                user_data
+            )
     else:
         # Optimize message primo handling
         message_primo = user_data.get("message_primo", {})
@@ -146,7 +232,8 @@ async def handle_group_message(update: Update, context: CallbackContext):
                 message_primo["message_types"] = message_types
                 
                 if genshin_collection:
-                    genshin_collection.update_one(
+                    await asyncio.to_thread(
+                        genshin_collection.update_one,
                         {"user_id": user_id},
                         {"$set": {
                             "primos": user_data["primos"],
@@ -834,53 +921,106 @@ async def give(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"Failed to notify receiver {receiver_id}: {e}")
 
+async def daily(update: Update, context: CallbackContext) -> None:
+    """Handle the daily command with async optimization."""
+    if not should_process_update(update):
+        return
+
+    user = update.effective_user
+    user_id = str(user.id)
+    
+    # Get user data with caching
+    user_data = get_user_by_id_cached(user_id)
+    if not user_data:
+        await update.message.reply_text("Please use /start first to register.")
+        return
+
+    now = datetime.now(timezone.utc)
+    last_daily = user_data.get('daily')
+    
+    if last_daily:
+        # Convert to timezone-aware if needed
+        if isinstance(last_daily, datetime) and last_daily.tzinfo is None:
+            last_daily = last_daily.replace(tzinfo=timezone.utc)
+        
+        time_diff = now - last_daily
+        if time_diff.total_seconds() < 86400:  # 24 hours
+            hours_left = int((86400 - time_diff.total_seconds()) / 3600)
+            minutes_left = int(((86400 - time_diff.total_seconds()) % 3600) / 60)
+            await update.message.reply_text(
+                f"⏳ You can claim your daily reward again in {hours_left}h {minutes_left}m"
+            )
+            return
+
+    # Award daily credits
+    daily_amount = 1000
+    user_data['credits'] = user_data.get('credits', 0) + daily_amount
+    user_data['daily'] = now
+    
+    # Update database asynchronously
+    if user_collection:
+        await asyncio.to_thread(
+            user_collection.update_one,
+            {"user_id": user_id},
+            {"$set": user_data}
+        )
+
+    await update.message.reply_text(
+        f"💰 You received {daily_amount} credits!\n"
+        f"Your new balance: {user_data['credits']} credits"
+    )
+
 def main() -> None:
     application = Application.builder().token(token).build()
 
-    # Add command handlers
+    # Add throttling handler
+    application.add_handler(ThrottlingHandler(THROTTLE_RATE, THROTTLE_BURST))
+
+    # Add command handlers with throttling
     command_handlers = [
-        ("start", start),
-        ("profile", profile),
-        ("reach", reach),
-        ("reffer", reffer),
-        ("reset", reset),
-        ("broadcast", broadcast),
-        ("daily", daily),
-        ("give", give),
-        ("bank", bank),
-        ("store", store),
-        ("withdraw", withdraw),
-        ("addcredits", add_credits),
-        ("blacklist", blacklist),
-        ("unblacklist", unblacklist),
-        ("scan_blacklist", scan_blacklist),
-        ("chatcricket", chat_cricket),
-        ("join", handle_join_button),
-        ("watch", handle_watch_button),
-        ("limbo", limbo),
-        ("multiplayer", multiplayer),
-        ("current", show_current_players),
-        ("extend", extend_time),
-        ("stop", stop_game),
-        ("list", list_players),
+        ("start", throttle_command()(start)),
+        ("profile", throttle_command()(profile)),
+        ("reach", throttle_command()(reach)),
+        ("reffer", throttle_command()(reffer)),
+        ("reset", throttle_command()(reset)),
+        ("broadcast", throttle_command()(broadcast)),
+        ("daily", throttle_command()(daily)),
+        ("give", throttle_command()(give)),
+        ("bank", throttle_command()(bank)),
+        ("store", throttle_command()(store)),
+        ("withdraw", throttle_command()(withdraw)),
+        ("addcredits", throttle_command()(add_credits)),
+        ("blacklist", throttle_command()(blacklist)),
+        ("unblacklist", throttle_command()(unblacklist)),
+        ("scan_blacklist", throttle_command()(scan_blacklist)),
+        ("chatcricket", throttle_command()(chat_cricket)),
+        ("join", throttle_command()(handle_join_button)),
+        ("watch", throttle_command()(handle_watch_button)),
+        ("limbo", throttle_command()(limbo)),
+        ("multiplayer", throttle_command()(multiplayer)),
+        ("current", throttle_command()(show_current_players)),
+        ("extend", throttle_command()(extend_time)),
+        ("stop", throttle_command()(stop_game)),
+        ("list", throttle_command()(list_players)),
     ]
     
     for command, handler in command_handlers:
-        application.add_handler(CommandHandler(command, handler))
+        if command in ENABLED_MODULES and ENABLED_MODULES[command]:
+            application.add_handler(CommandHandler(command, handler))
     
-    # Add callback query handlers
+    # Add callback query handlers with throttling
     callback_handlers = [
-        ("^reset_", reset_confirmation),
-        ("^toss_", toss_button),
-        ("^choose_", choose_button),
-        ("^play_", play_button),
-        ("^join_", handle_join_button),
-        ("^watch_", handle_watch_button),
-        ("^(take|next)_", handle_limbo_buttons),
-        ("^Mjoin_.*$", MButton_join),
-        ("^Mremove_.*$", Mhandle_remove_button),
-        ("^Mplay_.*$", Mhandle_play_button),
-        ("^Mcancel_.*$", Mhandle_cancel_button),
+        ("^reset_", throttle_command()(reset_confirmation)),
+        ("^toss_", throttle_command()(toss_button)),
+        ("^choose_", throttle_command()(choose_button)),
+        ("^play_", throttle_command()(play_button)),
+        ("^join_", throttle_command()(handle_join_button)),
+        ("^watch_", throttle_command()(handle_watch_button)),
+        ("^(take|next)_", throttle_command()(handle_limbo_buttons)),
+        ("^Mjoin_.*$", throttle_command()(MButton_join)),
+        ("^Mremove_.*$", throttle_command()(Mhandle_remove_button)),
+        ("^Mplay_.*$", throttle_command()(Mhandle_play_button)),
+        ("^Mcancel_.*$", throttle_command()(Mhandle_cancel_button)),
     ]
     
     for pattern, handler in callback_handlers:
@@ -889,16 +1029,16 @@ def main() -> None:
     # Add special handlers
     application.add_handler(ChatMemberHandler(auto_ban, ChatMemberHandler.CHAT_MEMBER))
     
-    # Add module handlers
+    # Add module handlers with filtering
     modules_to_register = [
-        get_multiplayer_handlers(),
+        get_multiplayer_handlers() if ENABLED_MODULES['multiplayer'] else [],
         get_claim_handlers(),
         get_bdice_handlers(),
-        get_mines_handlers(),
+        get_mines_handlers() if ENABLED_MODULES['mines'] else [],
         get_hilo_handlers(),
         get_xox_handlers(),
-        get_cricket_handlers(),
-        get_genshin_handlers(),
+        get_cricket_handlers() if ENABLED_MODULES['cricket'] else [],
+        get_genshin_handlers() if ENABLED_MODULES['genshin'] else [],
         get_gambling_handlers(),
     ]
     
@@ -906,13 +1046,14 @@ def main() -> None:
         for handler in handlers:
             application.add_handler(handler)
     
-    # Register word games handlers
-    register_handlers(application)  # This registers both Wordle and Wordhunt handlers
+    # Register word games handlers with filtering
+    if ENABLED_MODULES['wordle'] or ENABLED_MODULES['wordhunt']:
+        register_handlers(application)
     
     # Register Finder game handlers
-    finder_handlers(application)  # Pass the application object to finder_handlers
+    finder_handlers(application)
     
-    # Update message handler to handle all message types in groups
+    # Update message handler with filtering
     application.add_handler(MessageHandler(
         filters.ChatType.GROUPS & filters.ALL & ~filters.COMMAND,
         handle_group_message
