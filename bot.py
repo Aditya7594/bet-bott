@@ -1,19 +1,33 @@
-from flask import Flask
+from flask import Flask, request, Response
 from threading import Thread
+import os
 
 # Create Flask app
 app = Flask(__name__)
 
 @app.route('/')
 def hello_world():
-    return 'Shadow'
+    return Response('Bot is running!', status=200)
+
+@app.route('/health')
+def health_check():
+    return Response('OK', status=200)
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Handle webhook requests from Telegram"""
+    if request.method == "POST":
+        return Response(status=200)
+    return Response(status=400)
 
 # Function to run Flask
 def run_flask():
+    # Force port to 8000 for health checks
     app.run(host="0.0.0.0", port=8000)
 
 # Start Flask server in background thread
 flask_thread = Thread(target=run_flask)
+flask_thread.daemon = True  # Make thread daemon so it exits when main program exits
 flask_thread.start()
 import asyncio
 from pymongo import MongoClient
@@ -50,8 +64,8 @@ from cricket import (
     play_button
 )
 from claim import get_claim_handlers, daily
-from wordhunt import register_handlers
-from wordle import registers_handlers
+from wordhunt import register_handlers as get_wordhunt_handlers
+from wordle import registers_handlers as get_wordle_handlers
 from Finder import get_finder_handlers
 from bank import bank, store, withdraw, add_credits, blacklist, unblacklist, auto_ban,scan_blacklist
 from mines_game import get_mines_handlers
@@ -860,6 +874,7 @@ async def handle_group_message(update: Update, context: CallbackContext):
     logger.info("handle_group_message completed")
 
 def main() -> None:
+    # Create the Application
     application = Application.builder().token(token).build()
 
     # Add command handlers
@@ -925,8 +940,8 @@ def main() -> None:
         get_cricket_handlers(),
         get_genshin_handlers(),
         get_gambling_handlers(),
-        register_handlers(application),
-        registers_handlers(application),
+        get_wordhunt_handlers(application),  # WordHunt handlers
+        get_wordle_handlers(application),    # Wordle handlers
         get_finder_handlers(application),
     ]
     
@@ -949,7 +964,9 @@ def main() -> None:
     job_queue.run_daily(apply_daily_tax, time=time(hour=0, minute=0))
 
     application.add_error_handler(error_handler)
-   
+    
+    # Start the bot in polling mode
+    logger.info("Starting bot in polling mode...")
     application.run_polling()
 
 if __name__ == '__main__':

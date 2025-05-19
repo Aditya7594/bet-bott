@@ -4,15 +4,11 @@ from datetime import datetime, timezone, timedelta, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from pymongo import MongoClient
-import logging
-
-# Setup logging
-logger = logging.getLogger(__name__)
 
 # MongoDB setup
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority')
 db = client['telegram_bot']
-users_collection = db['users']
+user_collection = db['users']
 chat_levels_collection = db['chat_levels']
 
 # Load level rewards
@@ -80,7 +76,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle messages for leveling system."""
     if not update.message or update.message.chat.type not in ['group', 'supergroup']:
         return
-    logger.info(f"Level system: received message from user {update.message.from_user.id} in chat {update.message.chat.id}")
+    
     user_id = update.message.from_user.id
     chat_id = update.message.chat.id
     
@@ -117,12 +113,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # If user leveled up, send congratulations message
     if new_level > old_level:
         reward = new_level * 1000  # 1k credits per level
-        user_data = users_collection.find_one({'user_id': user_id})
+        user_data = user_collection.find_one({'user_id': user_id})
         if not user_data:
             user_data = {'user_id': user_id, 'credits': 0}
-            users_collection.insert_one(user_data)
+            user_collection.insert_one(user_data)
         
-        users_collection.update_one(
+        user_collection.update_one(
             {'user_id': user_id},
             {'$inc': {'credits': reward}}
         )
@@ -153,14 +149,14 @@ async def collect_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Generate random credits (0-500)
     credits = random.randint(0, 500)
     
-    # Update user's credits
-    user_data = users_collection.find_one({'user_id': user_id})
+    # Update user's credits in the main users collection
+    user_data = user_collection.find_one({'user_id': str(user_id)})
     if not user_data:
-        user_data = {'user_id': user_id, 'credits': 0}
-        users_collection.insert_one(user_data)
+        user_data = {'user_id': str(user_id), 'credits': 0}
+        user_collection.insert_one(user_data)
     
-    users_collection.update_one(
-        {'user_id': user_id},
+    user_collection.update_one(
+        {'user_id': str(user_id)},
         {'$inc': {'credits': credits}}
     )
     
@@ -168,7 +164,7 @@ async def collect_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_collect_times[user_id] = current_time
     
     # Get updated user data to show correct balance
-    updated_user_data = users_collection.find_one({'user_id': user_id})
+    updated_user_data = user_collection.find_one({'user_id': str(user_id)})
     
     await update.message.reply_text(
         f"💰 You collected {credits:,} credits!\n"
@@ -177,7 +173,7 @@ async def collect_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def apply_daily_tax():
     """Apply daily tax to user credits."""
-    users = users_collection.find({})
+    users = user_collection.find({})
     total_tax_collected = 0
     
     for user in users:
@@ -195,7 +191,7 @@ async def apply_daily_tax():
             
             tax_amount = int(credits * tax_rate)
             if tax_amount > 0:
-                users_collection.update_one(
+                user_collection.update_one(
                     {'user_id': user['user_id']},
                     {'$inc': {'credits': -tax_amount}}
                 )

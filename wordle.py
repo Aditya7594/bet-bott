@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 # MongoDB setup
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
 db = client['telegram_bot']
-wordle_col = db["leaderboard"]
+wordle_col = db["wordle_scores"]  # Separate collection for Wordle scores
 
 # Game constants
 ABSENT, PRESENT, CORRECT = 0, 1, 2
 BLOCKS = {0: "🟥", 1: "🟨", 2: "🟩"}
-MAX_TRIALS = 20
+MAX_TRIALS = 25  # Standard Wordle is 6 trials
 
 # Load word lists
 WORD_LIST, CRICKET_WORD_LIST = [], []
@@ -185,20 +185,33 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def wordleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = str(update.effective_chat.id)
     pipeline = [
-        {"$project": {"name": {"$ifNull": ["$name", "Anonymous"]}, "points": {"$ifNull": [f"$group_points.{chat_id}", 0]}}}
+        {"$project": {"name": {"$ifNull": ["$name", "Anonymous"]}, "points": {"$ifNull": [f"$group_points.{chat_id}", 0]}}},
+        {"$match": {"points": {"$gt": 0}}},
+        {"$sort": {"points": -1}},
+        {"$limit": 10}
     ]
     top = list(wordle_col.aggregate(pipeline))
-    msg = "🏅 Group Word Leaderboard:\n\n"
+    msg = "🏅 Group Wordle Leaderboard:\n\n"
     for i, user in enumerate(top, 1):
         msg += f"{i}. {user['name']} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
 
 async def wordglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    top = list(wordle_col.find().sort("points", -1))
-    msg = "🌍 Global Word Leaderboard:\n\n"
+    top = list(wordle_col.find().sort("points", -1).limit(10))
+    msg = "🌍 Global Wordle Leaderboard:\n\n"
     for i, user in enumerate(top, 1):
         msg += f"{i}. {user.get('name', 'Anonymous')} - {user.get('points', 0)} pts\n"
     await update.message.reply_text(msg.strip() or "No leaderboard data.")
+
+async def end_wordle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    if chat_id not in wordle_games:
+        await update.message.reply_text("No active Wordle game to end.")
+        return
+    
+    solution = wordle_games[chat_id]['solution']
+    del wordle_games[chat_id]
+    await update.message.reply_text(f"Game ended! The word was: {solution.upper()}")
 
 def registers_handlers(application: Application) -> list:
     """Register all Wordle handlers with the application"""
@@ -209,6 +222,7 @@ def registers_handlers(application: Application) -> list:
         CommandHandler("cricketwordle", cricketwordle),
         CommandHandler("wordleaderboard", wordleaderboard),
         CommandHandler("wordglobal", wordglobal),
+        CommandHandler("endwordle", end_wordle),
         MessageHandler(
             filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
             handle_guess

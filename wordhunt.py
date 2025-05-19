@@ -4,8 +4,8 @@ import os
 import random
 import logging
 import asyncio
-from collections import Counter, defaultdict
-from typing import Sequence, Optional, Dict, Any
+from collections import defaultdict
+from typing import Dict, Any
 
 from telegram import Update
 from telegram.ext import (
@@ -23,26 +23,33 @@ client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?r
 db = client['telegram_bot']
 wh_scores = db["wordhunt_scores"]
 
+# Game constants
+MAX_TRIALS = 25
+
+# Load word lists
+wordhunt_word_list = []
+THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
+
 # Game state storage
 wordhunt_games = {}
 activity_timers = {}  # Store activity timers for wordhunt
 
-# Load wordhunt word list
-try:
-    letter_list_location = os.path.join(os.path.dirname(os.path.abspath(__file__)), '8letters.txt')
-    with open(letter_list_location, "r") as word_list:
-        wordhunt_word_list = [line.rstrip('\n').lower() for line in word_list]
-    logger.info(f"Loaded {len(wordhunt_word_list)} words for WordHunt")
-except Exception as e:
-    logger.error(f"Failed to load wordhunt word list: {e}")
-    wordhunt_word_list = []
+def load_word_lists():
+    global wordhunt_word_list
+    try:
+        logger.info(f"Loading wordhunt word list from {THIS_FOLDER}")
+        letter_list_location = os.path.join(THIS_FOLDER, '8letters.txt')
+        with open(letter_list_location, "r") as word_list:
+            wordhunt_word_list = [line.rstrip('\n').lower() for line in word_list]
+        logger.info(f"Loaded {len(wordhunt_word_list)} words for WordHunt")
+    except Exception as e:
+        logger.error(f"Failed to load wordhunt word list: {e}")
+        wordhunt_word_list = []
 
 class WordHuntGame:
     """Class to represent a WordHunt game"""
     
     def __init__(self):
-        global wordhunt_word_list
-    
         self.line_list = [word for word in wordhunt_word_list if len(word) >= 3]
         self.ongoing_game = False
         self.letter_row = []
@@ -150,7 +157,7 @@ async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Check if force start is requested
         if context.args and context.args[0].lower() == 'force':
             # End the current game
-            await end_wordhunt(update, context)
+            await end_hunt(update, context)
         else:
             await update.message.reply_text("A WordHunt game is already in progress. Use /wordhunt force to start a new game.")
             return
@@ -189,18 +196,10 @@ async def check_activity(context: ContextTypes.DEFAULT_TYPE) -> None:
     current_time = asyncio.get_event_loop().time()
 
     if current_time - wordhunt_games[chat_id].last_activity_time > 30:
-        await end_wordhunt(update, context)
+        await end_hunt(update, context)
         job.schedule_removal()
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle WordHunt words"""
-    chat_id = update.effective_chat.id
-    
-    # Check if there's an active WordHunt game
-    if chat_id in wordhunt_games and wordhunt_games[chat_id].ongoing_game:
-        await scoring_wordhunt(update, context)
-
-async def scoring_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Process a word submission for WordHunt"""
     chat_id = update.effective_chat.id
     if chat_id not in wordhunt_games or not wordhunt_games[chat_id].ongoing_game:
@@ -243,7 +242,7 @@ async def scoring_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     else:
         await update.message.reply_html(f"<b>{guess}</b> is not a valid word!")
 
-async def end_wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def end_hunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """End an active WordHunt game"""
     chat_id = update.effective_chat.id
     if chat_id not in wordhunt_games or not wordhunt_games[chat_id].ongoing_game:
@@ -316,14 +315,16 @@ async def whglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def register_handlers(application: Application) -> list:
     """Register all WordHunt handlers with the application"""
+    load_word_lists()
+    
     handlers = [
         CommandHandler("wordhunt", wordhunt),
-        CommandHandler("end", end_wordhunt),
+        CommandHandler("endhunt", end_hunt),
         CommandHandler("whleaderboard", whleaderboard),
         CommandHandler("whglobal", whglobal),
         MessageHandler(
             filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
-            handle_message
+            handle_guess
         )
     ]
     
