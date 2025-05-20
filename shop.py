@@ -86,8 +86,7 @@ def get_user_shop(user_id: str):
             daily_cards[card_id] = {
                 'name': card_id,  # Use the actual image name without .jpg
                 'image': f'shop/{img}',
-                'price': get_current_price(),
-                'stats': CARD_STATS.get(card_id, {"batting": 75, "bowling": 75, "fielding": 75})
+                'price': get_current_price()
             }
         
         # Update shop collection with user-specific data
@@ -244,8 +243,7 @@ async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             {"$push": {"cards": {
                 "id": card_id,
                 "name": card_data['name'],
-                "image": card_data['image'],
-                "stats": card_data['stats']
+                "image": card_data['image']
             }}}
         )
         
@@ -395,8 +393,7 @@ async def manage_cards(update: Update, context: ContextTypes.DEFAULT_TYPE):
         card_data = {
             "id": card_name,
             "name": card_name,
-            "image": card_image,
-            "stats": CARD_STATS.get(card_name, {"batting": 75, "bowling": 75, "fielding": 75})
+            "image": card_image
         }
         
         # Check if card already exists
