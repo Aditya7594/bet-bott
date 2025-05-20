@@ -61,13 +61,19 @@ from cricket import (
     handle_watch_button,
     toss_button,
     choose_button,
-    play_button
+    play_button,
+    chat_command,
+    stats,
+    leaderboard,
+    game_history,
+    achievements_command,
+    category_navigation_callback
 )
 from claim import get_claim_handlers, daily
 from wordhunt import register_handlers as get_wordhunt_handlers
 from wordle import registers_handlers as get_wordle_handlers
 from Finder import get_finder_handlers
-from bank import bank, store, withdraw, add_credits, blacklist, unblacklist, auto_ban,scan_blacklist
+from bank import bank, store, withdraw, add_credits, blacklist, unblacklist, auto_ban, scan_blacklist
 from mines_game import get_mines_handlers
 from hilo_game import get_hilo_handlers
 from xox_game import get_xox_handlers
@@ -75,6 +81,16 @@ from bdice import get_bdice_handlers
 from gambling import get_gambling_handlers
 from limbo import limbo, handle_limbo_buttons
 from level_system import handle_message, get_handlers as get_level_handlers, apply_daily_tax
+from shop import (
+    get_shop_handlers,
+    shop_command,
+    mycollection_command,
+    view_command,
+    manage_cards,
+    reset_collection_command,
+    buy_callback,
+    setmain_callback
+)
 
 # Constants and settings
 OWNER_ID = 5667016949
@@ -763,7 +779,7 @@ async def handle_group_message(update: Update, context: CallbackContext):
         # Create new user with timezone-aware datetime
         user_data = {
             "user_id": user_id,
-            "primos": 0,
+            "primos": 16000
             "bag": {},
             "message_primo": {
                 "count": 0,
@@ -903,6 +919,16 @@ def main() -> None:
         ("extend", extend_time),
         ("stop", stop_game),
         ("list", list_players),
+        ("shop", shop_command),
+        ("mycollection", mycollection_command),
+        ("view", view_command),
+        ("managecards", manage_cards),
+        ("resetcollection", reset_collection_command),
+        ("chat", chat_command),
+        ("stats", stats),
+        ("leaderboard", leaderboard),
+        ("history", game_history),
+        ("achievements", achievements_command),
     ]
     
     for command, handler in command_handlers:
@@ -921,6 +947,10 @@ def main() -> None:
         ("^Mremove_.*$", Mhandle_remove_button),
         ("^Mplay_.*$", Mhandle_play_button),
         ("^Mcancel_.*$", Mhandle_cancel_button),
+        ("^buy_", buy_callback),
+        ("^setmain_", setmain_callback),
+        ("^category_", category_navigation_callback),
+        ("^close_achievements$", category_navigation_callback),
     ]
     
     for pattern, handler in callback_handlers:
@@ -943,6 +973,7 @@ def main() -> None:
         get_wordhunt_handlers(application),  # WordHunt handlers
         get_wordle_handlers(application),    # Wordle handlers
         get_finder_handlers(application),
+        get_shop_handlers(),  # Add shop handlers
     ]
     
     for handlers in modules_to_register:
