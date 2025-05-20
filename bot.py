@@ -779,7 +779,7 @@ async def handle_group_message(update: Update, context: CallbackContext):
         # Create new user with timezone-aware datetime
         user_data = {
             "user_id": user_id,
-            "primos": 16000
+            "primos": 16000,
             "bag": {},
             "message_primo": {
                 "count": 0,
