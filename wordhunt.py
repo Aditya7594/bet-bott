@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import random
-import logging
 import asyncio
 from collections import defaultdict
 from typing import Dict, Any
@@ -13,10 +12,6 @@ from telegram.ext import (
     filters
 )
 from pymongo import MongoClient
-
-# Logging setup
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # MongoDB setup
 client = MongoClient('mongodb+srv://Joybot:Joybot123@joybot.toar6.mongodb.net/?retryWrites=true&w=majority&appName=Joybot')
@@ -34,17 +29,13 @@ THIS_FOLDER = os.path.dirname(os.path.abspath(__file__))
 wordhunt_games = {}
 activity_timers = {}  # Store activity timers for wordhunt
 
-def load_word_lists():
-    global wordhunt_word_list
+def load_wordhunt_word_list():
     try:
-        logger.info(f"Loading wordhunt word list from {THIS_FOLDER}")
-        letter_list_location = os.path.join(THIS_FOLDER, '8letters.txt')
-        with open(letter_list_location, "r") as word_list:
-            wordhunt_word_list = [line.rstrip('\n').lower() for line in word_list]
-        logger.info(f"Loaded {len(wordhunt_word_list)} words for WordHunt")
+        with open(os.path.join(THIS_FOLDER, 'word_list.txt'), 'r') as f:
+            wordhunt_word_list = [line.strip().upper() for line in f if len(line.strip()) >= 3]
+        return wordhunt_word_list
     except Exception as e:
-        logger.error(f"Failed to load wordhunt word list: {e}")
-        wordhunt_word_list = []
+        return []
 
 class WordHuntGame:
     """Class to represent a WordHunt game"""
@@ -79,7 +70,6 @@ class WordHuntGame:
         for word in self.line_list:
             if self.can_spell(word):
                 self.score_words.append(word)
-        logger.info(f"Found {len(self.score_words)} valid words for current letter set")
 
     def can_spell(self, word):
         word_letters = list(word)
@@ -136,7 +126,7 @@ async def update_wordhunt_score(group_id, player_name, score):
             upsert=True
         )
     except Exception as e:
-        logger.error(f"Failed to update wordhunt score: {e}")
+        pass
 
 def upper_letters(letter_row):
     """Format letter row for display"""
@@ -315,7 +305,7 @@ async def whglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def register_handlers(application: Application) -> list:
     """Register all WordHunt handlers with the application"""
-    load_word_lists()
+    load_wordhunt_word_list()
     
     handlers = [
         CommandHandler("wordhunt", wordhunt),
@@ -328,5 +318,4 @@ def register_handlers(application: Application) -> list:
         )
     ]
     
-    logger.info("WordHunt handlers registered successfully")
     return handlers

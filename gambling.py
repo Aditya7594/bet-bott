@@ -48,6 +48,11 @@ async def bet(update: Update, context: CallbackContext) -> None:
     if amount <= 0:
         await update.message.reply_text("Please bet a positive amount.")
         return
+        
+    # Check maximum bet limit
+    if amount > 50000:
+        await update.message.reply_text("Maximum bet limit is 50,000 credits.")
+        return
     
     # Get user data
     user_data = get_user_by_id(user_id)

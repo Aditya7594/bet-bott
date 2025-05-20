@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-import logging
 import asyncio
 from collections import defaultdict
 from functools import lru_cache, wraps
@@ -13,10 +12,6 @@ from telegram.ext import (
 )
 from pymongo import MongoClient
 import time as time_module
-
-# Reduce logging level to WARNING
-logging.basicConfig(level=logging.WARNING)
-logger = logging.getLogger(__name__)
 
 # Command throttling settings
 THROTTLE_RATE = 1.0  # seconds between commands
@@ -86,7 +81,6 @@ try:
     db = client['telegram_bot']
     user_collection = db['users']
 except Exception as e:
-    logger.error(f"Failed to connect to MongoDB: {e}")
     user_collection = None
 
 # Game state storage using defaultdict for better performance
@@ -321,3 +315,19 @@ def get_xox_handlers():
         CommandHandler("xox", throttle_command()(xox)),
         CallbackQueryHandler(handle_xox_callback, pattern="^xox_")
     ]
+
+async def handle_game_timeout(game_id: str, context: ContextTypes.DEFAULT_TYPE):
+    """Handle game timeout."""
+    if game_id not in xox_games:
+        return
+    
+    game = xox_games[game_id]
+    
+    # Send timeout message
+    await context.bot.send_message(
+        chat_id=game['chat_id'],
+        text="⏰ Game timed out due to inactivity!"
+    )
+    
+    # Remove game
+    del xox_games[game_id]

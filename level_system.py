@@ -112,7 +112,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # If user leveled up, send congratulations message
     if new_level > old_level:
-        reward = new_level * 1000  # 1k credits per level
+        reward = new_level * 10000  # 10k credits per level (increased from 1k)
         user_data = user_collection.find_one({'user_id': user_id})
         if not user_data:
             user_data = {'user_id': user_id, 'credits': 0}
