@@ -31,13 +31,13 @@ def generate_weighted_multiplier():
     if random_number <= 0.1:
         return 0  # 10% chance to lose everything instantly
     elif random_number <= 0.7:
-        return round(random.uniform(0.3, 0.8), 2)
+        return round(random.uniform(0.5, 1.0), 2)  # Increased lower bound
     elif random_number <= 0.9:
-        return round(random.uniform(0.81, 1.2), 2)
+        return round(random.uniform(1.1, 1.5), 2)  # Increased range
     elif random_number <= 0.98:
-        return round(random.uniform(1.21, 1.8), 2)
+        return round(random.uniform(1.6, 2.2), 2)  # Increased range
     else:
-        return round(random.uniform(1.81, 2.5), 2)
+        return round(random.uniform(2.3, 3.0), 2)  # Increased upper bound
 
 async def limbo(update: Update, context: CallbackContext) -> None:
     user = update.effective_user

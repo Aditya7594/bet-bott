@@ -67,7 +67,11 @@ from cricket import (
     leaderboard,
     game_history,
     achievements_command,
-    category_navigation_callback
+    category_navigation_callback,
+    check_user_started_bot,
+    get_user_name_cached,
+    update_game_interface,
+    game_activity
 )
 from claim import get_claim_handlers, daily
 from wordhunt import register_handlers as get_wordhunt_handlers
@@ -110,6 +114,10 @@ last_interaction_time = {}
 
 # Global variable for tracking message counts for artifact rewards
 message_counts = {}
+
+# Initialize game tracking dictionaries
+if not game_activity:
+    game_activity = {}
 
 # Constants
 PRIMO_REWARD_AMOUNT = 5
@@ -513,6 +521,12 @@ async def broadcast(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("🔒 You don't have permission to use this command.")
         return
 
+    # Add message deduplication
+    message_id = update.message.message_id
+    if hasattr(context.bot_data, 'last_broadcast_id') and context.bot_data.last_broadcast_id == message_id:
+        return
+    context.bot_data.last_broadcast_id = message_id
+
     # Check if a message is provided
     if not context.args:
         await update.message.reply_text(
@@ -723,13 +737,10 @@ async def give(update: Update, context: CallbackContext) -> None:
         logger.error(f"Failed to notify receiver {receiver_id}: {e}")
 
 async def handle_group_message(update: Update, context: CallbackContext):
-    logger.info("handle_group_message called")
+    # logger.info("handle_group_message called")
     user = update.effective_user
     user_id = str(user.id)
     chat_id = str(update.effective_chat.id)
-    
-    # Log the incoming message for debugging
-    logger.info(f"Received message in group {chat_id} from user {user_id}: {update.message}")
     
     # Skip if message is from a bot
     if user.is_bot:
@@ -888,6 +899,150 @@ async def handle_group_message(update: Update, context: CallbackContext):
     logger.info("Calling handle_message for leveling system")
     await handle_message(update, context)
     logger.info("handle_group_message completed")
+
+async def handle_watch_button(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    user_id = query.from_user.id
+    _, game_id = query.data.split('_', 1)  
+
+    if not await check_user_started_bot(update, context):
+        return
+
+    if game_id not in cricket_games:
+        await query.answer("Game not found or expired!")
+        return
+
+    game = cricket_games[game_id]
+    
+    if user_id in [game["player1"], game["player2"]]:
+        await query.answer("You're already playing in this game!")
+        return
+    
+    game["spectators"].add(user_id)
+    
+    player1_name = (await get_user_name_cached(game["player1"], context))
+    player2_name = "Waiting for opponent" if not game["player2"] else (await get_user_name_cached(game["player2"], context))
+    
+    bot_username = (await context.bot.get_me()).username
+    keyboard = [[InlineKeyboardButton("🎮 Open Cricket Game", url=f"https://t.me/{bot_username}")]]
+    
+    try:
+        msg = await context.bot.send_message(
+            chat_id=user_id,
+            text=f"👁️ You're now watching the cricket match!\n"
+                 f"🧑 Player 1: {player1_name}\n"
+                 f"🧑 Player 2: {player2_name}\n\n"
+                 f"Open the bot to view live match updates:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        game["message_id"][user_id] = msg.message_id
+    except Exception as e:
+        logger.error(f"Error sending watch confirmation to {user_id}: {e}")
+        await query.answer("Error joining as spectator!")
+        return
+    
+    if game["player2"] and "batter" in game and game["batter"]:
+        try:
+            await update_game_interface(game_id, context)
+        except Exception as e:
+            logger.error(f"Error updating game interface for spectator {user_id}: {e}")
+
+async def chat_command(update: Update, context: CallbackContext) -> None:
+    if not context.args:
+        await update.message.reply_text("Usage: /chat <message>")
+        return
+
+    user = update.effective_user
+    user_id = str(user.id)
+    message = " ".join(context.args)
+
+    if not await check_user_started_bot(update, context):
+        return
+
+    # Find active game
+    active_game = None
+    active_game_id = None
+    for game_id, game in cricket_games.items():
+        if user_id in [game["player1"], game["player2"]] or user_id in game.get("spectators", set()):
+            active_game = game
+            active_game_id = game_id
+            break
+
+    if not active_game:
+        await update.message.reply_text("❌ You're not part of an active cricket game.")
+        return
+
+    # Get current time
+    now = datetime.now(timezone.utc)
+
+    # Initialize or update message tracking
+    if "chat_messages" not in active_game:
+        active_game["chat_messages"] = []
+    
+    # Check for message cooldown (5 seconds)
+    last_message_time = active_game.get("last_chat_message", now - timedelta(seconds=10))
+    if isinstance(last_message_time, datetime) and last_message_time.tzinfo is None:
+        last_message_time = last_message_time.replace(tzinfo=timezone.utc)
+    
+    message_cooldown = (now - last_message_time).total_seconds()
+    if message_cooldown < 5:
+        await update.message.reply_text("⏳ Please wait 5 seconds between chat messages.")
+        return
+
+    # Update game activity and message tracking
+    update_game_activity(active_game_id)
+    active_game["last_chat_message"] = now
+
+    # Format and store message
+    sender_name = user.first_name or "Player"
+    formatted_message = f"💬 {sender_name}: {message}"
+    
+    # Store message with timestamp
+    active_game["chat_messages"].append({
+        "sender": user_id,
+        "sender_name": sender_name,
+        "message": message,
+        "timestamp": now
+    })
+
+    # Get all recipients (players and spectators)
+    recipients = set([active_game["player1"], active_game["player2"]] + list(active_game.get("spectators", [])))
+    message_ids = []
+
+    # Send to all recipients privately and collect message_ids
+    for uid in recipients:
+        if uid != user_id:  # Don't send to sender
+            try:
+                sent_msg = await context.bot.send_message(
+                    chat_id=uid,
+                    text=formatted_message,
+                    parse_mode="Markdown"
+                )
+                message_ids.append((uid, sent_msg.message_id))
+            except Exception as e:
+                logger.error(f"Couldn't send DM to {uid}: {e}")
+
+    # Schedule deletion of command and DMs in background
+    async def delete_later():
+        await asyncio.sleep(10)
+        try:
+            await context.bot.delete_message(
+                chat_id=update.effective_chat.id,
+                message_id=update.message.message_id
+            )
+        except Exception as e:
+            logger.error(f"Error deleting /chat command message: {e}")
+        
+        for uid, mid in message_ids:
+            try:
+                await context.bot.delete_message(
+                    chat_id=uid,
+                    message_id=mid
+                )
+            except Exception as e:
+                logger.error(f"Error deleting DM message for {uid}: {e}")
+
+    asyncio.create_task(delete_later())
 
 def main() -> None:
     # Create the Application
