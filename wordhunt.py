@@ -99,7 +99,7 @@ class WordHuntGame:
             letter_counts[letter] -= 1
         return True
 
-    async def start(self):
+    async def wordhunt(self):
         """Start a new game with at least 35 possible words"""
         if not self.ongoing_game:
             self.ongoing_game = True
