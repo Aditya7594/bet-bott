@@ -36,6 +36,21 @@ wordhunt_word_list = [word.upper() for word in words.words() if len(word) >= 3 a
 wordhunt_games = {}
 activity_timers = {}  # Store activity timers for wordhunt
 
+def upper_letters(letter_row):
+    """Format letter row for display"""
+    return " ".join(letter.upper() for letter in letter_row)
+
+async def update_wordhunt_score(group_id, player_name, score):
+    """Update user score in MongoDB for WordHunt games"""
+    try:
+        wh_scores.update_one(
+            {"group_id": group_id, "player_name": player_name},
+            {"$inc": {"score": score}},
+            upsert=True
+        )
+    except Exception as e:
+        print(f"Error updating score: {e}")
+
 class WordHuntGame:
     """Class to represent a WordHunt game"""
     
@@ -99,7 +114,7 @@ class WordHuntGame:
             letter_counts[letter] -= 1
         return True
 
-    async def wordhunt(self):
+    async def start(self):
         """Start a new game with at least 35 possible words"""
         if not self.ongoing_game:
             self.ongoing_game = True
@@ -119,7 +134,68 @@ class WordHuntGame:
             return True
         return False
 
-    # ... (rest of the WordHuntGame class remains the same)
+    def end_clear(self):
+        self.letter_row = []
+        self.score_words = []
+        self.found_words = []
+        self.player_scores = {}
+        self.top_score_words = []
+        self.player_words = {}
+        self.last_activity_time = None
+
+    def ongoing_game_false(self):
+        self.ongoing_game = False
+
+    def sort_player_words(self):
+        for player in self.player_words:
+            self.player_words[player] = sorted(self.player_words[player], key=len, reverse=True)
+
+    def update_activity_time(self):
+        self.last_activity_time = asyncio.get_event_loop().time()
+
+async def wordhunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Start a new WordHunt game"""
+    global wordhunt_games
+    global activity_timers
+    
+    chat_id = update.effective_chat.id
+    
+    # Check if there's an active WordHunt game
+    if chat_id in wordhunt_games and wordhunt_games[chat_id].ongoing_game:
+        if context.args and context.args[0].lower() == 'force':
+            await end_hunt(update, context)
+        else:
+            await update.message.reply_text("A WordHunt game is already in progress. Use /wordhunt force to start a new game.")
+            return
+    
+    await update.message.reply_html("Generating Letters")
+    
+    # Create new game instance
+    if chat_id not in wordhunt_games:
+        wordhunt_games[chat_id] = WordHuntGame()
+    
+    if not await wordhunt_games[chat_id].start():
+        await update.message.reply_text("Failed to start game. Please try again.")
+        return
+
+    # Cancel any existing timer and start a new one
+    if chat_id in activity_timers and activity_timers[chat_id] is not None:
+        activity_timers[chat_id].cancel()
+    
+    activity_timers[chat_id] = asyncio.create_task(check_activity(update, context, chat_id))
+    
+    await update.message.reply_html(upper_letters(wordhunt_games[chat_id].letter_row))
+
+async def check_activity(update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """Check if there has been any activity in WordHunt in the last 30 seconds"""
+    await asyncio.sleep(30)
+    
+    if chat_id not in wordhunt_games or not wordhunt_games[chat_id].ongoing_game:
+        return
+    
+    current_time = asyncio.get_event_loop().time()
+    if current_time - wordhunt_games[chat_id].last_activity_time > 30:
+        await end_hunt(update, context)
 
 async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Process a word submission for WordHunt"""
@@ -135,17 +211,14 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         
     game = wordhunt_games[chat_id]
     
-    # Check if word has already been found
     if guess in game.found_words:
         await update.message.reply_html(f"<b>{guess}</b> has already been found!")
         return
     
-    # Check if word is valid English word and can be formed from letters
     if game.can_spell(guess) and guess.upper() in wordhunt_word_list:
         game.update_activity_time()
         score = len(guess) * len(guess)
         
-        # Update game state
         if guess.upper() in game.score_words:
             game.score_words.remove(guess.upper())
         game.found_words.append(guess)
@@ -158,16 +231,12 @@ async def handle_guess(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         game.player_words[player_name].append(guess)
         game.player_scores[player_name] += score
         
-        # Update database
         await update_wordhunt_score(chat_id, player_name, score)
         
-        # Notify player
         notif = f"<i>{player_name}</i> found <b>{guess}</b> for {score} points!\n{upper_letters(game.letter_row)}"
         await update.message.reply_html(notif)
     else:
         await update.message.reply_html(f"<b>{guess}</b> is not a valid word!")
-
-# ... (rest of the code remains the same)
 
 async def end_hunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """End an active WordHunt game"""
@@ -181,8 +250,8 @@ async def end_hunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     
     final_results = "🎉 SCORES: \n"
     for player, score in wordhunt_games[chat_id].player_scores.items():
-        final_results = final_results + player + ": " + str(score) + "\n"
-    if not bool(wordhunt_games[chat_id].player_scores): # player_scores dict is empty
+        final_results += f"{player}: {score}\n"
+    if not wordhunt_games[chat_id].player_scores:
         final_results = "No one played! \n"
 
     total_possible_words = len(wordhunt_games[chat_id].score_words) + len(wordhunt_games[chat_id].found_words)
@@ -194,17 +263,15 @@ async def end_hunt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     final_results += "\n🔎 WORDS FOUND \n"
     for player in wordhunt_games[chat_id].player_words:
         final_results += f"<b>{player}({len(wordhunt_games[chat_id].player_words[player])})</b> \n"
-        for word in wordhunt_games[chat_id].player_words[player]:
-            final_results += word + " "
-        final_results += "\n"
+        final_results += " ".join(wordhunt_games[chat_id].player_words[player]) + "\n"
     
     await update.message.reply_html(final_results)
     wordhunt_games[chat_id].end_clear()
 
     global activity_timers
-    if chat_id in activity_timers and activity_timers[chat_id] is not None:
-        activity_timers[chat_id].schedule_removal()
-        activity_timers[chat_id] = None
+    if chat_id in activity_timers:
+        activity_timers[chat_id].cancel()
+        del activity_timers[chat_id]
 
 async def whleaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Display WordHunt leaderboard for current group"""
@@ -241,7 +308,7 @@ async def whglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_html(reply)
 
 def register_handlers(application: Application) -> list:
-    
+    """Register all WordHunt handlers with the application"""
     handlers = [
         CommandHandler("wordhunt", wordhunt),
         CommandHandler("endhunt", end_hunt),
@@ -252,5 +319,4 @@ def register_handlers(application: Application) -> list:
             handle_guess
         )
     ]
-    
     return handlers
