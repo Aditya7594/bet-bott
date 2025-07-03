@@ -241,8 +241,6 @@ async def whglobal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_html(reply)
 
 def register_handlers(application: Application) -> list:
-    """Register all WordHunt handlers with the application"""
-    load_wordhunt_word_list()
     
     handlers = [
         CommandHandler("wordhunt", wordhunt),
